@@ -1,0 +1,30 @@
+INSERT INTO blog_posts (slug, title, summary, body, hero_image, tag, published_at)
+VALUES
+  ('velvet-airport-playbook',
+   'Airport Playbook: Heathrow, Gatwick, City',
+   'Cum gestionăm întârzieri de zbor, Wi‑Fi la bord și pickup-uri rapide.',
+   'Monitorizăm zborurile în timp real, ținem șoferii aproape de terminal și confirmăm contactul & plăcuța pentru preluare rapidă.',
+   'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=1400&q=80',
+   'Corporate',
+   NOW()),
+  ('winter-london-routes',
+   'Iarna în Londra: rute, timing și confort',
+   'Rute alternative, ferestre de timp realiste și confort termic pentru serile reci.',
+   'Ocolim aglomerația, adăugăm buffer pentru vreme și pregătim cabinele cu căldură, apă și pături.',
+   'https://images.unsplash.com/photo-1489515217757-5fd1be406fef?auto=format&fit=crop&w=1400&q=80',
+   'City Guides',
+   NOW()),
+  ('dispatch-automation',
+   'Cum automatizăm dispatch-ul la Velvet',
+   'Pipeline de alocare șofer + notificări și audit trail din events/notifications.',
+   'Fiecare booking creează un event cu event_id, notificările au fan-out către destinatari, iar alocările șoferilor sunt auditate.',
+   'https://images.unsplash.com/photo-1473181488821-2d23949a045a?auto=format&fit=crop&w=1400&q=80',
+   'Product',
+   NOW())
+ON DUPLICATE KEY UPDATE
+  title = VALUES(title),
+  summary = VALUES(summary),
+  body = VALUES(body),
+  hero_image = VALUES(hero_image),
+  tag = VALUES(tag),
+  published_at = VALUES(published_at);

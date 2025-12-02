@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+input,
+textarea,
+select {
+  background: rgba(0, 0, 0, 0.25);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 0.75rem;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+:root {
+  /* ensure autofill matches current input background */
+  --input-autofill-bg: rgba(0, 0, 0, 0.25);
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px var(--input-autofill-bg, rgba(0, 0, 0, 0.25)) inset;
+  box-shadow: 0 0 0 1000px var(--input-autofill-bg, rgba(0, 0, 0, 0.25)) inset;
+  -webkit-text-fill-color: #fff;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+input:-moz-autofill,
+textarea:-moz-autofill,
+select:-moz-autofill {
+  box-shadow: 0 0 0 1000px var(--input-autofill-bg, rgba(0, 0, 0, 0.25)) inset;
+  -moz-box-shadow: 0 0 0 1000px var(--input-autofill-bg, rgba(0, 0, 0, 0.25)) inset;
+  -moz-text-fill-color: #fff;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(2);
+}
+
+input[type="date"]::-ms-clear,
+input[type="date"]::-ms-expand {
+  filter: invert(1) brightness(2);
+}
+
+.add-car-date::-webkit-calendar-picker-indicator {
+  filter: invert(0) brightness(1);
+}
+
+.add-car-date::-ms-clear,
+.add-car-date::-ms-expand {
+  filter: invert(0) brightness(1);
+}

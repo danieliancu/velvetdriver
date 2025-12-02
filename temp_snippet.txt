@@ -1,0 +1,5 @@
+                        <div
+                          className={`space-y-3 rounded-2xl border border-white/10 bg-black/60 p-4 lg:basis-[55%] transition-[height] duration-300 overflow-hidden ${
+                            (driversExpanded[booking.id] ?? false) ? '' : 'h-[52px]'
+                          }`}
+                        >
