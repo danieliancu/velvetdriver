@@ -132,8 +132,8 @@ const ClientDashboardPage: React.FC = () => {
         );
       case 'Complain':
         return (
-            <DashboardContentWrapper title="Submit a Complaint">
-                <ClientComplain email={user?.email || ''} journeys={memoizedJourneys} />
+            <DashboardContentWrapper title="Complaint/Compliment">
+                <ClientComplain email={user?.email || ''} journeys={memoizedJourneys} showSubjectInput={false} />
             </DashboardContentWrapper>
         );
       case 'Review':

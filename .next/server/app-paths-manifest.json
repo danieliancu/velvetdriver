@@ -1,11 +1,14 @@
 {
+  "/page": "app/page.js",
   "/client/login/page": "app/client/login/page.js",
   "/client/dashboard/page": "app/client/dashboard/page.js",
-  "/booking/page": "app/booking/page.js",
-  "/page": "app/page.js",
-  "/admin/dashboard/page": "app/admin/dashboard/page.js",
   "/api/client/history/route": "app/api/client/history/route.js",
   "/api/client/profile/route": "app/api/client/profile/route.js",
   "/api/client/saved-quotes/route": "app/api/client/saved-quotes/route.js",
-  "/api/auth/login/route": "app/api/auth/login/route.js"
+  "/api/auth/login/route": "app/api/auth/login/route.js",
+  "/admin/page": "app/admin/page.js",
+  "/admin/dashboard/page": "app/admin/dashboard/page.js",
+  "/api/admin/live-bookings/route": "app/api/admin/live-bookings/route.js",
+  "/admin/lost-property/page": "app/admin/lost-property/page.js",
+  "/admin/complaints/page": "app/admin/complaints/page.js"
 }

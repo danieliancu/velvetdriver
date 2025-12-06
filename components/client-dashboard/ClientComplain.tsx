@@ -10,31 +10,56 @@ interface ClientComplainProps {
   email?: string;
   journeys?: Journey[];
   isGuest?: boolean;
+  showSubjectInput?: boolean;
 }
 
-const ClientComplain: React.FC<ClientComplainProps> = ({ email, journeys = [], isGuest = false }) => {
+const ClientComplain: React.FC<ClientComplainProps> = ({ email, journeys = [], isGuest = false, showSubjectInput = true }) => {
   const { showAlert } = useAlert();
   const [journeyId, setJourneyId] = React.useState('');
   const [subject, setSubject] = React.useState('');
   const [details, setDetails] = React.useState('');
   const [loading, setLoading] = React.useState(false);
+  const [fullName, setFullName] = React.useState('');
+  const [address, setAddress] = React.useState('');
+  const [phone, setPhone] = React.useState('');
+  const [bookingReference, setBookingReference] = React.useState('');
+  const [bookingDateTime, setBookingDateTime] = React.useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if ((showSubjectInput && !subject) || !details || !fullName || !address || !phone) {
+      showAlert('Please fill in all required fields.');
+      return;
+    }
+    const effectiveSubject = showSubjectInput ? subject : 'Complaint/Compliment';
     if (isGuest || !email) {
       showAlert('Complaint submitted. We will get back to you within 48 hours.');
+      setBookingReference('');
+      setBookingDateTime('');
+      setFullName('');
+      setAddress('');
+      setPhone('');
+      setSubject(showSubjectInput ? '' : subject);
+      setDetails('');
       return;
     }
     if (!journeyId) {
       showAlert('Select a journey to continue.');
       return;
     }
+
+    const composedDetails = `Details: ${details}
+
+Name: ${fullName}
+Address: ${address}
+Phone: ${phone}`;
+
     setLoading(true);
     try {
       const res = await fetch('/api/client/complaints', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, journeyId, subject, details }),
+        body: JSON.stringify({ email, journeyId, subject: effectiveSubject, details: composedDetails }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -42,8 +67,11 @@ const ClientComplain: React.FC<ClientComplainProps> = ({ email, journeys = [], i
       }
       showAlert('Complaint submitted. We will get back to you within 48 hours.');
       setJourneyId('');
-      setSubject('');
+      setSubject(showSubjectInput ? '' : subject);
       setDetails('');
+      setFullName('');
+      setAddress('');
+      setPhone('');
     } catch (err: any) {
       showAlert(err?.message || 'Failed to submit complaint');
     } finally {
@@ -53,8 +81,62 @@ const ClientComplain: React.FC<ClientComplainProps> = ({ email, journeys = [], i
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {showSubjectInput ? (
+        <DashboardInput
+          id="subject"
+          label="Complaint/Compliment"
+          type="text"
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          required
+        />
+      ) : null}
+
       {isGuest || !email ? (
-        <DashboardInput id="booking-ref" label="Booking Reference or Date of Journey" type="text" required />
+        <>
+          <DashboardInput
+            id="booking-ref"
+            label="Booking Reference (if known)"
+            type="text"
+            value={bookingReference}
+            onChange={(e) => setBookingReference(e.target.value)}
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <DashboardInput
+              id="booking-datetime"
+              label="Date and Time"
+              type="text"
+              value={bookingDateTime}
+              onChange={(e) => setBookingDateTime(e.target.value)}
+            />
+            <DashboardInput
+              id="your-name"
+              label="Your Name"
+              type="text"
+              required
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <DashboardInput
+              id="your-address"
+              label="Your Address"
+              type="text"
+              required
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+            />
+            <DashboardInput
+              id="your-phone"
+              label="Your Phone No"
+              type="tel"
+              required
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+          </div>
+        </>
       ) : (
         <>
           <DashboardSelect
@@ -70,7 +152,7 @@ const ClientComplain: React.FC<ClientComplainProps> = ({ email, journeys = [], i
             </option>
             {journeys.map((journey) => (
               <option key={journey.id} value={journey.id} className="bg-gray-900 text-white">
-                {journey.date} - {journey.pickup} to {journey.destination.split(',')[0]} ({journey.status})
+                #{journey.id} - {journey.date} - {journey.pickup} to {journey.destination.split(',')[0]} ({journey.status})
               </option>
             ))}
           </DashboardSelect>
@@ -79,12 +161,37 @@ const ClientComplain: React.FC<ClientComplainProps> = ({ email, journeys = [], i
               Once you book a journey while signed in, it will appear here automatically.
             </p>
           )}
+          <DashboardInput
+            id="your-name"
+            label="Your Name"
+            type="text"
+            required
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <DashboardInput
+              id="your-address"
+              label="Your Address"
+              type="text"
+              required
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+            />
+            <DashboardInput
+              id="your-phone"
+              label="Your Phone No"
+              type="tel"
+              required
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+          </div>
         </>
       )}
-      <DashboardInput id="subject" label="Subject" type="text" value={subject} onChange={(e) => setSubject(e.target.value)} required />
       <div>
         <label htmlFor="details" className="block text-xs font-semibold text-amber-200/70 uppercase tracking-wider mb-2">
-          Complaint Details
+          Details of Property
         </label>
         <textarea
           id="details"

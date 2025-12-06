@@ -118,8 +118,8 @@ export default function ClientLoginPage() {
         </div>
       </div>
 
-      <Modal isOpen={isComplainModalOpen} onClose={() => setComplainModalOpen(false)} title="Submit a Complaint">
-        <ClientComplain isGuest />
+      <Modal isOpen={isComplainModalOpen} onClose={() => setComplainModalOpen(false)} title="Complaint/Compliment">
+        <ClientComplain isGuest showSubjectInput={false} />
       </Modal>
       <Modal isOpen={isReviewModalOpen} onClose={() => setReviewModalOpen(false)} title="Leave a Review">
         <ClientReview isGuest />

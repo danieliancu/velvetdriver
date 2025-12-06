@@ -8,6 +8,7 @@ import PageShell from '@/components/PageShell';
 import BookingInput from '@/components/BookingInput';
 import BookingSelect from '@/components/BookingSelect';
 import BookingTextArea from '@/components/BookingTextArea';
+import Modal from '@/components/Modal';
 import { useAlert } from '@/components/AlertProvider';
 import { useAuth } from '@/lib/auth-context';
 
@@ -79,6 +80,8 @@ const BookingPage = () => {
     const [savedQuoteLoading, setSavedQuoteLoading] = useState(false);
     const [savedQuoteMessage, setSavedQuoteMessage] = useState<string | null>(null);
     const [bookingSubmitting, setBookingSubmitting] = useState(false);
+    const [showVerificationModal, setShowVerificationModal] = useState(false);
+    const [pendingBookingPayload, setPendingBookingPayload] = useState<any>(null);
 
     const passengersCount = Math.max(0, Number(passengers) || 0);
     const smallSuitcasesCount = Math.max(0, Number(smallSuitcases) || 0);
@@ -763,26 +766,33 @@ const BookingPage = () => {
             showAlert('Please complete pickup, drop-off, date, and time.');
             return;
         }
+        // Show verification modal instead of immediately submitting
+        const payload = buildQuotePayload();
+        setPendingBookingPayload({
+            ...payload,
+            airportDetected,
+            flightNumber,
+            flightDetails,
+            extras,
+            totalFare,
+            clientEmail: user?.email ?? null,
+        });
+        setShowVerificationModal(true);
+    };
+
+    const handleConfirmBooking = async () => {
         setBookingSubmitting(true);
         try {
-            const payload = buildQuotePayload();
             const response = await fetch('/api/booking', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...payload,
-                    airportDetected,
-                    flightNumber,
-                    flightDetails,
-                    extras,
-                    totalFare,
-                    clientEmail: user?.email ?? null,
-                }),
+                body: JSON.stringify(pendingBookingPayload),
             });
             if (!response.ok) {
                 const data = await response.json().catch(() => ({}));
                 throw new Error(data?.error || 'Failed to submit booking');
             }
+            setShowVerificationModal(false);
             showAlert('Booking submitted! An operator will call you shortly to confirm.');
             router.push(user ? '/client/dashboard' : '/');
         } catch (err: any) {
@@ -790,6 +800,11 @@ const BookingPage = () => {
         } finally {
             setBookingSubmitting(false);
         }
+    };
+
+    const handleGoBackAndVerify = () => {
+        setShowVerificationModal(false);
+        setPendingBookingPayload(null);
     };
 
     return (
@@ -1073,6 +1088,56 @@ const BookingPage = () => {
                         )}
                     </div>
                 </form>
+
+                {/* Verification Modal */}
+                <Modal 
+                    isOpen={showVerificationModal} 
+                    onClose={handleGoBackAndVerify}
+                    title="Verify Your Details"
+                >
+                    <div className="space-y-6">
+                        <p className="text-amber-100 text-lg leading-relaxed">
+                            Before you confirm, please take a moment to verify your pickup address, date and time details. If we dispatch a car using incorrect information, you may be charged the full fare.
+                        </p>
+                        
+                        <div className="bg-black/30 border border-amber-900/40 rounded-lg p-4 space-y-3 text-sm text-gray-300">
+                            <div className="flex justify-between items-start">
+                                <span className="text-gray-400">Pickup:</span>
+                                <span className="font-semibold text-amber-100">{pickup}</span>
+                            </div>
+                            <div className="flex justify-between items-start">
+                                <span className="text-gray-400">Drop-off:</span>
+                                <span className="font-semibold text-amber-100">{dropOffs[0]}</span>
+                            </div>
+                            <div className="flex justify-between items-start">
+                                <span className="text-gray-400">Date:</span>
+                                <span className="font-semibold text-amber-100">{date}</span>
+                            </div>
+                            <div className="flex justify-between items-start">
+                                <span className="text-gray-400">Time:</span>
+                                <span className="font-semibold text-amber-100">{time}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row gap-4 pt-4">
+                            <button
+                                type="button"
+                                onClick={handleGoBackAndVerify}
+                                className="w-full sm:w-auto px-6 py-3 font-semibold bg-transparent border-2 border-amber-600 text-amber-400 rounded-lg hover:bg-amber-900/50 transition-colors"
+                            >
+                                Go back and change
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleConfirmBooking}
+                                disabled={bookingSubmitting}
+                                className="w-full sm:w-auto px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)] disabled:opacity-60"
+                            >
+                                {bookingSubmitting ? 'Processing...' : 'Happy to proceed'}
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
         </PageShell>
     );
 };

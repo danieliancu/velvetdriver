@@ -7,6 +7,7 @@ const {
   DB_PASSWORD = '',
   DB_NAME = 'velvet',
   DB_CHARSET = 'utf8mb4',
+  DB_SSL = 'false',
 } = process.env;
 
 const globalForMysql = globalThis as unknown as {
@@ -24,6 +25,7 @@ export function getDbPool() {
       charset: DB_CHARSET,
       waitForConnections: true,
       connectionLimit: 10,
+      ssl: DB_SSL.toLowerCase() === 'true' ? { rejectUnauthorized: false } : undefined,
     });
   }
   return globalForMysql.mysqlPool;

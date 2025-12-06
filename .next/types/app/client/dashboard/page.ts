@@ -1,4 +1,4 @@
-// File: C:\_work\Velvet\app\client\dashboard\page.tsx
+// File: C:\_work\velvetdriver\app\client\dashboard\page.tsx
 import * as entry from '../../../../../app/client/dashboard/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

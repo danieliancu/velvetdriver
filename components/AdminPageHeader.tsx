@@ -5,7 +5,17 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 
 type NavItem = {
-  id: 'live' | 'older' | 'drivers' | 'awaiting' | 'notifications' | 'statements' | 'settings' | 'blog';
+  id:
+    | 'live'
+    | 'older'
+    | 'drivers'
+    | 'awaiting'
+    | 'notifications'
+    | 'statements'
+    | 'complaints'
+    | 'lost-property'
+    | 'settings'
+    | 'blog';
   label: string;
   to: string;
   badge?: number;
@@ -59,6 +69,16 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
       id: 'statements',
       label: 'Statements',
       to: '/admin/statements'
+    },
+    {
+      id: 'complaints',
+      label: 'Complaint',
+      to: '/admin/complaints'
+    },
+    {
+      id: 'lost-property',
+      label: 'Lost Property',
+      to: '/admin/lost-property'
     },
     {
       id: 'blog',

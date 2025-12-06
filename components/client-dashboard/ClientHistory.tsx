@@ -209,6 +209,7 @@ const ClientHistory: React.FC<Props> = ({
           <table className="w-full min-w-max text-left">
             <thead className="bg-gray-800/60">
               <tr>
+                <th className="p-4">Ref. no.</th>
                 <th className="p-4">Date & Time</th>
                 <th className="p-4">Pickup</th>
                 <th className="p-4">Destination</th>
@@ -224,13 +225,14 @@ const ClientHistory: React.FC<Props> = ({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="text-center p-8 text-gray-400">
+                  <td colSpan={11} className="text-center p-8 text-gray-400">
                     Loading journeys...
                   </td>
                 </tr>
               ) : filteredJourneys.length > 0 ? (
                 filteredJourneys.map((journey, index) => (
                   <tr key={journey.id} className={`border-t border-gray-800 ${index % 2 === 0 ? 'bg-black/20' : ''}`}>
+                    <td className="p-4 align-top font-semibold text-amber-200">VD_{journey.id}</td>
                     <td className="p-4 align-top">{journey.date}</td>
                     <td className="p-4 align-top">{journey.pickup}</td>
                     <td className="p-4 align-top">
@@ -264,7 +266,7 @@ const ClientHistory: React.FC<Props> = ({
                 ))
               ) : (
                 <tr>
-                  <td colSpan={9} className="text-center p-8 text-gray-400">
+                  <td colSpan={11} className="text-center p-8 text-gray-400">
                     No {filter !== 'All' ? filter.toLowerCase() : ''} journeys found.
                   </td>
                 </tr>
