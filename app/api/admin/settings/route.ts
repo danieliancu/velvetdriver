@@ -4,7 +4,7 @@ import { getDbPool } from '@/lib/db';
 
 const pool = getDbPool();
 
-type PricingVehicle = {
+type PricingVehicleRow = mysql.RowDataPacket & {
   code: string;
   label: string;
   as_directed_rate: number;
@@ -13,6 +13,18 @@ type PricingVehicle = {
   tier3_rate: number;
   inner_zone_override_rate: number;
 };
+
+type PricingVehicle = {
+  code: string;
+  label: string;
+  asDirectedRate: number;
+  mileage: { tier1: number; tier2: number; tier3: number };
+  innerZoneOverride: number;
+};
+
+type SurchargeRow = mysql.RowDataPacket & { code: string; amount: number };
+
+type PricingSettingRow = mysql.RowDataPacket & { night_surcharge: number };
 
 type PricingPayload = {
   vehicles: Array<{
@@ -38,13 +50,13 @@ const fallbackPayload: PricingPayload = {
 
 export async function GET() {
   try {
-    const [vehicleRows] = await pool.query<PricingVehicle[]>(
+    const [vehicleRows] = await pool.query<PricingVehicleRow[]>(
       'SELECT code, label, as_directed_rate, tier1_rate, tier2_rate, tier3_rate, inner_zone_override_rate FROM pricing_vehicles ORDER BY id'
     );
-    const [surchargeRows] = await pool.query<{ code: string; amount: number }[]>(
+    const [surchargeRows] = await pool.query<SurchargeRow[]>(
       'SELECT code, amount FROM surcharge_rules WHERE code IN ("AIRPORT_PICKUP","AIRPORT_DROPOFF","CONGESTION")'
     );
-    const [settingRows] = await pool.query<{ night_surcharge: number }[]>(
+    const [settingRows] = await pool.query<PricingSettingRow[]>(
       'SELECT night_surcharge FROM pricing_settings WHERE id = 1 LIMIT 1'
     );
 
@@ -52,7 +64,7 @@ export async function GET() {
       return NextResponse.json(fallbackPayload);
     }
 
-    const vehicles = vehicleRows.map((v) => ({
+    const vehicles: PricingVehicle[] = vehicleRows.map((v) => ({
       code: v.code,
       label: v.label,
       asDirectedRate: Number(v.as_directed_rate),

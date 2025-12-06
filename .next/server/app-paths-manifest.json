@@ -1,3 +1,4 @@
 {
-  "/driver/signup/page": "app/driver/signup/page.js"
+  "/driver/signup/page": "app/driver/signup/page.js",
+  "/page": "app/page.js"
 }
