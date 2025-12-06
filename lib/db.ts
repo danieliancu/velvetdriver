@@ -30,3 +30,5 @@ export function getDbPool() {
   }
   return globalForMysql.mysqlPool;
 }
+
+export type DbRow<T extends Record<string, any> = Record<string, any>> = mysql.RowDataPacket & T;

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
-import { getDbPool } from '@/lib/db';
+import { getDbPool, type DbRow } from '@/lib/db';
 
 const pool = getDbPool();
 
@@ -15,6 +15,8 @@ type DbPost = {
   published_at: string | null;
 };
 
+type DbPostRow = DbRow<DbPost>;
+
 const slugify = (value: string) =>
   value
     .toLowerCase()
@@ -24,7 +26,7 @@ const slugify = (value: string) =>
 
 export async function GET() {
   try {
-    const [rows] = await pool.query<DbPost[]>(
+    const [rows] = await pool.query<DbPostRow[]>(
       `SELECT id, slug, title, summary, body, hero_image, tag, published_at
        FROM blog_posts
        ORDER BY COALESCE(published_at, NOW()) DESC, id DESC`
