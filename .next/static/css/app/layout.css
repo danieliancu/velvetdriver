@@ -619,9 +619,6 @@ video {
 .-mt-2 {
   margin-top: -0.5rem;
 }
-.-mt-4 {
-  margin-top: -1rem;
-}
 .mb-1 {
   margin-bottom: 0.25rem;
 }
@@ -666,6 +663,9 @@ video {
 }
 .mt-8 {
   margin-top: 2rem;
+}
+.ml-2 {
+  margin-left: 0.5rem;
 }
 .block {
   display: block;
@@ -1198,6 +1198,16 @@ video {
 .border-yellow-400\/30 {
   border-color: rgb(250 204 21 / 0.3);
 }
+.border-emerald-500\/60 {
+  border-color: rgb(16 185 129 / 0.6);
+}
+.border-red-500 {
+  --tw-border-opacity: 1;
+  border-color: rgb(239 68 68 / var(--tw-border-opacity));
+}
+.border-white\/30 {
+  border-color: rgb(255 255 255 / 0.3);
+}
 .bg-\[\#0f0b0b\] {
   --tw-bg-opacity: 1;
   background-color: rgb(15 11 11 / var(--tw-bg-opacity));
@@ -1726,6 +1736,9 @@ video {
 .uppercase {
   text-transform: uppercase;
 }
+.italic {
+  font-style: italic;
+}
 .leading-relaxed {
   line-height: 1.625;
 }
@@ -1972,6 +1985,21 @@ video {
 .shadow-xl {
   --tw-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
   --tw-shadow-colored: 0 20px 25px -5px var(--tw-shadow-color), 0 8px 10px -6px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+.shadow-\[0_0_15px_rgba\(251\2c 191\2c 36\2c 0\.4\)\] {
+  --tw-shadow: 0 0 15px rgba(251,191,36,0.4);
+  --tw-shadow-colored: 0 0 15px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+.shadow-\[0_0_15px_rgba\(220\2c 38\2c 38\2c 0\.4\)\] {
+  --tw-shadow: 0 0 15px rgba(220,38,38,0.4);
+  --tw-shadow-colored: 0 0 15px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+.shadow-\[0_0_18px_rgba\(251\2c 191\2c 36\2c 0\.4\)\] {
+  --tw-shadow: 0 0 18px rgba(251,191,36,0.4);
+  --tw-shadow-colored: 0 0 18px var(--tw-shadow-color);
   box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 .shadow-amber-400\/20 {
@@ -2307,6 +2335,18 @@ input[type="date"]::-ms-expand {
   background-color: rgb(255 255 255 / 0.9);
 }
 
+.hover\:bg-red-500\/20:hover {
+  background-color: rgb(239 68 68 / 0.2);
+}
+
+.hover\:bg-amber-500\/10:hover {
+  background-color: rgb(245 158 11 / 0.1);
+}
+
+.hover\:bg-emerald-500\/10:hover {
+  background-color: rgb(16 185 129 / 0.1);
+}
+
 .hover\:text-amber-200:hover {
   --tw-text-opacity: 1;
   color: rgb(253 230 138 / var(--tw-text-opacity));
@@ -2342,6 +2382,11 @@ input[type="date"]::-ms-expand {
   color: rgb(255 255 255 / var(--tw-text-opacity));
 }
 
+.hover\:text-amber-100:hover {
+  --tw-text-opacity: 1;
+  color: rgb(254 243 199 / var(--tw-text-opacity));
+}
+
 .hover\:underline:hover {
   text-decoration-line: underline;
 }
@@ -2353,6 +2398,24 @@ input[type="date"]::-ms-expand {
 .hover\:shadow-\[0_0_30px_rgba\(251\2c 191\2c 36\2c 0\.6\)\]:hover {
   --tw-shadow: 0 0 30px rgba(251,191,36,0.6);
   --tw-shadow-colored: 0 0 30px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+.hover\:shadow-\[0_0_25px_rgba\(251\2c 191\2c 36\2c 0\.6\)\]:hover {
+  --tw-shadow: 0 0 25px rgba(251,191,36,0.6);
+  --tw-shadow-colored: 0 0 25px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+.hover\:shadow-\[0_0_25px_rgba\(220\2c 38\2c 38\2c 0\.6\)\]:hover {
+  --tw-shadow: 0 0 25px rgba(220,38,38,0.6);
+  --tw-shadow-colored: 0 0 25px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+.hover\:shadow-\[0_0_28px_rgba\(251\2c 191\2c 36\2c 0\.6\)\]:hover {
+  --tw-shadow: 0 0 28px rgba(251,191,36,0.6);
+  --tw-shadow-colored: 0 0 28px var(--tw-shadow-color);
   box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
@@ -2678,6 +2741,10 @@ input[type="date"]::-ms-expand {
 
   .xl\:col-span-3 {
     grid-column: span 3 / span 3;
+  }
+
+  .xl\:col-span-5 {
+    grid-column: span 5 / span 5;
   }
 
   .xl\:grid-cols-5 {

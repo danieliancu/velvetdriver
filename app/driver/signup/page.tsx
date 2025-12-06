@@ -7,19 +7,20 @@ import FormLayout from '@/components/FormLayout';
 import Input from '@/components/Input';
 import { useAlert } from '@/components/AlertProvider';
 
-const steps = ['Account information', 'Your details', 'Your car', 'Bank details'];
+const steps = ['Personal details', 'Licence documents', 'Your car', 'Create password'];
 
 const fileFields = Object.freeze({
   yourDetails: [
     { id: 'pcoLicenseDoc', label: 'PCO Licence' },
-    { id: 'drivingLicenseFront', label: 'Driving License front' },
-    { id: 'drivingLicenseBack', label: 'Driving License back' },
+    { id: 'drivingLicenseFront', label: 'Driver Licence Front' },
+    { id: 'drivingLicenseBack', label: 'Driver Licence Back' },
+    { id: 'profilePhoto', label: 'Your photo' },
   ],
   carDetails: [
     { id: 'motDoc', label: 'MOT' },
     { id: 'insuranceDoc', label: 'Insurance' },
-    { id: 'phvDoc', label: 'PHV Car License' },
-    { id: 'logbookDoc', label: 'Logbook V5' },
+    { id: 'phvDoc', label: 'PHV Car licence' },
+    { id: 'logbookDoc', label: 'Log book V5' },
   ],
 } as const);
 
@@ -52,37 +53,54 @@ export default function DriverSignUpPage() {
   const renderYourDetails = () => (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h3 className="text-lg font-semibold text-white">Your details</h3>
-        <div className="grid grid-cols-1 gap-4">
-          <Input
-            id="drivingLicenseNumber"
-            label="Driving License No"
-            type="text"
-            value={formData.drivingLicenseNumber ?? ''}
-            onChange={handleFieldChange('drivingLicenseNumber')}
-          />
+        <h3 className="text-lg font-semibold text-white">Licence details</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
             id="pcoLicenseNumber"
-            label="PCO Licence No"
+            label="PCO Licence No:"
             type="text"
             value={formData.pcoLicenseNumber ?? ''}
             onChange={handleFieldChange('pcoLicenseNumber')}
           />
           <Input
             id="pcoExpiry"
-            label="PCO Expiry"
+            label="PCO Expiry Date:"
             type="date"
             value={formData.pcoExpiry ?? ''}
             onChange={handleFieldChange('pcoExpiry')}
           />
+          <Input
+            id="drivingLicenseNumber"
+            label="Driving Licence No:"
+            type="text"
+            value={formData.drivingLicenseNumber ?? ''}
+            onChange={handleFieldChange('drivingLicenseNumber')}
+          />
+          <Input
+            id="dvlaCode"
+            label="DVLA Check code:"
+            type="text"
+            value={formData.dvlaCode ?? ''}
+            onChange={handleFieldChange('dvlaCode')}
+          />
         </div>
+        <p className="text-xs text-gray-400">
+          Generate a code from the official DVLA website to share your driving licence information.
+        </p>
       </div>
       <div>
         <p className="text-sm font-semibold text-amber-400">Upload documents</p>
         <div className="space-y-4">
           {fileFields.yourDetails.map((field) => (
             <div key={field.id} className="space-y-1">
-              <p className="text-sm text-gray-300">{field.label}</p>
+              <p className="text-sm text-gray-300">
+                {field.label}
+                {field.id === 'profilePhoto' && (
+                  <span className="block text-xs text-gray-400 italic">
+                    * Passport type photo to be used on your profile*
+                  </span>
+                )}
+              </p>
               <div className="flex flex-col gap-2">
                 <label
                   htmlFor={field.id}
@@ -104,12 +122,12 @@ export default function DriverSignUpPage() {
   const renderCarDetails = () => (
     <div className="space-y-6">
       <div className="space-y-2">
-        <h3 className="text-lg font-semibold text-white">Your car details</h3>
+        <h3 className="text-lg font-semibold text-white">Your car details:</h3>
         <div className="space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
             <Input
               id="vehicleReg"
-              label="Vehicle Reg (VRM)"
+              label="Vehicle Registration"
               type="text"
               value={formData.vehicleReg ?? ''}
               onChange={handleFieldChange('vehicleReg')}
@@ -171,7 +189,15 @@ export default function DriverSignUpPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input id="make" label="Make" type="text" value={formData.make ?? ''} onChange={handleFieldChange('make')} />
             <Input id="model" label="Model" type="text" value={formData.model ?? ''} onChange={handleFieldChange('model')} />
+            <Input id="colour" label="Colour" type="text" value={formData.colour ?? ''} onChange={handleFieldChange('colour')} />
           </div>
+          <Input
+            id="keeperInfo"
+            label="Name and address of Keeper (the name on V5)"
+            type="text"
+            value={formData.keeperInfo ?? ''}
+            onChange={handleFieldChange('keeperInfo')}
+          />
         </div>
       </div>
       <div>
@@ -202,46 +228,62 @@ export default function DriverSignUpPage() {
     if (step === 1) {
       return (
         <>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
-              id="firstName"
-              label="First Name"
+              id="surname"
+              label="Surname"
               type="text"
               required
-              value={formData.firstName ?? ''}
-              onChange={handleFieldChange('firstName')}
+              value={formData.surname ?? ''}
+              onChange={handleFieldChange('surname')}
             />
             <Input
-              id="lastName"
-              label="Last Name"
+              id="firstMiddleNames"
+              label="First & Middle Names"
               type="text"
               required
-              value={formData.lastName ?? ''}
-              onChange={handleFieldChange('lastName')}
+              value={formData.firstMiddleNames ?? ''}
+              onChange={handleFieldChange('firstMiddleNames')}
             />
           </div>
-          <Input id="email" label="Email Address" type="email" required value={formData.email ?? ''} onChange={handleFieldChange('email')} />
-          <Input id="phone" label="Phone Number" type="tel" required value={formData.phone ?? ''} onChange={handleFieldChange('phone')} />
           <Input
-            id="password"
-            label="Create Password"
-            type="password"
+            id="address"
+            label="Address:"
+            type="text"
             required
-            value={formData.password ?? ''}
-            onChange={handleFieldChange('password')}
+            value={formData.address ?? ''}
+            onChange={handleFieldChange('address')}
           />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input
+              id="postcode"
+              label="Postcode:"
+              type="text"
+              required
+              value={formData.postcode ?? ''}
+              onChange={handleFieldChange('postcode')}
+            />
+            <Input
+              id="dob"
+              label="Date of Birth:"
+              type="date"
+              required
+              value={formData.dob ?? ''}
+              onChange={handleFieldChange('dob')}
+            />
+          </div>
           <Input
-            id="confirmPassword"
-            label="Confirm Password"
-            type="password"
+            id="nationalInsurance"
+            label="National insurance No:"
+            type="text"
             required
-            value={formData.confirmPassword ?? ''}
-            onChange={handleFieldChange('confirmPassword')}
+            value={formData.nationalInsurance ?? ''}
+            onChange={handleFieldChange('nationalInsurance')}
           />
-          <Input id="dvlaCode" label="DVLA Check Code" type="text" required value={formData.dvlaCode ?? ''} onChange={handleFieldChange('dvlaCode')} />
-          <p className="text-xs text-gray-500 -mt-4 pb-2">
-            Generate a code from the official DVLA website to share your driving licence information.
-          </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input id="email" label="Email Address" type="email" required value={formData.email ?? ''} onChange={handleFieldChange('email')} />
+            <Input id="phone" label="Phone Number" type="tel" required value={formData.phone ?? ''} onChange={handleFieldChange('phone')} />
+          </div>
         </>
       );
     }
@@ -256,14 +298,24 @@ export default function DriverSignUpPage() {
 
     return (
       <div className="space-y-4">
-        <h3 className="text-lg font-semibold text-white">Your bank details</h3>
-        <div className="grid grid-cols-1 gap-4">
-          <Input id="bankName" label="Bank Name" type="text" value={formData.bankName ?? ''} onChange={handleFieldChange('bankName')} />
-          <Input id="accountName" label="Account Name" type="text" value={formData.accountName ?? ''} onChange={handleFieldChange('accountName')} />
-          <div className="grid grid-cols-2 gap-4">
-            <Input id="sortCode" label="Sort Code" type="text" value={formData.sortCode ?? ''} onChange={handleFieldChange('sortCode')} />
-            <Input id="accountNumber" label="Account Number" type="text" value={formData.accountNumber ?? ''} onChange={handleFieldChange('accountNumber')} />
-          </div>
+        <h3 className="text-lg font-semibold text-white">Create password</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input
+            id="password"
+            label="Create password"
+            type="password"
+            required
+            value={formData.password ?? ''}
+            onChange={handleFieldChange('password')}
+          />
+          <Input
+            id="confirmPassword"
+            label="Confirm password"
+            type="password"
+            required
+            value={formData.confirmPassword ?? ''}
+            onChange={handleFieldChange('confirmPassword')}
+          />
         </div>
         <div className="space-y-2 pt-2">
           <label className="flex items-start gap-3 text-sm text-gray-200">

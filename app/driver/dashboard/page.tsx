@@ -146,25 +146,24 @@ const StatusPill: React.FC<{ text: string; variant?: StatusVariant }> = ({ text,
   );
 };
 
-const NewUploadButton: React.FC<{ htmlFor: string }> = ({ htmlFor }) => (
-  <label
-    htmlFor={htmlFor}
-    className="rounded-full border border-amber-500 bg-amber-500 px-4 py-1 text-xs font-semibold text-black uppercase transition hover:bg-amber-400 cursor-pointer"
-  >
-    New Upload
-  </label>
-);
-
-const UploadStatusItem: React.FC<{ label: string }> = ({ label }) => {
+const UploadStatusItem: React.FC<{ label: string; buttonLabel?: string; helperText?: string }> = ({ label, buttonLabel = 'New Upload', helperText }) => {
   const id = `upload-${label.toLowerCase().replace(/[^a-z0-9]+/gi, '-')}`;
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-3 border-b border-amber-900/40">
-      <span className="text-white/90 text-sm">{label}</span>
-      <div className="flex items-center gap-3">
-        <StatusPill text="Uploaded" />
-        <NewUploadButton htmlFor={id} />
-        <input id={id} type="file" className="hidden" />
+    <div className="flex flex-col gap-1 py-3 border-b border-amber-900/40">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <span className="text-white/90 text-sm">{label}</span>
+        <div className="flex items-center gap-3">
+          <StatusPill text="Uploaded" />
+          <label
+            htmlFor={id}
+            className="rounded-full border border-amber-500 bg-amber-500 px-4 py-1 text-xs font-semibold text-black uppercase transition hover:bg-amber-400 cursor-pointer"
+          >
+            {buttonLabel}
+          </label>
+          <input id={id} type="file" className="hidden" />
+        </div>
       </div>
+      {helperText && <p className="text-[11px] text-amber-200/70">{helperText}</p>}
     </div>
   );
 };
@@ -180,16 +179,33 @@ const initialDriverDetails = {
   pcoExpiry: '2026-10-15'
 };
 
+const initialBankDetails = {
+  bankName: 'Monzo',
+  accountName: 'Daniel Iancu',
+  sortCode: '04-00-04',
+  accountNumber: '12345678'
+};
+
 const DriverProfile = () => {
   const [detailsEditable, setDetailsEditable] = useState(false);
   const [details, setDetails] = useState(initialDriverDetails);
+  const [bankEditable, setBankEditable] = useState(false);
+  const [bankDetails, setBankDetails] = useState(initialBankDetails);
 
   const handleDetailChange = (field: keyof typeof initialDriverDetails) => (event: React.ChangeEvent<HTMLInputElement>) => {
     setDetails((prev) => ({ ...prev, [field]: event.target.value }));
   };
 
+  const handleBankChange = (field: keyof typeof initialBankDetails) => (event: React.ChangeEvent<HTMLInputElement>) => {
+    setBankDetails((prev) => ({ ...prev, [field]: event.target.value }));
+  };
+
   const toggleDetailsEdit = () => {
     setDetailsEditable((prev) => !prev);
+  };
+
+  const toggleBankEdit = () => {
+    setBankEditable((prev) => !prev);
   };
 
   return (
@@ -280,13 +296,65 @@ const DriverProfile = () => {
       <div className="xl:col-span-2 bg-gradient-to-br from-[#1E1212] via-[#100808] to-black border border-amber-900/50 rounded-2xl p-8">
         <h2 className="text-2xl font-bold font-display text-amber-400 mb-6">Upload Documents</h2>
         <div className="space-y-1">
-          <UploadStatusItem label="PCO Licence No" />
-          <UploadStatusItem label="Driving License front" />
-          <UploadStatusItem label="Driving License back side" />
+          <UploadStatusItem label="PCO Licence" />
+          <UploadStatusItem label="Driver Licence Front" />
+          <UploadStatusItem label="Driver Licence Back" />
+          <UploadStatusItem
+            label="Your photo"
+            buttonLabel="NEW UPLOAD"
+            helperText="* Passport type photo to be used on your profile*"
+          />
         </div>
         <p className="text-xs text-amber-200/60 mt-6">
           We store all documents securely. Reminders are sent before expiry.
         </p>
+      </div>
+
+      <div className="xl:col-span-5 bg-gradient-to-br from-[#1E1212] via-[#100808] to-black border border-amber-900/50 rounded-2xl p-8">
+        <h2 className="text-2xl font-bold font-display text-amber-400 mb-6">Bank details</h2>
+        <form className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <DashboardInput
+            id="bank-name"
+            label="Bank Name"
+            type="text"
+            value={bankDetails.bankName}
+            readOnly={!bankEditable}
+            onChange={handleBankChange('bankName')}
+          />
+          <DashboardInput
+            id="account-name"
+            label="Account Name"
+            type="text"
+            value={bankDetails.accountName}
+            readOnly={!bankEditable}
+            onChange={handleBankChange('accountName')}
+          />
+          <DashboardInput
+            id="sort-code"
+            label="Sort Code"
+            type="text"
+            value={bankDetails.sortCode}
+            readOnly={!bankEditable}
+            onChange={handleBankChange('sortCode')}
+          />
+          <DashboardInput
+            id="account-number"
+            label="Account Number"
+            type="text"
+            value={bankDetails.accountNumber}
+            readOnly={!bankEditable}
+            onChange={handleBankChange('accountNumber')}
+          />
+          <div className="sm:col-span-2 mt-2 flex justify-start">
+            <button
+              type="button"
+              onClick={toggleBankEdit}
+              className={actionButtonClass(bankEditable)}
+            >
+              {bankEditable ? 'Save' : 'Edit'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

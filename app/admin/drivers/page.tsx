@@ -4,6 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { Clock, User, DollarSign, Car, Search } from 'lucide-react';
 import AdminPageHeader from '@/components/AdminPageHeader';
 import PageShell from '@/components/PageShell';
+import Modal from '@/components/Modal';
 
 type DriverJob = {
   id: string;
@@ -24,6 +25,7 @@ type DriverCar = {
   phvExpiry: string;
   logbook: string;
   status: 'Active' | 'Reserve';
+  startDate: string;
 };
 
 type StatementRow = {
@@ -55,12 +57,21 @@ type DriverProfileData = {
   rating: string;
   tenure: string;
   lastOnline: string;
+  dateStarted: string;
+  dateStopped?: string | null;
   cars: DriverCar[];
   upcomingJobs: DriverJob[];
   completedJobs: DriverJob[];
   statementRows: StatementRow[];
   documents: DocumentRow[];
 };
+
+type DriverStatusAction = 'holiday' | 'resume' | 'block';
+
+type ConfirmationState =
+  | { type: 'driver-status'; driverId: string; action: DriverStatusAction; message: string }
+  | { type: 'vehicle-cease'; driverId: string; vrm: string; message: string }
+  | null;
 
 const driverProfiles: DriverProfileData[] = [
   {
@@ -74,6 +85,8 @@ const driverProfiles: DriverProfileData[] = [
     rating: '4.9 / 5',
     tenure: '6 yrs with Velvet',
     lastOnline: '01:20 UTC',
+    dateStarted: '2019-04-15',
+    dateStopped: null,
     cars: [
       {
         vrm: 'LC20 ABC',
@@ -83,7 +96,8 @@ const driverProfiles: DriverProfileData[] = [
         insuranceExpiry: '2025-08-31',
         phvExpiry: '2025-09-20',
         logbook: 'Uploaded',
-        status: 'Active'
+        status: 'Active',
+        startDate: '2022-03-01'
       }
     ],
     upcomingJobs: [],
@@ -121,6 +135,8 @@ const driverProfiles: DriverProfileData[] = [
     rating: '4.8 / 5',
     tenure: '4 yrs with Velvet',
     lastOnline: '03:10 UTC',
+    dateStarted: '2020-07-03',
+    dateStopped: null,
     cars: [
       {
         vrm: 'BD68 XYZ',
@@ -130,7 +146,8 @@ const driverProfiles: DriverProfileData[] = [
         insuranceExpiry: '2025-12-01',
         phvExpiry: '2026-01-10',
         logbook: 'Uploaded',
-        status: 'Reserve'
+        status: 'Reserve',
+        startDate: '2023-05-20'
       }
     ],
     upcomingJobs: [
@@ -157,6 +174,8 @@ const driverProfiles: DriverProfileData[] = [
     rating: '5.0 / 5',
     tenure: '3 yrs with Velvet',
     lastOnline: '00:05 UTC',
+    dateStarted: '2021-01-11',
+    dateStopped: null,
     cars: [
       {
         vrm: 'LR75 QNE',
@@ -166,7 +185,8 @@ const driverProfiles: DriverProfileData[] = [
         insuranceExpiry: '2025-12-22',
         phvExpiry: '2025-12-01',
         logbook: 'Uploaded',
-        status: 'Active'
+        status: 'Active',
+        startDate: '2022-08-15'
       }
     ],
     upcomingJobs: [
@@ -196,6 +216,8 @@ const driverProfiles: DriverProfileData[] = [
     rating: '4.7 / 5',
     tenure: '5 yrs with Velvet',
     lastOnline: '02:40 UTC',
+    dateStarted: '2018-09-19',
+    dateStopped: null,
     cars: [
       {
         vrm: 'EV13 TES',
@@ -205,7 +227,8 @@ const driverProfiles: DriverProfileData[] = [
         insuranceExpiry: '2025-11-02',
         phvExpiry: '2026-01-12',
         logbook: 'Uploaded',
-        status: 'Active'
+        status: 'Active',
+        startDate: '2021-11-30'
       }
     ],
     upcomingJobs: [
@@ -257,7 +280,11 @@ const JobCard: React.FC<{ job: DriverJob }> = ({ job }) => (
   </div>
 );
 
-const CarCard: React.FC<{ car: DriverCar }> = ({ car }) => (
+const CarCard: React.FC<{
+  car: DriverCar;
+  isCeased: boolean;
+  onVehicleCease: () => void;
+}> = ({ car, isCeased, onVehicleCease }) => (
   <div className="space-y-3 rounded-2xl border border-gray-800/80 bg-gradient-to-br from-[#111111] to-black p-4">
     <div className="flex items-center gap-3">
       <Car className="text-amber-400" size={20} />
@@ -268,7 +295,7 @@ const CarCard: React.FC<{ car: DriverCar }> = ({ car }) => (
         <p className="text-sm text-gray-400">{car.vrm}</p>
       </div>
       <span className="ml-auto rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wider text-amber-200 border-amber-500/50">
-        {car.status}
+        {isCeased ? 'Ceased' : car.status}
       </span>
     </div>
     <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
@@ -276,6 +303,17 @@ const CarCard: React.FC<{ car: DriverCar }> = ({ car }) => (
       <span>Insurance: {car.insuranceExpiry}</span>
       <span>PHV: {car.phvExpiry}</span>
       <span>Logbook: {car.logbook}</span>
+      <span>Start date: {car.startDate}</span>
+      <span className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onVehicleCease}
+          disabled={isCeased}
+          className="rounded-full border border-red-500/60 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-red-200 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Vehicle ceased
+        </button>
+      </span>
     </div>
   </div>
 );
@@ -316,6 +354,30 @@ const AdminDriversPage: React.FC = () => {
   const [query, setQuery] = useState('');
   const [activeTabs, setActiveTabs] = useState<Record<string, (typeof tabs)[number]>>({});
   const [rowStatuses, setRowStatuses] = useState<Record<string, Record<string, 'Paid' | 'Unpaid'>>>({});
+  const [driverStatuses, setDriverStatuses] = useState<Record<string, 'active' | 'holiday' | 'blocked'>>(() =>
+    Object.fromEntries(driverProfiles.map((driver) => [driver.id, 'active']))
+  );
+  const [driverStopDates, setDriverStopDates] = useState<Record<string, string | null>>(() =>
+    Object.fromEntries(driverProfiles.map((driver) => [driver.id, driver.dateStopped ?? null]))
+  );
+  const [carCeasedState, setCarCeasedState] = useState<Record<string, Record<string, boolean>>>(() =>
+    driverProfiles.reduce<Record<string, Record<string, boolean>>>((acc, driver) => {
+      acc[driver.id] = driver.cars.reduce<Record<string, boolean>>((carMap, car) => {
+        carMap[car.vrm] = false;
+        return carMap;
+      }, {});
+      return acc;
+    }, {})
+  );
+  const [confirmation, setConfirmation] = useState<ConfirmationState>(null);
+  const getNowString = () =>
+    new Date().toLocaleString('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
 
   const getActiveTab = (driverId: string) => activeTabs[driverId] ?? tabs[0];
   const handleTabChange = (driverId: string, tab: (typeof tabs)[number]) => {
@@ -349,20 +411,121 @@ const AdminDriversPage: React.FC = () => {
     }));
   };
 
+  const applyDriverStatusChange = (driverId: string, action: DriverStatusAction) => {
+    if (action === 'resume') {
+      setDriverStatuses((prev) => ({ ...prev, [driverId]: 'active' }));
+      setDriverStopDates((prev) => ({ ...prev, [driverId]: null }));
+    } else {
+      setDriverStatuses((prev) => ({ ...prev, [driverId]: action === 'holiday' ? 'holiday' : 'blocked' }));
+      setDriverStopDates((prev) => ({ ...prev, [driverId]: getNowString() }));
+    }
+  };
+
+  const requestDriverStatusChange = (driverId: string, action: DriverStatusAction) => {
+    const driverName = driverProfiles.find((d) => d.id === driverId)?.name ?? 'driver';
+    const messages: Record<DriverStatusAction, string> = {
+      holiday: `Put ${driverName} on Holiday Mode?`,
+      resume: `Resume work for ${driverName}?`,
+      block: `Block ${driverName}?`
+    };
+    setConfirmation({
+      type: 'driver-status',
+      driverId,
+      action,
+      message: messages[action]
+    });
+  };
+
+  const applyVehicleCease = (driverId: string, vrm: string) => {
+    setCarCeasedState((prev) => ({
+      ...prev,
+      [driverId]: {
+        ...prev[driverId],
+        [vrm]: true
+      }
+    }));
+  };
+
+  const requestVehicleCease = (driverId: string, vrm: string) => {
+    const driver = driverProfiles.find((d) => d.id === driverId);
+    const car = driver?.cars.find((c) => c.vrm === vrm);
+    const carLabel = car ? `${car.make} ${car.model} (${vrm})` : vrm;
+    setConfirmation({
+      type: 'vehicle-cease',
+      driverId,
+      vrm,
+      message: `Mark ${carLabel} as ceased?`
+    });
+  };
+
+  const handleConfirmAction = () => {
+    if (!confirmation) return;
+    if (confirmation.type === 'driver-status') {
+      applyDriverStatusChange(confirmation.driverId, confirmation.action);
+    } else if (confirmation.type === 'vehicle-cease') {
+      applyVehicleCease(confirmation.driverId, confirmation.vrm);
+    }
+    setConfirmation(null);
+  };
+
+  const handleCancelAction = () => setConfirmation(null);
+
   const renderTabContent = (driver: DriverProfileData) => {
     const tab = getActiveTab(driver.id);
     switch (tab) {
       case 'Details':
         return (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <InfoItem label="Phone" value={driver.phone} />
-            <InfoItem label="Email" value={driver.email} />
-            <InfoItem label="Address" value={driver.address} />
-            <InfoItem label="PCO Licence" value={driver.license} />
-            <InfoItem label="PCO Expiry" value={driver.pcoExpiry} />
-            <InfoItem label="Rating" value={driver.rating} />
-            <InfoItem label="Tenure" value={driver.tenure} />
-            <InfoItem label="Last online" value={driver.lastOnline} />
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <InfoItem label="Phone" value={driver.phone} />
+              <InfoItem label="Email" value={driver.email} />
+              <InfoItem label="Address" value={driver.address} />
+              <InfoItem label="PCO Licence" value={driver.license} />
+              <InfoItem label="PCO Expiry" value={driver.pcoExpiry} />
+              <InfoItem label="Rating" value={driver.rating} />
+              <InfoItem label="Tenure" value={driver.tenure} />
+              <InfoItem label="Last online" value={driver.lastOnline} />
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-amber-200/70">Date started</p>
+                  <p className="text-lg font-semibold text-white/90">{driver.dateStarted}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-amber-200/70">Date stopped</p>
+                  <p className="text-lg font-semibold text-white/90">
+                    {driverStopDates[driver.id] ?? '—'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => requestDriverStatusChange(driver.id, 'holiday')}
+                  disabled={driverStatuses[driver.id] === 'holiday'}
+                  className="rounded-full border border-amber-500/60 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-amber-200 hover:bg-amber-500/10 disabled:opacity-50"
+                >
+                  Holiday mode
+                </button>
+                <button
+                  type="button"
+                  onClick={() => requestDriverStatusChange(driver.id, 'resume')}
+                  disabled={driverStatuses[driver.id] === 'active'}
+                  className="rounded-full border border-emerald-500/60 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-50"
+                >
+                  Resume work
+                </button>
+                <button
+                  type="button"
+                  onClick={() => requestDriverStatusChange(driver.id, 'block')}
+                  disabled={driverStatuses[driver.id] === 'blocked'}
+                  className="rounded-full border border-red-500/60 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-red-200 hover:bg-red-500/10 disabled:opacity-50"
+                >
+                  Block driver
+                </button>
+              </div>
+            </div>
           </div>
         );
       case 'Jobs':
@@ -402,7 +565,12 @@ const AdminDriversPage: React.FC = () => {
         return (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {driver.cars.map((car) => (
-              <CarCard car={car} key={car.vrm} />
+              <CarCard
+                car={car}
+                key={car.vrm}
+                isCeased={Boolean(carCeasedState[driver.id]?.[car.vrm])}
+                onVehicleCease={() => requestVehicleCease(driver.id, car.vrm)}
+              />
             ))}
           </div>
         );
@@ -498,77 +666,104 @@ const AdminDriversPage: React.FC = () => {
   };
 
   return (
-    <PageShell mainClassName="flex flex-col px-4 sm:px-6 md:px-8 py-10" hideFooter hideHeader>
-      <div className="w-full flex-grow">
-        <div className="max-w-6xl mx-auto space-y-8">
-          <AdminPageHeader active="drivers" />
-          <section className="space-y-10">
-            <div className="relative w-full">
-              <span className="absolute inset-y-0 left-3 flex items-center text-gray-400">
-                <Search size={16} />
-              </span>
-              <input
-                type="text"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search drivers by name, email or ID..."
-                className="w-full rounded-2xl border border-white/10 bg-black/40 px-10 py-3 text-white placeholder-gray-500 focus:border-amber-400 focus:outline-none"
-              />
-            </div>
-            {filteredDrivers.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center text-gray-400">
-                No drivers match your search. Try a different name or ID.
+    <>
+      <PageShell mainClassName="flex flex-col px-4 sm:px-6 md:px-8 py-10" hideFooter hideHeader>
+        <div className="w-full flex-grow">
+          <div className="max-w-6xl mx-auto space-y-8">
+            <AdminPageHeader active="drivers" />
+            <section className="space-y-10">
+              <div className="relative w-full">
+                <span className="absolute inset-y-0 left-3 flex items-center text-gray-400">
+                  <Search size={16} />
+                </span>
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search drivers by name, email or ID..."
+                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-10 py-3 text-white placeholder-gray-500 focus:border-amber-400 focus:outline-none"
+                />
               </div>
-            ) : (
-              <>
-                {filteredDrivers.map((driver) => (
-                  <article
-                    key={driver.id}
-                    className="space-y-6 rounded-3xl border border-white/10 bg-black/60 p-6 shadow-lg shadow-black/60"
-                  >
-                    <header className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                      <div>
-                        <p className="text-xs uppercase tracking-wider text-amber-300/70">
-                          Driver ID {driver.id.toUpperCase()}
-                        </p>
-                        <h2 className="text-2xl font-bold text-white">{driver.name}</h2>
-                        <p className="text-sm text-gray-400">{driver.email}</p>
-                      </div>
-                      <div className="text-sm text-gray-300">
-                        <p>Phone: {driver.phone}</p>
-                        <p>PCO Expiry: {driver.pcoExpiry}</p>
-                      </div>
-                    </header>
-                    <nav className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-2">
-                      {tabs.map((tab) => (
-                        <button
-                          key={tab}
-                          type="button"
-                          onClick={() => handleTabChange(driver.id, tab)}
-                          className={`relative px-4 py-2 text-sm font-semibold rounded-full transition-colors whitespace-nowrap ${
-                            getActiveTab(driver.id) === tab
-                              ? 'bg-amber-400 text-black shadow-md shadow-amber-400/30'
-                              : 'bg-gray-800/40 text-amber-300 hover:bg-gray-700/40'
-                          }`}
-                        >
-                          {tab}
-                          {tab === 'Jobs' && driver.upcomingJobs.length > 0 && (
-                            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold text-white">
-                              {driver.upcomingJobs.length}
-                            </span>
-                          )}
-                        </button>
-                      ))}
-                    </nav>
-                    <div>{renderTabContent(driver)}</div>
-                  </article>
-                ))}
-              </>
-            )}
-          </section>
+              {filteredDrivers.length === 0 ? (
+                <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center text-gray-400">
+                  No drivers match your search. Try a different name or ID.
+                </div>
+              ) : (
+                <>
+                  {filteredDrivers.map((driver) => (
+                    <article
+                      key={driver.id}
+                      className="space-y-6 rounded-3xl border border-white/10 bg-black/60 p-6 shadow-lg shadow-black/60"
+                    >
+                      <header className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                        <div>
+                          <p className="text-xs uppercase tracking-wider text-amber-300/70">
+                            Driver ID {driver.id.toUpperCase()}
+                          </p>
+                          <h2 className="text-2xl font-bold text-white">{driver.name}</h2>
+                          <p className="text-sm text-gray-400">{driver.email}</p>
+                        </div>
+                        <div className="text-sm text-gray-300">
+                          <p>Phone: {driver.phone}</p>
+                          <p>PCO Expiry: {driver.pcoExpiry}</p>
+                        </div>
+                      </header>
+                      <nav className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-2">
+                        {tabs.map((tab) => (
+                          <button
+                            key={tab}
+                            type="button"
+                            onClick={() => handleTabChange(driver.id, tab)}
+                            className={`relative px-4 py-2 text-sm font-semibold rounded-full transition-colors whitespace-nowrap ${
+                              getActiveTab(driver.id) === tab
+                                ? 'bg-amber-400 text-black shadow-md shadow-amber-400/30'
+                                : 'bg-gray-800/40 text-amber-300 hover:bg-gray-700/40'
+                            }`}
+                          >
+                            {tab}
+                            {tab === 'Jobs' && driver.upcomingJobs.length > 0 && (
+                              <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold text-white">
+                                {driver.upcomingJobs.length}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </nav>
+                      <div>{renderTabContent(driver)}</div>
+                    </article>
+                  ))}
+                </>
+              )}
+            </section>
+          </div>
         </div>
-      </div>
-    </PageShell>
+      </PageShell>
+      {confirmation && (
+        <Modal
+          isOpen={true}
+          onClose={handleCancelAction}
+          title="Confirm action"
+        >
+          <p className="text-sm text-gray-200">{confirmation.message}</p>
+          <div className="mt-6 flex flex-wrap justify-end gap-3">
+            <button
+              type="button"
+              onClick={handleCancelAction}
+              className="rounded-full border border-white/20 px-5 py-2 text-sm font-semibold text-gray-100 hover:border-white/40 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmAction}
+              className="rounded-full border border-amber-400 bg-amber-400 px-6 py-2 text-sm font-semibold text-black shadow-[0_0_15px_rgba(251,191,36,0.4)] hover:shadow-[0_0_25px_rgba(251,191,36,0.6)] transition"
+            >
+              Confirm
+            </button>
+          </div>
+        </Modal>
+      )}
+    </>
   );
 };
 

@@ -4,12 +4,40 @@ import React, { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { olderBookingsData, OlderBooking } from '../data/olderBookings';
 
-const driverContacts: Record<string, { phone: string; email: string }> = {
-  'James P.': { phone: '+44 7700 900123', email: 'james@velvetdrivers.co.uk' },
-  'Robert K.': { phone: '+44 7700 900234', email: 'robert@velvetdrivers.co.uk' },
-  'David C.': { phone: '+44 7700 900345', email: 'david@velvetdrivers.co.uk' },
-  'Anna B.': { phone: '+44 7700 900456', email: 'anna@velvetdrivers.co.uk' },
-  'Oliver T.': { phone: '+44 7700 900567', email: 'oliver@velvetdrivers.co.uk' }
+const driverContacts: Record<
+  string,
+  { fullName: string; phone: string; email: string; pcoLicenceNumber: string }
+> = {
+  'James P.': {
+    fullName: 'James Parker',
+    phone: '+44 7700 900123',
+    email: 'james@velvetdrivers.co.uk',
+    pcoLicenceNumber: 'PCO-445566',
+  },
+  'Robert K.': {
+    fullName: 'Robert King',
+    phone: '+44 7700 900234',
+    email: 'robert@velvetdrivers.co.uk',
+    pcoLicenceNumber: 'PCO-223311',
+  },
+  'David C.': {
+    fullName: 'David Carden',
+    phone: '+44 7700 900345',
+    email: 'david@velvetdrivers.co.uk',
+    pcoLicenceNumber: 'PCO-998877',
+  },
+  'Anna B.': {
+    fullName: 'Anna Beaumont',
+    phone: '+44 7700 900456',
+    email: 'anna@velvetdrivers.co.uk',
+    pcoLicenceNumber: 'PCO-667788',
+  },
+  'Oliver T.': {
+    fullName: 'Oliver Turner',
+    phone: '+44 7700 900567',
+    email: 'oliver@velvetdrivers.co.uk',
+    pcoLicenceNumber: 'PCO-114422',
+  },
 };
 
 const formatDateHeading = (date: string) => {
@@ -17,6 +45,30 @@ const formatDateHeading = (date: string) => {
   return isNaN(parsed.getTime())
     ? date
     : parsed.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+};
+
+const formatDateTime = (value?: string) => {
+  if (!value) return null;
+  const normalized = value.replace(' ', 'T');
+  const parsed = new Date(normalized);
+  if (isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const formatDateOnly = (value: string) => {
+  const parsed = new Date(value);
+  if (isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
 };
 
 const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' }) => {
@@ -82,36 +134,43 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
                       className="rounded-2xl border border-white/10 bg-black/60 p-5 shadow-inner shadow-black/40"
                     >
                       <div className="flex flex-col gap-6 lg:flex-row">
-                        <div className="flex-1 space-y-3">
-                          <div className="space-y-1">
-                            <p className="text-xs uppercase tracking-wider text-amber-300">
-                              Booking #{booking.id}
-                              {booking.bookingCreated ? `. Created: ${booking.bookingCreated}` : ''}
-                              {booking.bookingAccepted ? `. Accepted: ${booking.bookingAccepted}` : ''}
-                            </p>
-                            <p className="text-sm text-gray-400">
-                              {booking.vehicle} · {booking.numberPlate}
-                            </p>
-                          </div>
-                          <div>
-                            <h3 className="text-xl font-semibold text-white">{booking.pickup}</h3>
-                            <p className="text-sm text-gray-400">{booking.dropOffs.join(' · ')}</p>
-                          </div>
+                        <div className="flex-1 space-y-4">
                           <div className="space-y-1 text-sm text-gray-200">
-                            <p>Passenger: {booking.passengerName} · Phone: {booking.passengerPhone}</p>
-                            <p>Fare quoted: £{booking.fareQuoted.toFixed(2)}</p>
-                            <p>Booked by: {booking.bookedBy}</p>
+                            <p>
+                              <span className="font-semibold text-white">Booking #{booking.id}.</span>{' '}
+                              Date of booking : {formatDateTime(booking.bookingCreated) ?? booking.bookingCreated}
+                              {booking.bookingAccepted
+                                ? `. Accepted: ${formatDateTime(booking.bookingAccepted)}`
+                                : ''}
+                            </p>
+                            <p>Booked and dispatched by: {booking.bookedBy}</p>
                           </div>
-                          <p className="text-xs text-gray-400">Notes: {booking.notes}</p>
+
+                          <div className="space-y-1 text-sm text-gray-200">
+                            <p>Date of journey : {formatDateOnly(booking.date)}</p>
+                            <p>Time: {booking.time}</p>
+                            <p>Passenger: {booking.passengerName}</p>
+                            <p>Phone: {booking.passengerPhone}</p>
+                            <p>Pickup: {booking.pickup}</p>
+                            <p>Drop-off: {booking.dropOffs.join(', ')}</p>
+                            <p>Notes: {booking.notes}</p>
+                            <p>Fare quoted: £{booking.fareQuoted.toFixed(2)}</p>
+                          </div>
                         </div>
                         <div className="space-y-2 rounded-2xl border border-white/10 bg-black/40 p-4 lg:basis-[45%]">
                           <p className="text-sm font-semibold text-white">Driver contact</p>
                           {driverInfo ? (
-                            <>
-                              <p className="text-xs text-gray-400">Name: {booking.driverName}</p>
-                              <p className="text-xs text-gray-400">Phone: {driverInfo.phone}</p>
-                              <p className="text-xs text-gray-400">Email: {driverInfo.email}</p>
-                            </>
+                            <div className="space-y-1 text-xs text-gray-300">
+                              <p>
+                                Name: {driverInfo.fullName} ({booking.driverName})
+                              </p>
+                              <p>Phone: {driverInfo.phone}</p>
+                              <p>PCO licence number: {driverInfo.pcoLicenceNumber}</p>
+                              <p>
+                                {booking.vehicle} · {booking.numberPlate}
+                              </p>
+                              <p>Email: {driverInfo.email}</p>
+                            </div>
                           ) : (
                             <p className="text-xs text-gray-500">No driver contact on file.</p>
                           )}

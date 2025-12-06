@@ -50,6 +50,30 @@ const OperatorPoliciesPage: React.FC = () => {
           ]}
         />
       </PolicySection>
+
+      <PolicySection title="Ex-Offender Policy">
+        <div className="space-y-3 text-white/80">
+          <p>
+            Velvet Drivers Limited is committed to safe, fair, and responsible recruitment. We do not automatically
+            reject applicants with previous criminal convictions. Each case is assessed individually, with passenger
+            safety and compliance with TfL’s “fit and proper” requirements always taking priority.
+          </p>
+          <p>Key principles:</p>
+          <PolicyList
+            items={[
+              'We may request disclosure of criminal convictions where required by law or TfL.',
+              'All drivers must hold a valid TfL private hire driver licence and pass an enhanced DBS check.',
+              'When a conviction is disclosed, we consider:',
+              '  • The nature and seriousness of the offence',
+              '  • How long ago it happened',
+              '  • Whether it is relevant to private hire work',
+              '  • Evidence of rehabilitation and conduct since',
+              'We may refuse or remove a driver where offences involve violence, sexual offences, dishonesty, fraud, theft, drugs, alcohol, or anything that may affect passenger safety or TfL’s standards.',
+              'Any information about convictions is treated as confidential and handled securely.',
+            ]}
+          />
+        </div>
+      </PolicySection>
     </PolicyPageLayout>
   );
 };
