@@ -1,10 +1,10 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
 
 const pool = getDbPool();
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const path = (req.query.path as string[] | undefined) || [];
   const route = '/' + path.join('/');
 
