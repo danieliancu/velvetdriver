@@ -61,7 +61,22 @@ type LiveBooking = {
   time: string;
   date: string;
   priceDetails: string;
+  bookedBy: string;
   drivers: BookingDriverId[];
+};
+
+type LiveBookingResponse = {
+  id: number;
+  code: string;
+  pickup: string;
+  dropOff: string;
+  passenger: string;
+  phone: string;
+  notes: string;
+  time: string;
+  date: string;
+  priceDetails: string;
+  bookedBy: string;
 };
 
 const formatPhoneForWhatsApp = (phone: string) => phone.replace(/\D/g, '');
