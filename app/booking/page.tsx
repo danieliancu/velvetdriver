@@ -1,7 +1,7 @@
 ﻿
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PlusCircle, XCircle, Calendar, Clock } from 'lucide-react';
 import PageShell from '@/components/PageShell';
@@ -31,7 +31,7 @@ type FlightDetails = {
     speedKmh?: number;
 };
 
-const BookingPage = () => {
+const BookingPageInner = () => {
     const router = useRouter();
     const searchParams = useSearchParams();
     const savedQuoteParam = searchParams?.get('saved');
@@ -1141,6 +1141,12 @@ const BookingPage = () => {
         </PageShell>
     );
 };
+
+const BookingPage = () => (
+    <Suspense fallback={<div className="min-h-screen bg-black text-white flex items-center justify-center">Loading booking page...</div>}>
+        <BookingPageInner />
+    </Suspense>
+);
 
 export default BookingPage;
 
