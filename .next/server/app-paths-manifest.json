@@ -1,9 +1,9 @@
 {
-  "/client/login/page": "app/client/login/page.js",
-  "/client/dashboard/page": "app/client/dashboard/page.js",
   "/api/auth/login/route": "app/api/auth/login/route.js",
+  "/client/dashboard/page": "app/client/dashboard/page.js",
   "/api/client/history/route": "app/api/client/history/route.js",
   "/api/client/profile/route": "app/api/client/profile/route.js",
   "/api/client/saved-quotes/route": "app/api/client/saved-quotes/route.js",
-  "/page": "app/page.js"
+  "/page": "app/page.js",
+  "/client/login/page": "app/client/login/page.js"
 }

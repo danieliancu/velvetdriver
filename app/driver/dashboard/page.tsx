@@ -444,7 +444,7 @@ const CarsPage: React.FC = () => {
         );
     };
 
-    const authenticateWithDvla = async () => {
+    const authenticateWithDvla = async (): Promise<string | null> => {
         const username = process.env.NEXT_PUBLIC_DVLA_USERNAME;
         const password = process.env.NEXT_PUBLIC_DVLA_PASSWORD;
         if (!username || !password) return null; // optional, VES also works with api key only
@@ -463,7 +463,8 @@ const CarsPage: React.FC = () => {
                 return null;
             }
             const data = await res.json();
-            return data['id-token'] as string | undefined;
+            const token = data['id-token'];
+            return typeof token === 'string' ? token : null;
         } catch (err) {
             console.error('DVLA auth error', err);
             return null;

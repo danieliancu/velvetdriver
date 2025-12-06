@@ -20,8 +20,32 @@ const DashboardContentWrapper: React.FC<{ title: string; children: React.ReactNo
 );
 
 const corporateJourneys: Journey[] = [
-  { id: 1, date: '2025-02-01 09:00', pickup: 'Canary Wharf', destination: 'The Shard', driver: 'Robert K.', car: 'BMW 7 Series', plate: 'RX70DVE', status: 'Completed', price: 95, invoiceUrl: null },
-  { id: 2, date: '2025-02-10 14:00', pickup: 'LHR T5', destination: 'The Ned', driver: 'Anna B.', car: 'Mercedes V-Class', plate: 'AB21LUX', status: 'Upcoming', price: 180, invoiceUrl: null },
+  {
+    id: 1,
+    date: '2025-02-01 09:00',
+    pickup: 'Canary Wharf',
+    destination: 'The Shard',
+    driver: 'Robert K.',
+    car: 'BMW 7 Series',
+    plate: 'RX70DVE',
+    serviceType: 'As Directed',
+    status: 'Completed',
+    price: 95,
+    invoiceUrl: null,
+  },
+  {
+    id: 2,
+    date: '2025-02-10 14:00',
+    pickup: 'LHR T5',
+    destination: 'The Ned',
+    driver: 'Anna B.',
+    car: 'Mercedes V-Class',
+    plate: 'AB21LUX',
+    serviceType: 'Transfer',
+    status: 'Upcoming',
+    price: 180,
+    invoiceUrl: null,
+  },
 ];
 
 const CorporateDashboardPage: React.FC = () => {

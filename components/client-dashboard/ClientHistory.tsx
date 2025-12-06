@@ -16,7 +16,7 @@ const StatusBadge: React.FC<{ status: Journey['status'] }> = ({ status }) => {
 type FilterStatus = 'All' | 'Completed' | 'Upcoming' | 'Saved';
 
 interface Props {
-  journeys: Journey[];
+  journeys?: Journey[];
   loading?: boolean;
   savedQuotes?: SavedQuote[];
   savedLoading?: boolean;
@@ -26,7 +26,7 @@ interface Props {
 }
 
 const ClientHistory: React.FC<Props> = ({
-  journeys,
+  journeys = [],
   loading = false,
   savedQuotes = [],
   savedLoading = false,
@@ -87,7 +87,7 @@ const ClientHistory: React.FC<Props> = ({
           const dropOffs: string[] = Array.isArray(payload.dropOffs) ? payload.dropOffs.filter(Boolean) : payload.dropOff ? [payload.dropOff] : [];
           const primaryDrop = dropOffs[0] || 'Drop-off TBD';
           const iso = payload.date && payload.time ? `${payload.date}T${payload.time}` : payload.date;
-          let formatted = null;
+          let formatted: string | null = null;
           if (iso) {
             const date = new Date(iso);
             if (!Number.isNaN(date.getTime())) {
