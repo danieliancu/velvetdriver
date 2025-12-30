@@ -4,21 +4,87 @@ import React, { useMemo, useState } from 'react';
 import AdminPageHeader from '@/components/AdminPageHeader';
 
 type StatementRow = {
-  date: string;
-  ref: string;
-  pickup: string;
-  dropoff: string;
-  vehicle: string;
-  driver: string;
+  personAccepting: string;
+  bookingDate: string;
+  journeyDate: string;
+  customerName: string;
+  phoneNumber: string;
+  collection: string;
+  destination: string;
   fare: number;
-  status: 'Paid' | 'Pending' | 'Awaiting Driver';
+  despatcher: string;
+  driverName: string;
+  driverLicenseNo: string;
+  vehicleReg: string;
+  subletOperatorNo: string;
+  subletOperatorName: string;
 };
 
 const mockStatements: StatementRow[] = [
-  { date: '2025-10-01', ref: 'VD-1001', pickup: 'WD3 4PQ', dropoff: 'Heathrow T5', vehicle: 'Saloon', driver: 'James P.', fare: 64, status: 'Paid' },
-  { date: '2025-10-03', ref: 'VD-1002', pickup: 'HA4 0HJ', dropoff: 'LHR T3', vehicle: 'MPV', driver: 'Robert K.', fare: 52.5, status: 'Pending' },
-  { date: '2025-10-05', ref: 'VD-1003', pickup: 'SW1A 1AA', dropoff: 'Gatwick South', vehicle: 'Luxury', driver: 'Anna B.', fare: 112, status: 'Paid' },
-  { date: '2025-10-06', ref: 'VD-1004', pickup: 'W1J 7NT', dropoff: 'City Airport', vehicle: 'Executive', driver: 'Oliver T.', fare: 74, status: 'Awaiting Driver' },
+  {
+    personAccepting: 'Sarah Lewis',
+    bookingDate: '2025-10-01',
+    journeyDate: '2025-10-02',
+    customerName: 'John Carter',
+    phoneNumber: '+44 7700 900111',
+    collection: 'WD3 4PQ',
+    destination: 'Heathrow T5',
+    fare: 64,
+    despatcher: 'Michael Ross',
+    driverName: 'James P.',
+    driverLicenseNo: 'PCO-70934',
+    vehicleReg: 'LC20 ABC',
+    subletOperatorNo: 'SUB-101',
+    subletOperatorName: 'Velvet Ops'
+  },
+  {
+    personAccepting: 'David Nguyen',
+    bookingDate: '2025-10-03',
+    journeyDate: '2025-10-04',
+    customerName: 'Emily Stone',
+    phoneNumber: '+44 7700 900222',
+    collection: 'HA4 0HJ',
+    destination: 'LHR T3',
+    fare: 52.5,
+    despatcher: 'Laura Blake',
+    driverName: 'Robert K.',
+    driverLicenseNo: 'PCO-70937',
+    vehicleReg: 'EV13 TES',
+    subletOperatorNo: 'SUB-102',
+    subletOperatorName: 'CityWide'
+  },
+  {
+    personAccepting: 'Amelia Green',
+    bookingDate: '2025-10-05',
+    journeyDate: '2025-10-05',
+    customerName: 'Anna B.',
+    phoneNumber: '+44 7700 900456',
+    collection: 'SW1A 1AA',
+    destination: 'Gatwick South',
+    fare: 112,
+    despatcher: 'Oliver T.',
+    driverName: 'Anna B.',
+    driverLicenseNo: 'PCO-70935',
+    vehicleReg: 'BD68 XYZ',
+    subletOperatorNo: 'SUB-103',
+    subletOperatorName: 'Skyline Cars'
+  },
+  {
+    personAccepting: 'Michael Ross',
+    bookingDate: '2025-10-06',
+    journeyDate: '2025-10-07',
+    customerName: 'Peter Shaw',
+    phoneNumber: '+44 7700 900666',
+    collection: 'W1J 7NT',
+    destination: 'City Airport',
+    fare: 74,
+    despatcher: 'Sarah Lewis',
+    driverName: 'Oliver T.',
+    driverLicenseNo: 'PCO-70938',
+    vehicleReg: 'RX70 DVE',
+    subletOperatorNo: 'SUB-104',
+    subletOperatorName: 'Prime Fleet'
+  }
 ];
 
 const AdminStatementsPage: React.FC = () => {
@@ -26,27 +92,26 @@ const AdminStatementsPage: React.FC = () => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
-  const toggleSelect = (ref: string) => {
-    setSelected((prev) => ({ ...prev, [ref]: !prev[ref] }));
+  const toggleSelect = (key: string) => {
+    setSelected((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const allSelected = useMemo(
-    () => mockStatements.every((row) => selected[row.ref]),
-    [selected]
-  );
+  const allSelected = useMemo(() => mockStatements.every((_row, idx) => selected[String(idx)]), [selected]);
 
   const toggleSelectAll = () => {
-    const next = mockStatements.reduce<Record<string, boolean>>((acc, row) => {
-      acc[row.ref] = !allSelected;
+    const next = mockStatements.reduce<Record<string, boolean>>((acc, _row, idx) => {
+      acc[String(idx)] = !allSelected;
       return acc;
     }, {});
     setSelected(next);
   };
 
   const handleDownload = () => {
-    const refs = mockStatements.filter((row) => selected[row.ref]).map((row) => row.ref);
+    const refs = mockStatements
+      .map((row, idx) => ({ row, idx }))
+      .filter(({ idx }) => selected[String(idx)])
+      .map(({ row }) => row.customerName);
     if (refs.length === 0) return;
-    // placeholder for future download logic
     alert(`Download initiated for: ${refs.join(', ')}`);
   };
 
@@ -66,7 +131,7 @@ const AdminStatementsPage: React.FC = () => {
                   onChange={(e) => setStartDate(e.target.value)}
                   className="rounded-md border border-white/10 bg-[#111]/70 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                 />
-                <span className="text-gray-500">—</span>
+                <span className="text-gray-500">ƒ?"</span>
                 <input
                   type="date"
                   value={endDate}
@@ -78,7 +143,7 @@ const AdminStatementsPage: React.FC = () => {
                 type="button"
                 onClick={handleDownload}
                 className="inline-flex items-center gap-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400 transition-colors disabled:opacity-60"
-                disabled={!mockStatements.some((row) => selected[row.ref])}
+                disabled={!mockStatements.some((_row, idx) => selected[String(idx)])}
               >
                 Download selected
               </button>
@@ -100,50 +165,51 @@ const AdminStatementsPage: React.FC = () => {
                         <span className="text-[10px] uppercase tracking-[0.2em] text-amber-300">Download</span>
                       </div>
                     </th>
-                    <th className="px-3 py-3 text-left">Date</th>
-                    <th className="px-3 py-3 text-left">Ref</th>
-                    <th className="px-3 py-3 text-left">Pickup</th>
-                    <th className="px-3 py-3 text-left">Dropoff</th>
-                    <th className="px-3 py-3 text-left">Vehicle</th>
-                    <th className="px-3 py-3 text-left">Driver</th>
-                    <th className="px-3 py-3 text-left">Fare (£)</th>
-                    <th className="px-3 py-3 text-left">Status</th>
+                    <th className="px-3 py-3 text-left">Person accepting booking</th>
+                    <th className="px-3 py-3 text-left">Date of booking</th>
+                    <th className="px-3 py-3 text-left">Date of journey</th>
+                    <th className="px-3 py-3 text-left">Customer name</th>
+                    <th className="px-3 py-3 text-left">Phone number</th>
+                    <th className="px-3 py-3 text-left">Place of collection</th>
+                    <th className="px-3 py-3 text-left">Main destination</th>
+                    <th className="px-3 py-3 text-left">Fare quoted</th>
+                    <th className="px-3 py-3 text-left">Person despatching booking</th>
+                    <th className="px-3 py-3 text-left">Driver Full Name</th>
+                    <th className="px-3 py-3 text-left">Driver PHP License Number</th>
+                    <th className="px-3 py-3 text-left">Vehcle Reg Number</th>
+                    <th className="px-3 py-3 text-left">Sublet Operator No.</th>
+                    <th className="px-3 py-3 text-left">Sublet Operator Name</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {mockStatements.map((row) => {
-                    const isSelected = selected[row.ref] ?? false;
+                  {mockStatements.map((row, idx) => {
+                    const key = String(idx);
+                    const isSelected = selected[key] ?? false;
                     return (
-                      <tr key={row.ref} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                      <tr key={key} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                         <td className="px-3 py-3">
                           <input
                             type="checkbox"
                             checked={isSelected}
-                            onChange={() => toggleSelect(row.ref)}
+                            onChange={() => toggleSelect(key)}
                             className="h-4 w-4 accent-amber-500"
-                            aria-label={`Select ${row.ref} for download`}
+                            aria-label={`Select ${row.customerName} for download`}
                           />
                         </td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.date}</td>
-                        <td className="px-3 py-3 font-semibold text-white">{row.ref}</td>
-                        <td className="px-3 py-3">{row.pickup}</td>
-                        <td className="px-3 py-3">{row.dropoff}</td>
-                        <td className="px-3 py-3">{row.vehicle}</td>
-                        <td className="px-3 py-3">{row.driver}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.personAccepting}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.bookingDate}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.journeyDate}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.customerName}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.phoneNumber}</td>
+                        <td className="px-3 py-3">{row.collection}</td>
+                        <td className="px-3 py-3">{row.destination}</td>
                         <td className="px-3 py-3 font-semibold text-amber-200">£{row.fare.toFixed(2)}</td>
-                        <td className="px-3 py-3">
-                          <span
-                            className={`text-xs font-semibold uppercase tracking-[0.15em] ${
-                              row.status === 'Paid'
-                                ? 'text-green-300'
-                                : row.status === 'Pending'
-                                ? 'text-amber-300'
-                              : 'text-gray-300'
-                            }`}
-                          >
-                            {row.status}
-                          </span>
-                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.despatcher}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.driverName}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.driverLicenseNo}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.vehicleReg}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.subletOperatorNo}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">{row.subletOperatorName}</td>
                       </tr>
                     );
                   })}

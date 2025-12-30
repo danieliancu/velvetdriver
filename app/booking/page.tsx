@@ -42,7 +42,7 @@ const BookingPageInner = () => {
     const [dropOffs, setDropOffs] = useState(['']);
     const [date, setDate] = useState('');
     const [time, setTime] = useState('');
-    const [vehicle, setVehicle] = useState('Luxury MPV');
+    const [vehicle, setVehicle] = useState('Executive');
     const [serviceType, setServiceType] = useState('Transfer');
     const [passengers, setPassengers] = useState('1');
     const [smallSuitcases, setSmallSuitcases] = useState('0');
@@ -289,7 +289,11 @@ const BookingPageInner = () => {
         const maps = (window as any).google?.maps;
         if (!maps?.places || !pickupInputRef.current) return;
         distanceServiceRef.current = new maps.DistanceMatrixService();
-        const opts = { fields: ['formatted_address', 'geometry'], types: ['geocode'], componentRestrictions: { country: ['gb'] } } as any;
+        const opts = {
+            fields: ['formatted_address', 'geometry'],
+            types: ['geocode', 'establishment'],
+            componentRestrictions: { country: ['gb'] },
+        } as any;
 
         const pickupAuto = new maps.places.Autocomplete(pickupInputRef.current, opts);
         pickupAuto.addListener('place_changed', () => {
@@ -338,6 +342,8 @@ const BookingPageInner = () => {
             try {
                 element = new PlaceAutocompleteElement();
                 (element as any).inputElement = input;
+                (element as any).types = ['geocode', 'establishment'];
+                (element as any).countries = ['gb'];
             } catch {
                 return false;
             }

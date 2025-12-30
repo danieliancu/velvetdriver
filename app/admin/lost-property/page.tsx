@@ -58,6 +58,12 @@ const formatDateTime = (iso: string) =>
     new Date(iso),
   );
 
+const formatDateOnly = (iso: string) =>
+  new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' }).format(new Date(iso));
+
+const formatTimeOnly = (iso: string) =>
+  new Intl.DateTimeFormat('en-GB', { timeStyle: 'short' }).format(new Date(iso));
+
 const AdminLostPropertyPage: React.FC = () => {
   const [records, setRecords] = useState<LostPropertyRecord[]>(seedLost);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -136,14 +142,6 @@ const AdminLostPropertyPage: React.FC = () => {
                         <div className="px-4 pb-4 pt-2 space-y-4 border-t border-amber-900/30">
                           <div className="grid gap-3 sm:grid-cols-3">
                             <div className="sm:col-span-1">
-                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Date and Time of related booking</label>
-                              <input
-                                className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
-                                value={r.bookingDateTime}
-                                onChange={(e) => updateRecord(r.id, 'bookingDateTime', e.target.value)}
-                              />
-                            </div>
-                            <div className="sm:col-span-1">
                               <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Name</label>
                               <input
                                 className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -159,8 +157,6 @@ const AdminLostPropertyPage: React.FC = () => {
                                 onChange={(e) => updateCustomer(r.id, 'address', e.target.value)}
                               />
                             </div>
-                          </div>
-                          <div className="grid gap-3 sm:grid-cols-3">
                             <div className="sm:col-span-1">
                               <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Phone No</label>
                               <input
@@ -169,7 +165,27 @@ const AdminLostPropertyPage: React.FC = () => {
                                 onChange={(e) => updateCustomer(r.id, 'phone', e.target.value)}
                               />
                             </div>
-                            <div className="sm:col-span-2">
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            <div className="sm:col-span-1">
+                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Date</label>
+                              <input
+                                className="w-full rounded-lg bg-black/20 border border-white/10 px-3 py-2 text-sm text-white/80"
+                                value={formatDateOnly(r.receivedAt)}
+                                readOnly
+                              />
+                            </div>
+                            <div className="sm:col-span-1">
+                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Time</label>
+                              <input
+                                className="w-full rounded-lg bg-black/20 border border-white/10 px-3 py-2 text-sm text-white/80"
+                                value={formatTimeOnly(r.receivedAt)}
+                                readOnly
+                              />
+                            </div>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            <div className="sm:col-span-3">
                               <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Details of Property</label>
                               <textarea
                                 className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"

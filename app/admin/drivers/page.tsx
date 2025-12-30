@@ -6,6 +6,12 @@ import AdminPageHeader from '@/components/AdminPageHeader';
 import PageShell from '@/components/PageShell';
 import Modal from '@/components/Modal';
 
+type LogEntry = {
+  timestamp: string;
+  action: string;
+  actor: string;
+};
+
 type DriverJob = {
   id: string;
   pickup: string;
@@ -64,6 +70,7 @@ type DriverProfileData = {
   completedJobs: DriverJob[];
   statementRows: StatementRow[];
   documents: DocumentRow[];
+  logs: LogEntry[];
 };
 
 type DriverStatusAction = 'holiday' | 'resume' | 'block';
@@ -122,6 +129,11 @@ const driverProfiles: DriverProfileData[] = [
       { name: 'Driving License Front', type: 'jpg', url: '/docs/james-license-front.jpg' },
       { name: 'Driving License Back', type: 'png', url: '/docs/james-license-back.png' },
       { name: 'PCO Licence', type: 'jpeg', url: '/docs/james-pco.jpeg' }
+    ],
+    logs: [
+      { timestamp: '2025-10-01 08:12', action: 'Profile created', actor: 'Admin • Sarah' },
+      { timestamp: '2025-10-10 12:44', action: 'PCO expiry updated', actor: 'Compliance • Nina' },
+      { timestamp: '2025-10-15 09:20', action: 'Assigned Mercedes S-Class', actor: 'Fleet • Omar' }
     ]
   },
   {
@@ -161,6 +173,11 @@ const driverProfiles: DriverProfileData[] = [
     documents: [
       { name: 'Driving License Front', type: 'jpg', url: '/docs/anna-license-front.jpg' },
       { name: 'PCO Licence', type: 'jpeg', url: '/docs/anna-pco.jpeg' }
+    ],
+    logs: [
+      { timestamp: '2025-09-12 10:02', action: 'Profile created', actor: 'Admin • Sarah' },
+      { timestamp: '2025-10-05 11:18', action: 'Insurance verified', actor: 'Compliance • Nina' },
+      { timestamp: '2025-10-11 07:30', action: 'Upcoming job assigned VD-1001', actor: 'Dispatch • Leo' }
     ]
   },
   {
@@ -203,6 +220,11 @@ const driverProfiles: DriverProfileData[] = [
       { name: 'Driving License Front', type: 'jpg', url: '/docs/david-license-front.jpg' },
       { name: 'Driving License Back', type: 'png', url: '/docs/david-license-back.png' },
       { name: 'Insurance Certificate', type: 'jpeg', url: '/docs/david-insurance.jpeg' }
+    ],
+    logs: [
+      { timestamp: '2025-08-22 15:40', action: 'Profile created', actor: 'Admin • Sarah' },
+      { timestamp: '2025-10-02 16:05', action: 'Vehicle swapped to Lexus ES 300h', actor: 'Fleet • Omar' },
+      { timestamp: '2025-10-07 08:55', action: 'Statement rows refreshed', actor: 'Finance • Priya' }
     ]
   },
   {
@@ -241,11 +263,16 @@ const driverProfiles: DriverProfileData[] = [
     documents: [
       { name: 'Driving License Front', type: 'jpg', url: '/docs/robert-license-front.jpg' },
       { name: 'PCO Licence', type: 'png', url: '/docs/robert-pco.png' }
+    ],
+    logs: [
+      { timestamp: '2025-07-14 09:10', action: 'Profile created', actor: 'Admin • Sarah' },
+      { timestamp: '2025-10-01 14:25', action: 'Teslsa insurance renewed', actor: 'Compliance • Nina' },
+      { timestamp: '2025-10-06 09:42', action: 'Added job VD-1006', actor: 'Dispatch • Leo' }
     ]
   }
 ];
 
-const tabs = ['Details', 'Jobs', 'Car(s)', 'Monthly Statement', 'Documents Uploaded'] as const;
+const tabs = ['Details', 'Jobs', 'Car(s)', 'Monthly Statement', 'Documents Uploaded', 'Logs'] as const;
 
 const InfoItem: React.FC<{ label: string; value: string }> = ({ label, value }) => (
   <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -369,6 +396,10 @@ const AdminDriversPage: React.FC = () => {
       return acc;
     }, {})
   );
+  const [commissions, setCommissions] = useState<Record<string, { value: string; editing: boolean }>>(() =>
+    Object.fromEntries(driverProfiles.map((driver) => [driver.id, { value: '20', editing: false }]))
+  );
+  const [photoUploadVisible, setPhotoUploadVisible] = useState<Record<string, boolean>>({});
   const [confirmation, setConfirmation] = useState<ConfirmationState>(null);
   const getNowString = () =>
     new Date().toLocaleString('en-GB', {
@@ -458,6 +489,20 @@ const AdminDriversPage: React.FC = () => {
     });
   };
 
+  const toggleCommissionEditing = (driverId: string) => {
+    setCommissions((prev) => {
+      const current = prev[driverId] ?? { value: '20', editing: false };
+      return { ...prev, [driverId]: { ...current, editing: !current.editing } };
+    });
+  };
+
+  const handleCommissionChange = (driverId: string, value: string) => {
+    setCommissions((prev) => {
+      const current = prev[driverId] ?? { value: '20', editing: false };
+      return { ...prev, [driverId]: { ...current, value } };
+    });
+  };
+
   const handleConfirmAction = () => {
     if (!confirmation) return;
     if (confirmation.type === 'driver-status') {
@@ -472,6 +517,7 @@ const AdminDriversPage: React.FC = () => {
 
   const renderTabContent = (driver: DriverProfileData) => {
     const tab = getActiveTab(driver.id);
+    const commissionState = commissions[driver.id] ?? { value: '20', editing: false };
     switch (tab) {
       case 'Details':
         return (
@@ -485,6 +531,32 @@ const AdminDriversPage: React.FC = () => {
               <InfoItem label="Rating" value={driver.rating} />
               <InfoItem label="Tenure" value={driver.tenure} />
               <InfoItem label="Last online" value={driver.lastOnline} />
+              <div className="relative rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-wider text-amber-200/70">Commission</p>
+                {commissionState.editing ? (
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.5"
+                      value={commissionState.value}
+                      onChange={(event) => handleCommissionChange(driver.id, event.target.value)}
+                      className="w-24 rounded-lg border border-amber-400/40 bg-black/40 px-3 py-1.5 text-white focus:border-amber-400 focus:outline-none"
+                    />
+                    <span className="text-lg font-semibold text-white/90">%</span>
+                  </div>
+                ) : (
+                  <p className="text-lg font-semibold text-white/90">{commissionState.value}%</p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => toggleCommissionEditing(driver.id)}
+                  className="absolute bottom-3 right-3 rounded-full border border-amber-400/40 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-amber-200 transition hover:bg-amber-400/10"
+                >
+                  {commissionState.editing ? 'Save' : 'Edit'}
+                </button>
+              </div>
             </div>
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -660,6 +732,27 @@ const AdminDriversPage: React.FC = () => {
             </table>
           </div>
         );
+      case 'Logs':
+        return (
+          <div className="space-y-3 rounded-2xl border border-white/10 bg-black/50 p-4">
+            {driver.logs.length === 0 ? (
+              <p className="text-sm text-gray-400">No activity logged yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {driver.logs.map((log, index) => (
+                  <li
+                    key={`${driver.id}-log-${index}`}
+                    className="flex flex-col rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-white/90"
+                  >
+                    <span className="text-xs uppercase tracking-wide text-amber-300">{log.timestamp}</span>
+                    <span className="font-semibold">{log.action}</span>
+                    <span className="text-xs text-gray-400">{log.actor}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
       default:
         return null;
     }
@@ -696,39 +789,65 @@ const AdminDriversPage: React.FC = () => {
                       className="space-y-6 rounded-3xl border border-white/10 bg-black/60 p-6 shadow-lg shadow-black/60"
                     >
                       <header className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                        <div>
-                          <p className="text-xs uppercase tracking-wider text-amber-300/70">
-                            Driver ID {driver.id.toUpperCase()}
-                          </p>
-                          <h2 className="text-2xl font-bold text-white">{driver.name}</h2>
-                          <p className="text-sm text-gray-400">{driver.email}</p>
+                        <div className="flex items-center gap-[10px]">
+                          <div className="w-[100px] min-h-[90px] rounded-xl bg-gray-800/70" aria-hidden="true" />
+                          <div>
+                            <p className="text-xs uppercase tracking-wider text-amber-300/70">
+                              Driver ID {driver.id.toUpperCase()}
+                            </p>
+                            <h2 className="text-2xl font-bold text-white">{driver.name}</h2>
+                            <p className="text-sm text-gray-400">{driver.email}</p>
+                          </div>
                         </div>
                         <div className="text-sm text-gray-300">
                           <p>Phone: {driver.phone}</p>
                           <p>PCO Expiry: {driver.pcoExpiry}</p>
                         </div>
                       </header>
-                      <nav className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-2">
-                        {tabs.map((tab) => (
-                          <button
-                            key={tab}
-                            type="button"
-                            onClick={() => handleTabChange(driver.id, tab)}
-                            className={`relative px-4 py-2 text-sm font-semibold rounded-full transition-colors whitespace-nowrap ${
-                              getActiveTab(driver.id) === tab
-                                ? 'bg-amber-400 text-black shadow-md shadow-amber-400/30'
-                                : 'bg-gray-800/40 text-amber-300 hover:bg-gray-700/40'
-                            }`}
-                          >
-                            {tab}
-                            {tab === 'Jobs' && driver.upcomingJobs.length > 0 && (
-                              <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold text-white">
-                                {driver.upcomingJobs.length}
-                              </span>
-                            )}
-                          </button>
-                        ))}
-                      </nav>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <nav className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-2">
+                          {tabs.map((tab) => (
+                            <button
+                              key={tab}
+                              type="button"
+                              onClick={() => handleTabChange(driver.id, tab)}
+                              className={`relative px-4 py-2 text-sm font-semibold rounded-full transition-colors whitespace-nowrap ${
+                                getActiveTab(driver.id) === tab
+                                  ? 'bg-amber-400 text-black shadow-md shadow-amber-400/30'
+                                  : 'bg-gray-800/40 text-amber-300 hover:bg-gray-700/40'
+                              }`}
+                            >
+                              {tab}
+                              {tab === 'Jobs' && driver.upcomingJobs.length > 0 && (
+                                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold text-white">
+                                  {driver.upcomingJobs.length}
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </nav>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPhotoUploadVisible((prev) => ({ ...prev, [driver.id]: !prev[driver.id] }))
+                          }
+                          className="px-4 py-2 text-sm font-semibold rounded-full border border-amber-400/60 bg-black/40 text-amber-200 hover:bg-amber-400/10 transition whitespace-nowrap"
+                        >
+                          New Photo Upload
+                        </button>
+                      </div>
+                      {photoUploadVisible[driver.id] && (
+                        <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
+                          <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-2">
+                            Upload image
+                          </label>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white file:mr-3 file:rounded-md file:border-0 file:bg-amber-400 file:px-3 file:py-1 file:text-black file:font-semibold file:cursor-pointer"
+                          />
+                        </div>
+                      )}
                       <div>{renderTabContent(driver)}</div>
                     </article>
                   ))}

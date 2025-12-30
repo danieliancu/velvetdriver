@@ -1,0 +1,94 @@
+
+
+NEXT_PUBLIC_DVLA_API_KEY=CHOAXmkCon26O2FuJrYxd2eySH9U9Rz44790QpWf
+
+
+DVLA error: http://localhost:3000/api/dvla/vehicle-enquiry/v1/vehicles 403 (Forbidden)
+
+
+
+admin/dashboard - Live Bookings - de adus formularul de client asa cum este el, plus buton "Other Operator" - cu No si Name - care va fi Sublet (de exemplu Elite Drivers). Pretul va fi £0.00 by default si se poate edita manual
+
+
+
+I agree to the Terms & Conditions. - sa fie link la Driver Terms
+
+
+La click on 
+Waiting client confirmation:
+Vezi emailul de confirmare in part 3 of no. 5 Admin dashboard - 
+
+La click on Allocate to driver, Vezi emailul de confirmare in part 3 of no. 5 Admin dashboard - al doilea email de confirmare
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+admin/ - 
+complain
+lost property
+
+date and time of related booking (se iau automat din booking)
+
+
+
+forget password
+
+
+comision la admin/drivers
+comision custom la admin/dashboard - la allocate to driver
+
+poza driverului sa poata fi editata de catre admin
+
+Coduri de loyality - buton marketing
+
+
+
+
+admin/statements - 
+Person accepting booking
+Date of booking
+Date of journey
+Customer name
+Phone number
+Place of collection
+Main destination
+Fare quoted
+Person despatching booking
+Driver Full Name 
+Driver PHP License Number
+Vehcle Reg Number
+Sublet Operator No.
+Sublet Operator Name
+
+
+
+la admin/drivers - se adauga Logs la sfarsit de
+Details
+Jobs
+Car(s)
+Monthly Statement
+Documents Uploaded
+
+Aici vor intra toate modificarile de pe driverul respectiv
+

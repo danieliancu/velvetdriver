@@ -58,6 +58,12 @@ const formatDateTime = (iso: string) =>
     new Date(iso),
   );
 
+const formatDateOnly = (iso: string) =>
+  new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' }).format(new Date(iso));
+
+const formatTimeOnly = (iso: string) =>
+  new Intl.DateTimeFormat('en-GB', { timeStyle: 'short' }).format(new Date(iso));
+
 const AdminComplaintsPage: React.FC = () => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState('');
@@ -161,6 +167,25 @@ const AdminComplaintsPage: React.FC = () => {
                                 className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 value={c.complainant.phone}
                                 onChange={(e) => updateComplainant(c.id, 'phone', e.target.value)}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            <div className="sm:col-span-1">
+                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Date</label>
+                              <input
+                                className="w-full rounded-lg bg-black/20 border border-white/10 px-3 py-2 text-sm text-white/80"
+                                value={formatDateOnly(c.receivedAt)}
+                                readOnly
+                              />
+                            </div>
+                            <div className="sm:col-span-1">
+                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Time</label>
+                              <input
+                                className="w-full rounded-lg bg-black/20 border border-white/10 px-3 py-2 text-sm text-white/80"
+                                value={formatTimeOnly(c.receivedAt)}
+                                readOnly
                               />
                             </div>
                           </div>

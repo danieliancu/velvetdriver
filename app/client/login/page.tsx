@@ -18,6 +18,9 @@ export default function ClientLoginPage() {
   const [isComplainModalOpen, setComplainModalOpen] = useState(false);
   const [isReviewModalOpen, setReviewModalOpen] = useState(false);
   const [isLostPropertyModalOpen, setLostPropertyModalOpen] = useState(false);
+  const [isRecoverModalOpen, setRecoverModalOpen] = useState(false);
+  const [recoverEmail, setRecoverEmail] = useState('');
+  const [recoverMessage, setRecoverMessage] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -65,6 +68,11 @@ export default function ClientLoginPage() {
     }
   }, [user, router]);
 
+  const handleRecoverSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    setRecoverMessage('If this email is on file, we will send reset instructions shortly.');
+  };
+
   return (
     <FormLayout title="Client Sign In">
       <form onSubmit={handleLogin} className="space-y-6">
@@ -101,6 +109,19 @@ export default function ClientLoginPage() {
             Sign up now
           </Link>
         </p>
+        <p className="text-center text-sm text-gray-400">
+          <button
+            type="button"
+            onClick={() => {
+              setRecoverEmail('');
+              setRecoverMessage(null);
+              setRecoverModalOpen(true);
+            }}
+            className="font-medium text-amber-400 hover:underline"
+          >
+            Forgot Password?
+          </button>
+        </p>
       </form>
 
       <div className="mt-8 pt-6 border-t border-gray-800 text-center">
@@ -130,6 +151,29 @@ export default function ClientLoginPage() {
         title="Report Lost Property"
       >
         <ClientLostProperty isGuest />
+      </Modal>
+      <Modal
+        isOpen={isRecoverModalOpen}
+        onClose={() => setRecoverModalOpen(false)}
+        title="Recover Password"
+      >
+        <form onSubmit={handleRecoverSubmit} className="space-y-4">
+          <Input
+            id="recover-email"
+            label="Email Address"
+            type="email"
+            required
+            value={recoverEmail}
+            onChange={(e) => setRecoverEmail(e.target.value)}
+          />
+          {recoverMessage && <p className="text-sm text-amber-300">{recoverMessage}</p>}
+          <button
+            type="submit"
+            className="w-full rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400"
+          >
+            Continue
+          </button>
+        </form>
       </Modal>
     </FormLayout>
   );

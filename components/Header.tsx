@@ -2,7 +2,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Lock, Unlock } from 'lucide-react';
+import { Lock, User } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
 const Logo = () => (
@@ -14,10 +14,10 @@ const Logo = () => (
 const Header = () => {
   const { user } = useAuth();
   const isLoggedIn = Boolean(user);
-  const LockIcon = isLoggedIn ? Lock : Unlock;
+  const StatusIcon = isLoggedIn ? Lock : User;
   const statusLabel = isLoggedIn ? user?.name || 'Client' : 'Sign In';
-  const statusHint = isLoggedIn ? 'Account' : 'Client Portal';
-  const href = isLoggedIn ? '/client/dashboard' : '/client/login';
+  const href = isLoggedIn ? '/client/dashboard' : '/';
+  const iconColor = isLoggedIn ? 'text-green-400' : 'text-amber-300';
 
   return (
     <header className="relative top-0 left-0 right-0 p-6 md:p-8 pb-0 md:pb-0 z-50">
@@ -32,9 +32,8 @@ const Header = () => {
             href={href}
             className="inline-flex items-center gap-2 rounded-full border border-amber-500/40 bg-black/30 px-4 py-2 text-xs uppercase tracking-wide text-amber-100/90 hover:bg-black/50 transition-colors"
           >
-            <LockIcon className="h-4 w-4 text-amber-300" />
-            <div className="text-left leading-tight">
-              <div className="text-[11px] text-amber-300">{statusHint}</div>
+            <StatusIcon className={`h-4 w-4 ${iconColor}`} />
+            <div className="text-left leading-tight login-status hidden md:block">
               <div className="text-sm font-semibold text-white">{statusLabel}</div>
             </div>
           </Link>

@@ -114,6 +114,7 @@ const AdminDashboardPage: React.FC = () => {
   const [pendingDriverConfirmKey, setPendingDriverConfirmKey] = useState<string | null>(null);
   const [pendingClientConfirmId, setPendingClientConfirmId] = useState<string | null>(null);
   const [historyToggle, setHistoryToggle] = useState<Record<string, boolean>>({});
+  const [commissionInputs, setCommissionInputs] = useState<Record<string, string>>({});
   // Manual booking modal removed; navigate to booking page instead.
 
   useEffect(() => {
@@ -396,6 +397,7 @@ const AdminDashboardPage: React.FC = () => {
                                       const isWhatsappOpen = whatsappOpen[driverKey];
                                       const messageValue = driverMessages[driverKey] ?? '';
                                       const bookingLocked = bookingConfirmed && !confirmedDriver;
+                                      const commissionValue = commissionInputs[driverKey] ?? '20';
 
                                       return (
                                         <div
@@ -454,6 +456,24 @@ const AdminDashboardPage: React.FC = () => {
                                           </div>
                                           {isWhatsappOpen && (
                                             <div className="space-y-2">
+                                              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-gray-400">
+                                                <span>Commission</span>
+                                                <input
+                                                  type="number"
+                                                  min="0"
+                                                  max="100"
+                                                  step="0.5"
+                                                  value={commissionValue}
+                                                  onChange={(event) =>
+                                                    setCommissionInputs((prev) => ({
+                                                      ...prev,
+                                                      [driverKey]: event.target.value
+                                                    }))
+                                                  }
+                                                  className="w-20 rounded-lg border border-white/20 bg-black/70 px-2 py-1 text-xs text-white placeholder:text-gray-600 focus:border-amber-400 focus:outline-none"
+                                                />
+                                                <span className="text-gray-300">%</span>
+                                              </div>
                                               <p className="text-[11px] uppercase tracking-[0.2em] text-gray-400">
                                                 Send the booking details via WhatsApp.
                                               </p>
