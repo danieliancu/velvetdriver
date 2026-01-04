@@ -13,17 +13,57 @@ export async function POST(request: Request) {
     if (!email || !password) {
       return NextResponse.json({ error: 'Missing credentials' }, { status: 400 });
     }
-    const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      'SELECT id, name, email, phone, password_hash, role FROM users WHERE email = ? LIMIT 1',
+
+    type UserRow = mysql.RowDataPacket & {
+      id: number;
+      email: string;
+      phone: string | null;
+      password_hash: string | null;
+      role: string;
+      client_name: string | null;
+      driver_first: string | null;
+      driver_surname: string | null;
+      corp_contact: string | null;
+      corp_company: string | null;
+    };
+
+    const [rows] = await pool.query<UserRow[]>(
+      `SELECT u.id,
+              u.email,
+              u.phone,
+              u.password_hash,
+              r.code AS role,
+              c.full_name AS client_name,
+              d.first_and_middle_name AS driver_first,
+              d.surname AS driver_surname,
+              corp.contact_name AS corp_contact,
+              corp.company_name AS corp_company
+       FROM users u
+       JOIN roles r ON r.id = u.role_id
+       LEFT JOIN clients c ON c.user_id = u.id
+       LEFT JOIN drivers d ON d.user_id = u.id
+       LEFT JOIN corporates corp ON corp.user_id = u.id
+       WHERE u.email = ?
+       LIMIT 1`,
       [email]
     );
     const user = rows[0];
     if (!user || !(await bcrypt.compare(password, user.password_hash || ''))) {
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
     }
+
+    let name: string | null = null;
+    if (user.role === 'client') {
+      name = user.client_name;
+    } else if (user.role === 'driver') {
+      name = [user.driver_first, user.driver_surname].filter(Boolean).join(' ').trim() || null;
+    } else if (user.role === 'corporate') {
+      name = user.corp_contact || user.corp_company;
+    }
+
     return NextResponse.json({
       id: Number(user.id),
-      name: user.name,
+      name,
       email: user.email,
       phone: user.phone,
       role: user.role,

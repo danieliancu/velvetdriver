@@ -16,6 +16,25 @@ CREATE TABLE IF NOT EXISTS `pricing_settings` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+CREATE TABLE IF NOT EXISTS `surcharge_rules` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `code` varchar(50) DEFAULT NULL,
+  `label` varchar(120) DEFAULT NULL,
+  `amount` decimal(8,2) DEFAULT NULL,
+  `applies_from` time DEFAULT NULL,
+  `applies_to` time DEFAULT NULL,
+  `metadata` longtext,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `zone_rings` (
+  `id` tinyint NOT NULL,
+  `name` varchar(30) DEFAULT NULL,
+  `radius_miles` decimal(5,2) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 -- seed vehicle classes and rates
 INSERT INTO `pricing_vehicles` (`code`, `label`, `as_directed_rate`, `tier1_rate`, `tier2_rate`, `tier3_rate`, `inner_zone_override_rate`)
 VALUES
@@ -32,6 +51,16 @@ ON DUPLICATE KEY UPDATE
 INSERT INTO `pricing_settings` (`id`, `night_surcharge`)
 VALUES (1, 30.00)
 ON DUPLICATE KEY UPDATE `night_surcharge` = VALUES(`night_surcharge`);
+
+INSERT INTO `zone_rings` (`id`, `name`, `radius_miles`)
+VALUES
+(1, 'Zone 1', 3.00),
+(2, 'Zone 2', 6.00),
+(3, 'Zone 3', 9.00),
+(4, 'Zone 4', 12.00)
+ON DUPLICATE KEY UPDATE
+  `name` = VALUES(`name`),
+  `radius_miles` = VALUES(`radius_miles`);
 
 -- seed surcharge rules used in booking
 INSERT INTO `surcharge_rules` (`id`, `code`, `label`, `amount`)

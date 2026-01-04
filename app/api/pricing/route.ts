@@ -3,6 +3,12 @@ import { getDbPool, type DbRow } from '@/lib/db';
 
 const pool = getDbPool();
 
+type ZoneRingRow = DbRow<{
+  id: number;
+  name: string | null;
+  radius_miles: number | null;
+}>;
+
 type PricingVehicleRow = DbRow<{
   code: string;
   label: string;
@@ -25,6 +31,13 @@ type SurchargeRuleRow = DbRow<{ code: string; amount: number }>;
 
 type PricingSettingRow = DbRow<{ night_surcharge: number }>;
 
+const fallbackZoneRings = [
+  { id: 1, name: 'Zone 1', radiusMiles: 3 },
+  { id: 2, name: 'Zone 2', radiusMiles: 6 },
+  { id: 3, name: 'Zone 3', radiusMiles: 9 },
+  { id: 4, name: 'Zone 4', radiusMiles: 12 },
+];
+
 export async function GET() {
   try {
     const [vehiclesRows] = await pool.query<PricingVehicleRow[]>('SELECT * FROM pricing_vehicles ORDER BY id');
@@ -34,6 +47,9 @@ export async function GET() {
     const [settingsRows] = await pool.query<PricingSettingRow[]>(
       'SELECT night_surcharge FROM pricing_settings WHERE id = 1 LIMIT 1'
     );
+    const [zoneRingRows] = await pool
+      .query<ZoneRingRow[]>('SELECT id, name, radius_miles FROM zone_rings ORDER BY id')
+      .catch(() => [[], []] as unknown as [ZoneRingRow[], unknown]);
 
     const vehicles: PricingVehicle[] = vehiclesRows.map((v) => ({
       code: v.code,
@@ -55,7 +71,18 @@ export async function GET() {
 
     const nightSurcharge = Number(settingsRows[0]?.night_surcharge ?? 0);
 
-    return NextResponse.json({ vehicles, surcharges, nightSurcharge });
+    const zoneRings =
+      zoneRingRows?.length
+        ? zoneRingRows
+            .map((z) => ({
+              id: Number(z.id),
+              name: z.name ?? `Zone ${z.id}`,
+              radiusMiles: Number(z.radius_miles ?? 0),
+            }))
+            .filter((z) => z.radiusMiles > 0)
+        : fallbackZoneRings;
+
+    return NextResponse.json({ vehicles, surcharges, nightSurcharge, zoneRings });
   } catch (err) {
     console.error('Error fetching pricing', err);
     return NextResponse.json({ error: 'Failed to load pricing' }, { status: 500 });

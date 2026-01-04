@@ -31,6 +31,12 @@ type FlightDetails = {
     speedKmh?: number;
 };
 
+type ZoneRing = {
+    id: number;
+    name: string;
+    radiusMiles: number;
+};
+
 const BookingPageInner = () => {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -95,18 +101,6 @@ const BookingPageInner = () => {
         time.trim().length > 0;
 
     const LONDON_CENTER = { lat: 51.509865, lng: -0.118092 }; // Charing Cross
-    // Zones are concentric rings around central London; tweak radii to match your own map pricing.
-    const zoneRings = [
-        { id: 1, name: 'Zone 1', radiusMiles: 3 },
-        { id: 2, name: 'Zone 2', radiusMiles: 6 },
-        { id: 3, name: 'Zone 3', radiusMiles: 9 },
-        { id: 4, name: 'Zone 4', radiusMiles: 12 },
-        { id: 5, name: 'Zone 5', radiusMiles: 15 },
-        { id: 6, name: 'Zone 6', radiusMiles: 20 },
-        { id: 7, name: 'Zone 7', radiusMiles: 25 },
-        { id: 8, name: 'Zone 8', radiusMiles: 30 },
-        { id: 9, name: 'Zone 9', radiusMiles: 40 },
-    ];
 
     const haversineMiles = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
         const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -123,12 +117,6 @@ const BookingPageInner = () => {
         return distanceKm * 0.621371; // miles
     };
 
-    const getZoneForCoords = (coords: { lat: number; lng: number }) => {
-        const milesFromCenter = haversineMiles(coords, LONDON_CENTER);
-        const zone = zoneRings.find((z) => milesFromCenter <= z.radiusMiles);
-        return zone ?? zoneRings[zoneRings.length - 1];
-    };
-
     type PricingVehicle = {
         code: string;
         label: string;
@@ -140,7 +128,15 @@ const BookingPageInner = () => {
         vehicles: PricingVehicle[];
         surcharges: { airportPickup: number; airportDropoff: number; congestion: number };
         nightSurcharge: number;
+        zoneRings: ZoneRing[];
     };
+
+    const fallbackZoneRings: ZoneRing[] = [
+        { id: 1, name: 'Zone 1', radiusMiles: 3 },
+        { id: 2, name: 'Zone 2', radiusMiles: 6 },
+        { id: 3, name: 'Zone 3', radiusMiles: 9 },
+        { id: 4, name: 'Zone 4', radiusMiles: 12 },
+    ];
 
     const fallbackPricing: PricingData = {
         vehicles: [
@@ -149,11 +145,25 @@ const BookingPageInner = () => {
             { code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25 }
         ],
         surcharges: { airportPickup: 15, airportDropoff: 7, congestion: 15 },
-        nightSurcharge: 30
+        nightSurcharge: 30,
+        zoneRings: fallbackZoneRings,
     };
     const [pricing, setPricing] = useState<PricingData | null>(null);
     const [pricingError, setPricingError] = useState<string | null>(null);
     const pricingData = pricing ?? fallbackPricing;
+
+    const zoneRings = (pricingData.zoneRings?.length ? pricingData.zoneRings : fallbackZoneRings)
+        .map((z) => ({ ...z, radiusMiles: Number(z.radiusMiles) }))
+        .filter((z) => z.radiusMiles > 0)
+        .sort((a, b) => a.radiusMiles - b.radiusMiles);
+
+    const getZoneForCoords = (coords: { lat: number; lng: number }) => {
+        if (!zoneRings.length) return null;
+        const milesFromCenter = haversineMiles(coords, LONDON_CENTER);
+        const furthestRing = zoneRings[zoneRings.length - 1];
+        if (!furthestRing || milesFromCenter > furthestRing.radiusMiles) return null;
+        return zoneRings.find((z) => milesFromCenter <= z.radiusMiles) ?? null;
+    };
 
     useEffect(() => {
         const loadPricing = async () => {
@@ -187,8 +197,13 @@ const BookingPageInner = () => {
     };
 
     const pickAppliedZone = (originZone: number | null, destinationZone: number | null) => {
-        if (originZone && destinationZone) return Math.max(originZone, destinationZone);
-        return originZone ?? destinationZone ?? null;
+        const zones = [originZone, destinationZone].filter((z): z is number => z != null);
+        if (!zones.length) return null;
+        const touchesInner = zones.some((z) => z <= 4);
+        if (touchesInner) {
+            return Math.min(...zones);
+        }
+        return Math.max(...zones);
     };
 
     const withinLuxuryExecLuggage = () => {
@@ -585,13 +600,6 @@ const BookingPageInner = () => {
     const waitingCost = serviceType === 'As Directed' ? 0 : waitingMinutes * (waitingRatePerHour / 60);
     const hourlyRate = selectedVehicle.asDirectedRate;
 
-    const includesZoneOneToFour =
-        legBreakdown.length > 0 &&
-        legBreakdown.some((leg) => {
-            const zones = [leg.appliedZone, leg.originZone, leg.destinationZone].filter((z): z is number => z != null);
-            return zones.some((z) => z <= 4);
-        });
-
     const zoneMileageFare =
         serviceType === 'As Directed'
             ? 0
@@ -602,9 +610,7 @@ const BookingPageInner = () => {
     const mileageFare =
         serviceType === 'As Directed'
             ? hourlyRate
-            : includesZoneOneToFour
-                ? milesValue * getZoneMileageRate(vehicle, 1)
-                : (zoneMileageFare ?? milesValue * getMileageRate(vehicle, milesValue));
+            : (zoneMileageFare ?? milesValue * getMileageRate(vehicle, milesValue));
 
     totalFare = mileageFare;
 
@@ -647,7 +653,7 @@ const BookingPageInner = () => {
     const zonesCovered = Array.from(new Set(zoneIds)).sort((a, b) => a - b);
     const zoneText = serviceType === 'As Directed'
         ? ''
-        : includesZoneOneToFour && zonesCovered.length
+        : zonesCovered.length
             ? `Zones detected: ${zonesCovered.map((z) => `Zone ${z}`).join(', ')}`
             : '';
 
