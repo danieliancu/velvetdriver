@@ -60,20 +60,20 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
       showAlert('Please add your email.');
       return;
     }
+    const contactEmail = reviewerEmail.trim();
     setLoading(true);
     try {
       const res = await fetch('/api/client/reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email,
+          email: contactEmail,
           journeyId: journeyId || undefined,
           rating,
           review,
           bookingReference: bookingReference || (journeyId ? `VD_${journeyId}` : ''),
           bookingDate,
           reviewerName: reviewerName.trim(),
-          email: reviewerEmail.trim(),
         }),
       });
       if (!res.ok) {
