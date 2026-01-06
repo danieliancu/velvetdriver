@@ -40,10 +40,13 @@ export async function GET() {
               cj.passenger_phone,
               cj.price,
               cj.booking_payload,
+              cj.booked_by_staff_id,
               cj.service_type,
               u.email AS client_name
+         , staff.full_name AS staff_name
          FROM client_journeys cj
          LEFT JOIN users u ON cj.client_id = u.id
+         LEFT JOIN admin_staff staff ON cj.booked_by_staff_id = staff.id
         WHERE cj.status = 'Upcoming'
         ORDER BY cj.journey_date ASC`
     );
@@ -59,14 +62,18 @@ export async function GET() {
       }
       const { date, time } = formatDate(String(row.journey_date));
       const priceNumber = Number(row.price ?? payload?.totalFare ?? 0) || 0;
+      const bookedByStaffId = row.booked_by_staff_id ? Number(row.booked_by_staff_id) : null;
+      const bookedByName = row.staff_name || null;
       return {
+        journeyId: Number(row.id),
         id: Number(row.id),
         code: `VD-${String(row.id).padStart(4, '0')}`,
         pickup: row.pickup,
         dropOff: row.destination,
         passenger: row.passenger_name || payload?.passengerName || 'Guest Passenger',
         phone: row.passenger_phone || payload?.passengerPhone || '',
-        bookedBy: row.client_name || payload?.passengerName || 'Guest Booking',
+        bookedBy: bookedByName || row.client_name || payload?.passengerName || 'Guest Booking',
+        bookedByStaffId,
         notes: buildNotes(payload),
         date,
         time,
@@ -78,6 +85,49 @@ export async function GET() {
   } catch (err) {
     console.error('Admin live bookings fetch error', err);
     return NextResponse.json({ error: 'Failed to load live bookings' }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const body = await request.json();
+    const id = Number(body.id);
+    const bookedByStaffId =
+      body.bookedByStaffId !== undefined && body.bookedByStaffId !== null
+        ? Number(body.bookedByStaffId)
+        : null;
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing booking id' }, { status: 400 });
+    }
+
+    if (bookedByStaffId && Number.isNaN(bookedByStaffId)) {
+      return NextResponse.json({ error: 'Invalid staff id' }, { status: 400 });
+    }
+
+    if (bookedByStaffId) {
+      const [staffRows] = await pool.query<mysql.RowDataPacket[]>(
+        'SELECT id FROM admin_staff WHERE id = ? LIMIT 1',
+        [bookedByStaffId]
+      );
+      if (!staffRows.length) {
+        return NextResponse.json({ error: 'Staff member not found' }, { status: 404 });
+      }
+    }
+
+    const [result] = await pool.execute<mysql.ResultSetHeader>(
+      `UPDATE client_journeys SET booked_by_staff_id = ? WHERE id = ? LIMIT 1`,
+      [bookedByStaffId || null, id]
+    );
+
+    if (!result.affectedRows) {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error('Admin live bookings update error', err);
+    return NextResponse.json({ error: 'Failed to update booking' }, { status: 500 });
   }
 }
 

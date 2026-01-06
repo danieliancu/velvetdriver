@@ -37,6 +37,7 @@ const AdminLostPropertyPage: React.FC = () => {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [savingStatus, setSavingStatus] = useState<Record<number, boolean>>({});
+  const [staffOptions, setStaffOptions] = useState<string[]>([]);
 
   useEffect(() => {
     const load = async () => {
@@ -55,6 +56,21 @@ const AdminLostPropertyPage: React.FC = () => {
       }
     };
     load();
+  }, []);
+
+  useEffect(() => {
+    const loadStaff = async () => {
+      try {
+        const res = await fetch('/api/admin/staff', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const names: string[] = (data.staff || []).map((s: { fullName?: string }) => s.fullName).filter(Boolean);
+        setStaffOptions(names);
+      } catch (err) {
+        console.error('Failed to load staff for representative dropdown', err);
+      }
+    };
+    loadStaff();
   }, []);
 
   const filtered = useMemo(() => {
@@ -250,11 +266,21 @@ const AdminLostPropertyPage: React.FC = () => {
                             </div>
                             <div className="sm:col-span-1">
                               <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Company Representative Name</label>
-                              <input
+                              <select
                                 className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white"
                                 value={r.representative || ''}
                                 onChange={(e) => handleFieldChange(r.id, 'representative', e.target.value)}
-                              />
+                              >
+                                <option value="">Select representative</option>
+                                {staffOptions.map((name) => (
+                                  <option key={name} value={name}>
+                                    {name}
+                                  </option>
+                                ))}
+                                {r.representative && !staffOptions.includes(r.representative) ? (
+                                  <option value={r.representative}>{r.representative}</option>
+                                ) : null}
+                              </select>
                             </div>
                           </div>
                           <div className="pt-2 flex justify-end">

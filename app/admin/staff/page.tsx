@@ -1,54 +1,25 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import PageShell from '@/components/PageShell';
 import AdminPageHeader from '@/components/AdminPageHeader';
 import Modal from '@/components/Modal';
 
 type StaffMember = {
-  id: string;
-  name: string;
-  email: string;
+  id: number;
+  fullName: string;
+  email: string | null;
   username: string;
   password: string;
   role: string;
   createdAt: string;
+  updatedAt: string;
 };
-
-const initialStaff: StaffMember[] = [
-  {
-    id: 'staff-1',
-    name: 'Roxana Viulet',
-    email: 'roxana@velvetdrivers.co.uk',
-    username: 'roxana',
-    password: 'Velvet!2024',
-    role: 'Operations Manager',
-    createdAt: '18/04/2023 09:15',
-  },
-  {
-    id: 'staff-2',
-    name: 'Daniel Iancu',
-    email: 'daniel@velvetdrivers.co.uk',
-    username: 'daniel',
-    password: 'Admin#998',
-    role: 'Director',
-    createdAt: '07/02/2021 11:20',
-  },
-  {
-    id: 'staff-3',
-    name: 'Eliza Popescu',
-    email: 'eliza@velvetdrivers.co.uk',
-    username: 'eliza',
-    password: 'London*55',
-    role: 'Customer Support',
-    createdAt: '03/09/2024 08:05',
-  },
-];
 
 type FormMode = 'add' | 'edit';
 
 const emptyForm = {
-  name: '',
+  fullName: '',
   email: '',
   username: '',
   password: '',
@@ -56,26 +27,50 @@ const emptyForm = {
 };
 
 const AdminStaffPage = () => {
-  const [staffMembers, setStaffMembers] = useState<StaffMember[]>(initialStaff);
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [search, setSearch] = useState('');
   const [viewPasswords, setViewPasswords] = useState<Record<string, boolean>>({});
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>('add');
   const [formState, setFormState] = useState(emptyForm);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<StaffMember | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const filteredStaff = useMemo(() => {
     if (!search.trim()) return staffMembers;
     const q = search.toLowerCase();
     return staffMembers.filter(
       (member) =>
-        member.name.toLowerCase().includes(q) ||
-        member.email.toLowerCase().includes(q) ||
+        member.fullName.toLowerCase().includes(q) ||
+        (member.email || '').toLowerCase().includes(q) ||
         member.username.toLowerCase().includes(q) ||
         member.role.toLowerCase().includes(q)
     );
   }, [staffMembers, search]);
+
+  const loadStaff = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/staff', { cache: 'no-store' });
+      if (!res.ok) throw new Error('Nu am putut incarca staff-ul');
+      const data = await res.json();
+      setStaffMembers(data.staff || []);
+    } catch (err) {
+      console.error(err);
+      setError('Nu am putut incarca staff-ul din baza de date.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStaff();
+  }, [loadStaff]);
 
   const openAddModal = () => {
     setFormMode('add');
@@ -87,8 +82,8 @@ const AdminStaffPage = () => {
   const openEditModal = (member: StaffMember) => {
     setFormMode('edit');
     setFormState({
-      name: member.name,
-      email: member.email,
+      fullName: member.fullName,
+      email: member.email || '',
       username: member.username,
       password: member.password,
       role: member.role,
@@ -102,64 +97,96 @@ const AdminStaffPage = () => {
     setFormState((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleFormSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!formState.name.trim() || !formState.username.trim() || !formState.password.trim()) {
-      return;
+    if (saving) return;
+
+    const payload = {
+      fullName: formState.fullName.trim(),
+      email: formState.email.trim(),
+      username: formState.username.trim(),
+      password: formState.password,
+      role: formState.role.trim(),
+    };
+
+    if (!payload.fullName || !payload.username || !payload.password) return;
+
+    setSaving(true);
+    try {
+      if (formMode === 'add') {
+        const res = await fetch('/api/admin/staff', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || 'Nu am putut salva.');
+        if (data.staff) {
+          setStaffMembers((prev) => [data.staff, ...prev]);
+        }
+      } else if (editingId) {
+        const res = await fetch('/api/admin/staff', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: editingId, ...payload }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || 'Nu am putut salva modificarea.');
+        if (data.staff) {
+          setStaffMembers((prev) => prev.map((member) => (member.id === editingId ? data.staff : member)));
+        }
+      }
+      setFormModalOpen(false);
+      setFormState(emptyForm);
+      setEditingId(null);
+      setError(null);
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.message || 'A aparut o eroare la salvare.');
+    } finally {
+      setSaving(false);
     }
-    if (formMode === 'add') {
-      const now = new Date().toLocaleString('en-GB', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-      setStaffMembers((prev) => [
-        ...prev,
-        {
-          id: `staff-${Date.now()}`,
-          name: formState.name.trim(),
-          email: formState.email.trim(),
-          username: formState.username.trim(),
-          password: formState.password,
-          role: formState.role.trim() || 'Staff',
-          createdAt: now,
-        },
-      ]);
-    } else if (editingId) {
-      setStaffMembers((prev) =>
-        prev.map((member) =>
-          member.id === editingId
-            ? {
-                ...member,
-                name: formState.name.trim(),
-                email: formState.email.trim(),
-                username: formState.username.trim(),
-                password: formState.password,
-                role: formState.role.trim() || member.role,
-              }
-            : member
-        )
-      );
-    }
-    setFormModalOpen(false);
-    setFormState(emptyForm);
-    setEditingId(null);
   };
 
   const confirmDelete = (member: StaffMember) => {
     setDeleteTarget(member);
   };
 
-  const handleDelete = () => {
-    if (!deleteTarget) return;
-    setStaffMembers((prev) => prev.filter((member) => member.id !== deleteTarget.id));
-    setDeleteTarget(null);
+  const handleDelete = async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/admin/staff?id=${deleteTarget.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Nu am putut sterge.');
+      setStaffMembers((prev) => prev.filter((member) => member.id !== deleteTarget.id));
+      setDeleteTarget(null);
+      setError(null);
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.message || 'A aparut o eroare la stergere.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
-  const togglePasswordView = (id: string) => {
-    setViewPasswords((prev) => ({ ...prev, [id]: !prev[id] }));
+  const togglePasswordView = (id: number) => {
+    const key = id.toString();
+    setViewPasswords((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const getPasswordMask = (id: number, password: string) => {
+    const key = id.toString();
+    return viewPasswords[key] ? password : '********';
+  };
+
+  const formatDateTime = (value: string) => {
+    if (!value) return '—';
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleString('en-GB', { hour12: false });
+    }
+    return value;
   };
 
   return (
@@ -198,7 +225,13 @@ const AdminStaffPage = () => {
               />
             </div>
 
-            {filteredStaff.length === 0 ? (
+            {error && <p className="text-sm text-red-400">{error}</p>}
+
+            {loading ? (
+              <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center text-gray-400">
+                Loading staff members...
+              </div>
+            ) : filteredStaff.length === 0 ? (
               <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center text-gray-400">
                 No staff member matches your search.
               </div>
@@ -210,24 +243,24 @@ const AdminStaffPage = () => {
                     className="rounded-2xl border border-white/10 bg-black/40 p-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between"
                   >
                     <div className="space-y-1">
-                      <p className="text-lg font-semibold text-white">{member.name}</p>
+                      <p className="text-lg font-semibold text-white">{member.fullName}</p>
                       <p className="text-sm text-gray-300">{member.role}</p>
                       <p className="text-xs text-gray-400">Email: {member.email || '—'}</p>
                       <p className="text-xs text-gray-400">Username: {member.username}</p>
                       <p className="text-xs text-gray-400">
                         Password:{' '}
                         <span className="font-mono text-white/90">
-                          {viewPasswords[member.id] ? member.password : '••••••••'}
+                          {getPasswordMask(member.id, member.password)}
                         </span>
                         <button
                           type="button"
                           onClick={() => togglePasswordView(member.id)}
                           className="ml-2 text-[11px] uppercase tracking-wider text-amber-300 hover:text-amber-100"
                         >
-                          {viewPasswords[member.id] ? 'Hide' : 'Show'}
+                          {viewPasswords[member.id.toString()] ? 'Hide' : 'Show'}
                         </button>
                       </p>
-                      <p className="text-xs text-gray-500">Added on: {member.createdAt}</p>
+                      <p className="text-xs text-gray-500">Added on: {formatDateTime(member.createdAt)}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -266,8 +299,8 @@ const AdminStaffPage = () => {
             <div>
               <label className="text-xs uppercase tracking-[0.3em] text-gray-400">Full name</label>
               <input
-                name="name"
-                value={formState.name}
+                name="fullName"
+                value={formState.fullName}
                 onChange={handleFormChange}
                 required
                 className="mt-1 w-full rounded-xl border border-white/15 bg-black/50 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
@@ -328,7 +361,7 @@ const AdminStaffPage = () => {
               type="submit"
               className="rounded-full border border-amber-400 bg-amber-400 px-6 py-2 text-sm font-semibold text-black shadow-[0_0_15px_rgba(251,191,36,0.4)] hover:shadow-[0_0_25px_rgba(251,191,36,0.6)] transition"
             >
-              {formMode === 'add' ? 'Add staff' : 'Save changes'}
+              {saving ? 'Saving...' : formMode === 'add' ? 'Add staff' : 'Save changes'}
             </button>
           </div>
         </form>
@@ -341,7 +374,7 @@ const AdminStaffPage = () => {
           title="Delete staff member"
         >
           <p className="text-sm text-gray-200">
-            Are you sure you want to remove <span className="font-semibold text-white">{deleteTarget.name}</span> from
+            Are you sure you want to remove <span className="font-semibold text-white">{deleteTarget.fullName}</span> from
             the staff list?
           </p>
           <div className="mt-6 flex justify-end gap-3">
@@ -355,9 +388,10 @@ const AdminStaffPage = () => {
             <button
               type="button"
               onClick={handleDelete}
-              className="rounded-full border border-red-500 bg-red-500 px-6 py-2 text-sm font-semibold text-black shadow-[0_0_15px_rgba(220,38,38,0.4)] hover:shadow-[0_0_25px_rgba(220,38,38,0.6)] transition"
+              className="rounded-full border border-red-500 bg-red-500 px-6 py-2 text-sm font-semibold text-black shadow-[0_0_15px_rgba(220,38,38,0.4)] hover:shadow-[0_0_25px_rgba(220,38,38,0.6)] transition disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={deleting}
             >
-              Delete
+              {deleting ? 'Deleting...' : 'Delete'}
             </button>
           </div>
         </Modal>

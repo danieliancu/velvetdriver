@@ -52,6 +52,7 @@ const driverDirectory: Record<string, DriverDirectoryEntry> = {
 type BookingDriverId = keyof typeof driverDirectory;
 
 type LiveBooking = {
+  journeyId: number;
   id: string;
   pickup: string;
   dropOff: string;
@@ -62,6 +63,7 @@ type LiveBooking = {
   date: string;
   priceDetails: string;
   bookedBy: string;
+  bookedByStaffId?: number | null;
   drivers: BookingDriverId[];
 };
 
@@ -77,6 +79,7 @@ type LiveBookingResponse = {
   date: string;
   priceDetails: string;
   bookedBy: string;
+  bookedByStaffId?: number | null;
 };
 
 const formatPhoneForWhatsApp = (phone: string) => phone.replace(/\D/g, '');
@@ -116,6 +119,9 @@ const AdminDashboardPage: React.FC = () => {
   const [historyToggle, setHistoryToggle] = useState<Record<string, boolean>>({});
   const [commissionInputs, setCommissionInputs] = useState<Record<string, string>>({});
   // Manual booking modal removed; navigate to booking page instead.
+  const [staffOptions, setStaffOptions] = useState<Array<{ id: number; name: string }>>([]);
+  const [bookedBySelection, setBookedBySelection] = useState<Record<string, string>>({});
+  const [bookedBySaving, setBookedBySaving] = useState<Record<string, boolean>>({});
 
   const fallbackActive: LiveBooking[] = [
     {
@@ -159,6 +165,7 @@ const AdminDashboardPage: React.FC = () => {
         const data = await res.json();
         if (!isMounted) return;
         const bookings: LiveBooking[] = (data.bookings || []).map((item: LiveBookingResponse) => ({
+          journeyId: item.id,
           id: item.code,
           pickup: item.pickup,
           dropOff: item.dropOff,
@@ -169,9 +176,15 @@ const AdminDashboardPage: React.FC = () => {
           date: item.date,
           priceDetails: item.priceDetails,
           bookedBy: item.bookedBy,
+          bookedByStaffId: item.bookedByStaffId ?? null,
           drivers: defaultDriverRoster,
         }));
         setLiveBookings(bookings);
+        const defaults: Record<string, string> = {};
+        bookings.forEach((b) => {
+          defaults[b.id] = b.bookedByStaffId ? String(b.bookedByStaffId) : '';
+        });
+        setBookedBySelection(defaults);
         setLiveError(null);
       } catch (err) {
         console.error(err);
@@ -187,6 +200,11 @@ const AdminDashboardPage: React.FC = () => {
           });
 
           setLiveBookings([...fallbackActive, ...fallbackCompleted]);
+          const defaults: Record<string, string> = {};
+          [...fallbackActive, ...fallbackCompleted].forEach((b) => {
+            defaults[b.id] = '';
+          });
+          setBookedBySelection(defaults);
           setClientConfirmed(confirmMap);
           setDriverConfirmed(driverMap);
           setLiveError(null);
@@ -200,6 +218,59 @@ const AdminDashboardPage: React.FC = () => {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    const loadStaff = async () => {
+      try {
+        const res = await fetch('/api/admin/staff', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const names = (data.staff || [])
+          .map((s: { id?: number; fullName?: string }) =>
+            s.fullName && s.id ? { id: Number(s.id), name: s.fullName } : null
+          )
+          .filter(Boolean) as Array<{ id: number; name: string }>;
+        setStaffOptions(names);
+      } catch (err) {
+        console.error('Failed to load staff for booked by dropdown', err);
+      }
+    };
+    loadStaff();
+  }, []);
+
+  const handleBookedByChange = async (booking: LiveBooking, staffIdValue: string) => {
+    const previous = bookedBySelection[booking.id] || '';
+    setBookedBySelection((prev) => ({ ...prev, [booking.id]: staffIdValue }));
+    if (!booking.journeyId) return;
+    setBookedBySaving((prev) => ({ ...prev, [booking.id]: true }));
+    try {
+      const staffId = staffIdValue ? Number(staffIdValue) : null;
+      const res = await fetch('/api/admin/live-bookings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: booking.journeyId, bookedByStaffId: staffId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to update booked by');
+      }
+      const staffName = staffId
+        ? staffOptions.find((s) => s.id === staffId)?.name || booking.bookedBy
+        : booking.bookedBy;
+      setLiveBookings((prev) =>
+        prev.map((b) =>
+          b.id === booking.id
+            ? { ...b, bookedBy: staffName, bookedByStaffId: staffId }
+            : b
+        )
+      );
+    } catch (err) {
+      console.error(err);
+      setBookedBySelection((prev) => ({ ...prev, [booking.id]: previous }));
+    } finally {
+      setBookedBySaving((prev) => ({ ...prev, [booking.id]: false }));
+    }
+  };
 
   const hasDriverConfirmation = (booking: LiveBooking) =>
     booking.drivers.some((driverId) => {
@@ -377,7 +448,22 @@ const AdminDashboardPage: React.FC = () => {
                               Price:{' '}
                               <span className="font-semibold text-white">{booking.priceDetails}</span>
                             </p>
-                            <p className="text-sm text-gray-300">Booked by: {booking.bookedBy}</p>
+                            <div className="text-sm text-gray-300 space-y-1">
+                              <span className="block text-gray-400 text-xs uppercase tracking-[0.2em]">Booked by</span>
+                              <select
+                                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-sm text-white/80"
+                                value={bookedBySelection[booking.id] ?? ''}
+                                onChange={(e) => handleBookedByChange(booking, e.target.value)}
+                                disabled={bookedBySaving[booking.id]}
+                              >
+                                <option value="">Select staff</option>
+                                {staffOptions.map((staff) => (
+                                  <option key={staff.id} value={staff.id}>
+                                    {staff.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                             <p className="text-xs text-gray-400">Notes: {booking.notes}</p>
                           </div>
                           <div className="flex flex-wrap items-center gap-4 pt-2">
