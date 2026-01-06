@@ -79,7 +79,7 @@ const AdminLostPropertyPage: React.FC = () => {
   const saveRecord = async (id: number) => {
     const record = records.find((r) => r.id === id);
     if (!record) return;
-    const prev = record.status;
+    const prevStatus = record.status;
     setSavingStatus((p) => ({ ...p, [id]: true }));
     setSaveError(null);
     setSaveMessage(null);
@@ -102,7 +102,7 @@ const AdminLostPropertyPage: React.FC = () => {
       setSaveMessage(`Saved changes for ${record.refNo}`);
     } catch (err: any) {
       setSaveError(err?.message || 'Failed to save changes');
-      setRecords((prev) => prev.map((r) => (r.id === id ? { ...r, status: prev } : r)));
+      setRecords((prev) => prev.map((r) => (r.id === id ? { ...r, status: prevStatus } : r)));
     } finally {
       setSavingStatus((p) => ({ ...p, [id]: false }));
     }
