@@ -11,55 +11,85 @@ interface ClientComplainProps {
   journeys?: Journey[];
   isGuest?: boolean;
   showSubjectInput?: boolean;
+  userName?: string | null;
+  userPhone?: string | null;
 }
 
-const ClientComplain: React.FC<ClientComplainProps> = ({ email, journeys = [], isGuest = false, showSubjectInput = true }) => {
+const ClientComplain: React.FC<ClientComplainProps> = ({
+  email,
+  journeys = [],
+  isGuest = false,
+  showSubjectInput = true,
+  userName,
+  userPhone,
+}) => {
   const { showAlert } = useAlert();
   const [journeyId, setJourneyId] = React.useState('');
   const [subject, setSubject] = React.useState('');
   const [details, setDetails] = React.useState('');
   const [loading, setLoading] = React.useState(false);
-  const [fullName, setFullName] = React.useState('');
-  const [address, setAddress] = React.useState('');
-  const [phone, setPhone] = React.useState('');
+  const [fullName, setFullName] = React.useState(userName || '');
+  const [address, setAddress] = React.useState(email || '');
+  const [phone, setPhone] = React.useState(userPhone || '');
   const [bookingReference, setBookingReference] = React.useState('');
   const [bookingDateTime, setBookingDateTime] = React.useState('');
 
+  React.useEffect(() => {
+    setFullName((prev) => (prev ? prev : userName || ''));
+  }, [userName]);
+
+  React.useEffect(() => {
+    setPhone((prev) => (prev ? prev : userPhone || ''));
+  }, [userPhone]);
+
+  React.useEffect(() => {
+    setAddress((prev) => (prev ? prev : email || ''));
+  }, [email]);
+
+  React.useEffect(() => {
+    if (isGuest) return;
+    if (!journeyId) {
+      setBookingDateTime('');
+      return;
+    }
+    const selected = journeys.find((j) => String(j.id) === String(journeyId));
+    if (selected?.date) {
+      setBookingDateTime(selected.date);
+    }
+  }, [journeyId, journeys, isGuest]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if ((showSubjectInput && !subject) || !details || !fullName || !address || !phone) {
-      showAlert('Please fill in all required fields.');
+    const trimmedDetails = details.trim();
+    const contactEmail = (email || address || '').trim();
+
+    if ((showSubjectInput && !subject) || !trimmedDetails || !fullName || !contactEmail || !phone) {
+      showAlert('Please fill in all required fields, including complaint details.');
       return;
     }
     const effectiveSubject = showSubjectInput ? subject : 'Complaint/Compliment';
-    if (isGuest || !email) {
-      showAlert('Complaint submitted. We will get back to you within 48 hours.');
-      setBookingReference('');
-      setBookingDateTime('');
-      setFullName('');
-      setAddress('');
-      setPhone('');
-      setSubject(showSubjectInput ? '' : subject);
-      setDetails('');
-      return;
-    }
-    if (!journeyId) {
+
+    if (!isGuest && email && !journeyId) {
       showAlert('Select a journey to continue.');
       return;
     }
-
-    const composedDetails = `Details: ${details}
-
-Name: ${fullName}
-Address: ${address}
-Phone: ${phone}`;
 
     setLoading(true);
     try {
       const res = await fetch('/api/client/complaints', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, journeyId, subject: effectiveSubject, details: composedDetails }),
+        body: JSON.stringify({
+          email: email || contactEmail,
+          journeyId: journeyId || undefined,
+          subject: effectiveSubject,
+          details: trimmedDetails,
+          fullName,
+          address: contactEmail,
+          phone,
+          bookingReference: bookingReference || (journeyId ? `VD_${journeyId}` : ''),
+          bookingDateTime: bookingDateTime || undefined,
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -69,9 +99,11 @@ Phone: ${phone}`;
       setJourneyId('');
       setSubject(showSubjectInput ? '' : subject);
       setDetails('');
-      setFullName('');
-      setAddress('');
-      setPhone('');
+      setFullName(isGuest ? '' : userName || fullName);
+      setAddress(isGuest ? '' : email || address);
+      setPhone(isGuest ? '' : userPhone || phone);
+      setBookingReference('');
+      setBookingDateTime('');
     } catch (err: any) {
       showAlert(err?.message || 'Failed to submit complaint');
     } finally {
@@ -82,11 +114,11 @@ Phone: ${phone}`;
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {showSubjectInput ? (
-        <DashboardInput
-          id="subject"
-          label="Complaint/Compliment"
-          type="text"
-          value={subject}
+      <DashboardInput
+        id="subject"
+        label="Complaint/Compliment"
+        type="text"
+        value={subject}
           onChange={(e) => setSubject(e.target.value)}
           required
         />
@@ -116,16 +148,18 @@ Phone: ${phone}`;
               required
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
+              readOnly={!isGuest && Boolean(email)}
             />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <DashboardInput
               id="your-address"
-              label="Your Address"
+              label="Email Address"
               type="text"
               required
               value={address}
               onChange={(e) => setAddress(e.target.value)}
+              readOnly={!isGuest && Boolean(email)}
             />
             <DashboardInput
               id="your-phone"
@@ -134,6 +168,7 @@ Phone: ${phone}`;
               required
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
+              readOnly={!isGuest && Boolean(email)}
             />
           </div>
         </>
@@ -152,7 +187,7 @@ Phone: ${phone}`;
             </option>
             {journeys.map((journey) => (
               <option key={journey.id} value={journey.id} className="bg-gray-900 text-white">
-                #{journey.id} - {journey.date} - {journey.pickup} to {journey.destination.split(',')[0]} ({journey.status})
+                Ref. no. VD_{journey.id} - {journey.date} - {journey.pickup} to {journey.destination.split(',')[0]} ({journey.status})
               </option>
             ))}
           </DashboardSelect>
@@ -168,15 +203,17 @@ Phone: ${phone}`;
             required
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
+            readOnly
           />
           <div className="grid gap-4 sm:grid-cols-2">
             <DashboardInput
               id="your-address"
-              label="Your Address"
+              label="Email Address"
               type="text"
               required
               value={address}
               onChange={(e) => setAddress(e.target.value)}
+              readOnly
             />
             <DashboardInput
               id="your-phone"
@@ -185,13 +222,21 @@ Phone: ${phone}`;
               required
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
+              readOnly
             />
           </div>
+          <DashboardInput
+            id="booking-datetime"
+            label="Booking Date"
+            type="text"
+            value={bookingDateTime}
+            readOnly
+          />
         </>
       )}
       <div>
         <label htmlFor="details" className="block text-xs font-semibold text-amber-200/70 uppercase tracking-wider mb-2">
-          Details of Property
+          Details of Complaint
         </label>
         <textarea
           id="details"

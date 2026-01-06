@@ -30,6 +30,7 @@ const ClientDashboardPage: React.FC = () => {
   const [savedQuotes, setSavedQuotes] = useState<SavedQuote[]>([]);
   const [savedLoading, setSavedLoading] = useState(true);
   const [deletingQuoteId, setDeletingQuoteId] = useState<SavedQuote['id'] | null>(null);
+  const [bookingSavedId, setBookingSavedId] = useState<SavedQuote['id'] | null>(null);
 
   const handleLogout = () => {
     logout();
@@ -42,6 +43,63 @@ const ClientDashboardPage: React.FC = () => {
     }
   }, [user, router]);
 
+  const loadHistory = React.useCallback(async () => {
+    if (!user?.email) {
+      setJourneys([]);
+      setHistoryLoading(false);
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/client/history?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('history');
+      const data = (await res.json()) as { journeys: Journey[] };
+      setJourneys(data.journeys || []);
+    } catch {
+      setJourneys([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [user?.email]);
+
+  const loadProfile = React.useCallback(async () => {
+    if (!user?.email) {
+      setProfile(null);
+      setProfileLoading(false);
+      return;
+    }
+    setProfileLoading(true);
+    try {
+      const res = await fetch(`/api/client/profile?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('profile');
+      const data = await res.json();
+      setProfile({ name: data.name, phone: data.phone });
+    } catch {
+      setProfile({ name: user.name, phone: user.phone });
+    } finally {
+      setProfileLoading(false);
+    }
+  }, [user?.email, user?.name, user?.phone]);
+
+  const loadSavedQuotes = React.useCallback(async () => {
+    if (!user?.email) {
+      setSavedQuotes([]);
+      setSavedLoading(false);
+      return;
+    }
+    setSavedLoading(true);
+    try {
+      const res = await fetch(`/api/client/saved-quotes?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('saved');
+      const data = (await res.json()) as { quotes: SavedQuote[] };
+      setSavedQuotes(data.quotes || []);
+    } catch {
+      setSavedQuotes([]);
+    } finally {
+      setSavedLoading(false);
+    }
+  }, [user?.email]);
+
   useEffect(() => {
     if (!user?.email) {
       setHistoryLoading(false);
@@ -50,49 +108,10 @@ const ClientDashboardPage: React.FC = () => {
       setSavedLoading(false);
       return;
     }
-    const loadHistory = async () => {
-      setHistoryLoading(true);
-      try {
-        const res = await fetch(`/api/client/history?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' });
-        if (!res.ok) throw new Error('history');
-        const data = (await res.json()) as { journeys: Journey[] };
-        setJourneys(data.journeys || []);
-      } catch {
-        setJourneys([]);
-      } finally {
-        setHistoryLoading(false);
-      }
-    };
-    const loadProfile = async () => {
-      setProfileLoading(true);
-      try {
-        const res = await fetch(`/api/client/profile?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' });
-        if (!res.ok) throw new Error('profile');
-        const data = await res.json();
-        setProfile({ name: data.name, phone: data.phone });
-      } catch {
-        setProfile({ name: user.name, phone: user.phone });
-      } finally {
-        setProfileLoading(false);
-      }
-    };
-    const loadSavedQuotes = async () => {
-      setSavedLoading(true);
-      try {
-        const res = await fetch(`/api/client/saved-quotes?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' });
-        if (!res.ok) throw new Error('saved');
-        const data = (await res.json()) as { quotes: SavedQuote[] };
-        setSavedQuotes(data.quotes || []);
-      } catch {
-        setSavedQuotes([]);
-      } finally {
-        setSavedLoading(false);
-      }
-    };
     loadHistory();
     loadProfile();
     loadSavedQuotes();
-  }, [user?.email]);
+  }, [user?.email, loadHistory, loadProfile, loadSavedQuotes]);
 
   const handleDeleteQuote = async (quoteId: SavedQuote['id']) => {
     if (!user?.email) return;
@@ -112,6 +131,25 @@ const ClientDashboardPage: React.FC = () => {
     }
   };
 
+  const handleBookSaved = async (quoteId: SavedQuote['id']) => {
+    if (!user?.email) return;
+    setBookingSavedId(quoteId);
+    try {
+      const res = await fetch('/api/client/saved-quotes/book', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, id: quoteId }),
+      });
+      if (!res.ok) throw new Error('book');
+      await loadHistory();
+    } catch (err) {
+      console.error('Failed to book saved quote', err);
+    } finally {
+      setBookingSavedId(null);
+      loadSavedQuotes();
+    }
+  };
+
   const memoizedJourneys = useMemo(() => journeys, [journeys]);
 
   const tabs = ['History', 'Complain', 'Review', 'Lost property', 'Update Details'];
@@ -128,12 +166,20 @@ const ClientDashboardPage: React.FC = () => {
             onSelectSaved={(quoteId) => router.push(`/booking?saved=${quoteId}`)}
             onDeleteSaved={handleDeleteQuote}
             deletingSavedId={deletingQuoteId}
+            onBookSaved={handleBookSaved}
+            bookingSavedId={bookingSavedId}
           />
         );
       case 'Complain':
         return (
             <DashboardContentWrapper title="Complaint/Compliment">
-                <ClientComplain email={user?.email || ''} journeys={memoizedJourneys} showSubjectInput={false} />
+                <ClientComplain
+                  email={user?.email || ''}
+                  journeys={memoizedJourneys}
+                  showSubjectInput={false}
+                  userName={profile?.name || user?.name || ''}
+                  userPhone={profile?.phone || user?.phone || ''}
+                />
             </DashboardContentWrapper>
         );
       case 'Review':

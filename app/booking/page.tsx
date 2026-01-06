@@ -37,6 +37,14 @@ type ZoneRing = {
     radiusMiles: number;
 };
 
+type PlaceLike = {
+    place_id?: string;
+    types?: string[];
+    name?: string;
+    formatted_address?: string;
+    geometry?: { location?: { lat: () => number; lng: () => number } };
+};
+
 const BookingPageInner = () => {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -58,6 +66,8 @@ const BookingPageInner = () => {
     const [pickupLatLng, setPickupLatLng] = useState<{ lat: number; lng: number } | null>(null);
     const [dropOffLatLng, setDropOffLatLng] = useState<{ lat: number; lng: number } | null>(null);
     const [stopCoords, setStopCoords] = useState<Array<{ lat: number; lng: number } | null>>([null]);
+    const [pickupIsAirport, setPickupIsAirport] = useState(false);
+    const [dropIsAirportFlags, setDropIsAirportFlags] = useState<boolean[]>([false]);
     const [legBreakdown, setLegBreakdown] = useState<Array<{
         miles: number;
         originLabel: string;
@@ -305,18 +315,51 @@ const BookingPageInner = () => {
         if (!maps?.places || !pickupInputRef.current) return;
         distanceServiceRef.current = new maps.DistanceMatrixService();
         const opts = {
-            fields: ['formatted_address', 'geometry'],
+            fields: ['place_id', 'types', 'name', 'formatted_address', 'geometry'],
             types: ['geocode', 'establishment'],
             componentRestrictions: { country: ['gb'] },
         } as any;
 
+        const placesService = new maps.places.PlacesService(document.createElement('div'));
+
+        const ensurePlaceDetails = (place: any) =>
+            new Promise<PlaceLike>((resolve) => {
+                if (place?.types?.length || !place?.place_id) return resolve(place);
+                placesService.getDetails(
+                    { placeId: place.place_id, fields: ['place_id', 'types', 'name', 'formatted_address', 'geometry'] },
+                    (detail: any, status: any) => {
+                        if (status === maps.places.PlacesServiceStatus.OK && detail) {
+                            resolve({ ...place, ...detail });
+                        } else {
+                            resolve(place);
+                        }
+                    }
+                );
+            });
+
+        const isAirportPlace = (place: PlaceLike | null | undefined, fallbackText?: string) => {
+            if (!place) return false;
+            if (place.types?.includes('airport')) return true;
+            const text = (place.name || place.formatted_address || fallbackText || '').toLowerCase();
+            if (/airport|terminal/.test(text)) return true;
+            return (
+                text.includes('hartmann rd, london e16') ||
+                text.includes('eastwoodbury cres, southend') ||
+                text.includes('hounslow tw6') ||
+                text.includes('bassingbourn rd, stansted')
+            );
+        };
+
         const pickupAuto = new maps.places.Autocomplete(pickupInputRef.current, opts);
         pickupAuto.addListener('place_changed', () => {
             const place = pickupAuto.getPlace();
-            if (place?.formatted_address) setPickup(place.formatted_address);
-            if (place?.geometry?.location) {
-                setPickupLatLng({ lat: place.geometry.location.lat(), lng: place.geometry.location.lng() });
-            }
+            ensurePlaceDetails(place).then((full) => {
+                if (full?.formatted_address) setPickup(full.formatted_address);
+                if (full?.geometry?.location) {
+                    setPickupLatLng({ lat: full.geometry.location.lat(), lng: full.geometry.location.lng() });
+                }
+                setPickupIsAirport(isAirportPlace(full, place?.formatted_address));
+            });
         });
 
         dropoffAutocompleteRefs.current.forEach((auto) => maps.event.clearInstanceListeners(auto));
@@ -327,15 +370,20 @@ const BookingPageInner = () => {
             const dropAuto = new maps.places.Autocomplete(input, opts);
             dropAuto.addListener('place_changed', () => {
                 const place = dropAuto.getPlace();
-                if (place?.formatted_address) handleDropOffChange(index, place.formatted_address);
-                if (place?.geometry?.location) {
-                    const coords = [...stopCoords];
-                    coords[index] = { lat: place.geometry.location.lat(), lng: place.geometry.location.lng() };
-                    setStopCoords(coords);
-                    if (index === 0) {
-                        setDropOffLatLng({ lat: place.geometry.location.lat(), lng: place.geometry.location.lng() });
+                ensurePlaceDetails(place).then((full) => {
+                    if (full?.formatted_address) handleDropOffChange(index, full.formatted_address);
+                    if (full?.geometry?.location) {
+                        const coords = [...stopCoords];
+                        coords[index] = { lat: full.geometry.location.lat(), lng: full.geometry.location.lng() };
+                        setStopCoords(coords);
+                        if (index === 0) {
+                            setDropOffLatLng({ lat: full.geometry.location.lat(), lng: full.geometry.location.lng() });
+                        }
                     }
-                }
+                    const flags = [...dropIsAirportFlags];
+                    flags[index] = isAirportPlace(full, place?.formatted_address);
+                    setDropIsAirportFlags(flags);
+                });
             });
             dropoffAutocompleteRefs.current.push(dropAuto);
         });
@@ -351,6 +399,35 @@ const BookingPageInner = () => {
             return;
         }
 
+        const placesService = new maps.places.PlacesService(document.createElement('div'));
+        const ensurePlaceDetails = (place: any) =>
+            new Promise<PlaceLike>((resolve) => {
+                if (place?.types?.length || !place?.place_id) return resolve(place);
+                placesService.getDetails(
+                    { placeId: place.place_id, fields: ['place_id', 'types', 'name', 'formatted_address', 'geometry'] },
+                    (detail: any, status: any) => {
+                        if (status === maps.places.PlacesServiceStatus.OK && detail) {
+                            resolve({ ...place, ...detail });
+                        } else {
+                            resolve(place);
+                        }
+                    }
+                );
+            });
+
+        const isAirportPlace = (place: PlaceLike | null | undefined, fallbackText?: string) => {
+            if (!place) return false;
+            if (place.types?.includes('airport')) return true;
+            const text = (place.name || place.formatted_address || fallbackText || '').toLowerCase();
+            if (/airport|terminal/.test(text)) return true;
+            return (
+                text.includes('hartmann rd, london e16') ||
+                text.includes('eastwoodbury cres, southend') ||
+                text.includes('hounslow tw6') ||
+                text.includes('bassingbourn rd, stansted')
+            );
+        };
+
         const tryAttach = (input: HTMLInputElement | null, onSelect: (place: PlaceResult | null) => void) => {
             if (!input) return false;
             let element: any;
@@ -359,13 +436,14 @@ const BookingPageInner = () => {
                 (element as any).inputElement = input;
                 (element as any).types = ['geocode', 'establishment'];
                 (element as any).countries = ['gb'];
+                (element as any).fields = ['place_id', 'types', 'name', 'formatted_address', 'geometry'];
             } catch {
                 return false;
             }
 
             const handler = () => {
                 const place = (element as any).getPlace ? (element as any).getPlace() : null;
-                onSelect(place);
+                ensurePlaceDetails(place).then(onSelect);
             };
             ['placechange', 'gmp-placeselect', 'gmpx-placechange', 'place_changed'].forEach((evt) =>
                 element.addEventListener(evt, handler)
@@ -386,6 +464,7 @@ const BookingPageInner = () => {
                 const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
                 setPickupLatLng({ lat, lng });
             }
+            setPickupIsAirport(isAirportPlace(place, place?.formatted_address));
         });
 
         let allDropsOk = true;
@@ -401,6 +480,9 @@ const BookingPageInner = () => {
                     setStopCoords(coords);
                     if (index === 0) setDropOffLatLng({ lat, lng });
                 }
+                const flags = [...dropIsAirportFlags];
+                flags[index] = isAirportPlace(place, place?.formatted_address);
+                setDropIsAirportFlags(flags);
             });
             if (!ok) allDropsOk = false;
         });
@@ -526,13 +608,7 @@ const BookingPageInner = () => {
     };
 
     const milesValue = Number(miles) || 0;
-    const isAirportOrTerminal = (value: string) => {
-        const lowered = value.toLowerCase();
-        if (/(airport|terminal)/i.test(value)) return true;
-        // Explicit fallback for Google’s Luton drop-off label
-        return lowered.includes('express drop off, luton lu2, uk');
-    };
-    const airportDetected = isAirportOrTerminal(pickup) || dropOffs.some((addr) => isAirportOrTerminal(addr));
+    const airportDetected = pickupIsAirport || dropIsAirportFlags.some(Boolean);
 
     const getMileageRate = (veh: string, dist: number) => {
         const vp = vehiclePricing(veh);
@@ -576,7 +652,7 @@ const BookingPageInner = () => {
         }
         setSavingQuote(true);
         try {
-            const payload = buildQuotePayload();
+            const payload = { ...buildQuotePayload(), totalFare };
             const label = `${payload.pickup || 'Journey'} -> ${payload.dropOffs?.[0] || 'Destination'}`;
             const res = await fetch('/api/client/saved-quotes', {
                 method: 'POST',
@@ -623,11 +699,11 @@ const BookingPageInner = () => {
         totalFare += pricingData.nightSurcharge;
         extras.push(`Night surcharge GBP${pricingData.nightSurcharge.toFixed(2)}`);
     }
-    if (isAirportOrTerminal(pickup)) {
+    if (pickupIsAirport) {
         totalFare += pricingData.surcharges.airportPickup;
         extras.push(`Airport/terminal pickup GBP${pricingData.surcharges.airportPickup.toFixed(2)}`);
     }
-    if (dropOffs.some(addr => isAirportOrTerminal(addr))) {
+    if (dropIsAirportFlags.some(Boolean)) {
         totalFare += pricingData.surcharges.airportDropoff;
         extras.push(`Airport/terminal drop-off GBP${pricingData.surcharges.airportDropoff.toFixed(2)}`);
     }
@@ -660,6 +736,7 @@ const BookingPageInner = () => {
     const handleAddStop = () => {
         setDropOffs([...dropOffs, '']);
         setStopCoords([...stopCoords, null]);
+        setDropIsAirportFlags([...dropIsAirportFlags, false]);
     };
 
     const handleRemoveStop = (index: number) => {
@@ -668,6 +745,8 @@ const BookingPageInner = () => {
             const newCoords = stopCoords.filter((_, i) => i !== index);
             setDropOffs(newDropOffs);
             setStopCoords(newCoords);
+            const newFlags = dropIsAirportFlags.filter((_, i) => i !== index);
+            setDropIsAirportFlags(newFlags);
         }
     };
 
@@ -678,6 +757,9 @@ const BookingPageInner = () => {
         const newCoords = [...stopCoords];
         newCoords[index] = null;
         setStopCoords(newCoords);
+        const newFlags = [...dropIsAirportFlags];
+        newFlags[index] = false;
+        setDropIsAirportFlags(newFlags);
         if (index === 0) setDropOffLatLng(null);
     };
     useEffect(() => {

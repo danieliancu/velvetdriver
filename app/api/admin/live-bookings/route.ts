@@ -14,7 +14,7 @@ const formatDate = (iso: string) => {
 };
 
 const formatPriceDetails = (price: number, extras?: unknown) => {
-  const base = `£${price.toFixed(2)}`;
+  const base = `GBP ${price.toFixed(2)}`;
   if (!Array.isArray(extras) || extras.length === 0) return base;
   const cleanedExtras = extras.map((entry) => String(entry).replace(/^Extras applied:\s*/i, '').trim());
   return `${base} ( ${cleanedExtras.join(' + ')} )`;
@@ -26,7 +26,7 @@ const buildNotes = (payload: any) => {
     payload?.specialEvents || null,
     payload?.notes || null,
   ].filter(Boolean);
-  return pieces.length ? pieces.join(' - ') : '—';
+  return pieces.length ? pieces.join(' - ') : '-';
 };
 
 export async function GET() {
@@ -41,10 +41,10 @@ export async function GET() {
               cj.price,
               cj.booking_payload,
               cj.service_type,
-              u.name AS client_name
+              u.email AS client_name
          FROM client_journeys cj
          LEFT JOIN users u ON cj.client_id = u.id
-        WHERE cj.status <> 'Completed'
+        WHERE cj.status = 'Upcoming'
         ORDER BY cj.journey_date ASC`
     );
 
@@ -80,3 +80,4 @@ export async function GET() {
     return NextResponse.json({ error: 'Failed to load live bookings' }, { status: 500 });
   }
 }
+

@@ -47,23 +47,7 @@ Method/Enquiry to return property: ${returnMethod}
 Result: ${result || 'Pending'}
 Company Representative Name: ${representative}`;
 
-    if (isGuest || !email) {
-      showAlert('Lost property report submitted. We will contact you shortly.');
-      setBookingReference('');
-      setBookingDateTime('');
-      setFullName('');
-      setAddress('');
-      setPhone('');
-      setHandedInBy('');
-      setReceivedDate('');
-      setReturnMethod('');
-      setResult('');
-      setRepresentative('');
-      setDescription('');
-      setDetails('');
-      return;
-    }
-    if (!journeyId) {
+    if (!isGuest && email && !journeyId) {
       showAlert('Select a journey to continue.');
       return;
     }
@@ -73,7 +57,22 @@ Company Representative Name: ${representative}`;
       const res = await fetch('/api/client/lost-property', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, journeyId, description, details: composedDetails }),
+        body: JSON.stringify({
+          email,
+          journeyId: journeyId || undefined,
+          description,
+          details: composedDetails,
+          fullName,
+          address,
+          phone,
+          bookingReference: bookingReference || (journeyId ? `VD_${journeyId}` : ''),
+          bookingDateTime,
+          handedInBy,
+          receivedDate,
+          returnMethod,
+          result,
+          representative,
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -178,7 +177,7 @@ Company Representative Name: ${representative}`;
             </option>
             {journeys.map(journey => (
               <option key={journey.id} value={journey.id} className="bg-gray-900 text-white">
-                #{journey.id} - {journey.date} - {journey.pickup} to {journey.destination.split(',')[0]} ({journey.status})
+                Ref. no. VD_{journey.id} - {journey.date} - {journey.pickup} to {journey.destination.split(',')[0]} ({journey.status})
               </option>
             ))}
           </DashboardSelect>

@@ -14,23 +14,30 @@ export async function GET(request: Request) {
       `SELECT cj.id, cj.journey_date, cj.pickup, cj.destination, cj.service_type, cj.driver_name, cj.car, cj.plate, cj.status, cj.price, cj.invoice_url
        FROM client_journeys cj
        INNER JOIN users u ON cj.client_id = u.id
-       WHERE u.email = ?
+       WHERE u.email = ? AND cj.status <> 'Saved'
        ORDER BY cj.journey_date DESC`,
       [email]
     );
-    const journeys = rows.map((row) => ({
-      id: row.id,
-      date: new Date(row.journey_date).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-      pickup: row.pickup,
-      destination: row.destination,
-      serviceType: row.service_type || 'Transfer',
-      driver: row.driver_name,
-      car: row.car,
-      plate: row.plate,
-      status: row.status,
-      price: Number(row.price),
-      invoiceUrl: row.invoice_url,
-    }));
+    const journeys = rows.map((row) => {
+      const dateValue = row.journey_date ? new Date(row.journey_date) : null;
+      const formattedDate =
+        dateValue && !Number.isNaN(dateValue.getTime())
+          ? dateValue.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : '-';
+      return {
+        id: row.id,
+        date: formattedDate,
+        pickup: row.pickup,
+        destination: row.destination,
+        serviceType: row.service_type || 'Transfer',
+        driver: row.driver_name,
+        car: row.car,
+        plate: row.plate,
+        status: row.status,
+        price: Number(row.price),
+        invoiceUrl: row.invoice_url,
+      };
+    });
     return NextResponse.json({ journeys });
   } catch (err) {
     console.error('History fetch error', err);

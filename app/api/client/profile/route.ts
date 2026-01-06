@@ -11,7 +11,11 @@ export async function GET(request: Request) {
   if (!email) return NextResponse.json({ error: 'Email required' }, { status: 400 });
   try {
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      'SELECT id, name, email, phone FROM users WHERE email = ? LIMIT 1',
+      `SELECT u.id, u.email, u.phone, c.full_name AS name
+       FROM users u
+       LEFT JOIN clients c ON c.user_id = u.id
+       WHERE u.email = ?
+       LIMIT 1`,
       [email]
     );
     if (!rows.length) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -30,18 +34,40 @@ export async function PUT(request: Request) {
     const phone = String(body.phone ?? '').trim();
     const newPassword = body.newPassword ? String(body.newPassword) : null;
     if (!email || !name) return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
-    const updates: Array<string> = [];
-    const params: Array<any> = [];
-    updates.push('name = ?');
-    params.push(name);
-    updates.push('phone = ?');
-    params.push(phone || null);
-    if (newPassword) {
-      updates.push('password_hash = ?');
-      params.push(await bcrypt.hash(newPassword, 10));
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const hashed = newPassword ? await bcrypt.hash(newPassword, 10) : null;
+      const userUpdate: Array<string> = ['phone = ?'];
+      const userParams: Array<any> = [phone || null];
+      if (hashed) {
+        userUpdate.push('password_hash = ?');
+        userParams.push(hashed);
+      }
+      userParams.push(email);
+      await conn.execute(`UPDATE users SET ${userUpdate.join(', ')} WHERE email = ?`, userParams);
+
+      const [users] = await conn.query<mysql.RowDataPacket[]>('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
+      const user = users[0];
+      if (user) {
+        await conn.execute(
+          `INSERT INTO clients (user_id, full_name, phone)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE full_name = VALUES(full_name), phone = VALUES(phone)`,
+          [user.id, name, phone || null]
+        );
+      }
+
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
     }
-    params.push(email);
-    await pool.execute(`UPDATE users SET ${updates.join(', ')} WHERE email = ?`, params);
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('Profile update error', err);

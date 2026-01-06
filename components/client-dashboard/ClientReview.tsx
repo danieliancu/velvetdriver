@@ -18,17 +18,24 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
   const [hoverRating, setHoverRating] = useState(0);
   const [journeyId, setJourneyId] = useState('');
   const [review, setReview] = useState('');
+  const [bookingReference, setBookingReference] = useState('');
+  const [bookingDate, setBookingDate] = useState('');
+  const [reviewerName, setReviewerName] = useState('');
   const [loading, setLoading] = useState(false);
   const { showAlert } = useAlert();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isGuest || !email) {
-      showAlert(`Thank you for your ${rating}-star review!`);
+    if (!journeyId && !isGuest && email) {
+      showAlert('Select a journey and rating to continue.');
       return;
     }
-    if (!journeyId || rating <= 0) {
-      showAlert('Select a journey and rating to continue.');
+    if (rating <= 0) {
+      showAlert('Select a rating to continue.');
+      return;
+    }
+    if (!review.trim()) {
+      showAlert('Please add a short review.');
       return;
     }
     setLoading(true);
@@ -36,7 +43,15 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
       const res = await fetch('/api/client/reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, journeyId, rating, review }),
+        body: JSON.stringify({
+          email,
+          journeyId: journeyId || undefined,
+          rating,
+          review,
+          bookingReference: bookingReference || (journeyId ? `VD_${journeyId}` : ''),
+          bookingDate,
+          reviewerName,
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -46,6 +61,9 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
       setJourneyId('');
       setRating(0);
       setReview('');
+      setBookingReference('');
+      setBookingDate('');
+      setReviewerName('');
     } catch (err: any) {
       showAlert(err?.message || 'Failed to submit review');
     } finally {
@@ -56,7 +74,23 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {isGuest || !email ? (
-        <DashboardInput id="booking-ref-review" label="Booking Reference or Date of Journey" type="text" required />
+        <>
+          <DashboardInput
+            id="booking-ref-review"
+            label="Booking Reference or Date of Journey"
+            type="text"
+            required
+            value={bookingReference}
+            onChange={(e) => setBookingReference(e.target.value)}
+          />
+          <DashboardInput
+            id="booking-date-review"
+            label="Date of Journey (optional)"
+            type="text"
+            value={bookingDate}
+            onChange={(e) => setBookingDate(e.target.value)}
+          />
+        </>
       ) : (
         <>
           <DashboardSelect
@@ -72,7 +106,7 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
             </option>
             {journeys.map(journey => (
               <option key={journey.id} value={journey.id} className="bg-gray-900 text-white">
-                {journey.date} - {journey.pickup} to {journey.destination.split(',')[0]} ({journey.status})
+                Ref. no. VD_{journey.id} - {journey.date} - {journey.pickup} to {journey.destination.split(',')[0]} ({journey.status})
               </option>
             ))}
           </DashboardSelect>
@@ -104,6 +138,14 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
           ))}
         </div>
       </div>
+
+      <DashboardInput
+        id="reviewer-name"
+        label="Your Name (optional)"
+        type="text"
+        value={reviewerName}
+        onChange={(e) => setReviewerName(e.target.value)}
+      />
 
       <div>
         <label htmlFor="review-details" className="block text-xs font-semibold text-amber-200/70 uppercase tracking-wider mb-2">

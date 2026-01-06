@@ -9,11 +9,12 @@ const StatusBadge: React.FC<{ status: Journey['status'] }> = ({ status }) => {
     Completed: 'bg-green-500/20 text-green-300',
     Upcoming: 'bg-yellow-500/20 text-yellow-300',
     Cancelled: 'bg-red-500/20 text-red-300',
+    Saved: 'bg-blue-500/20 text-blue-300',
   };
   return <span className={`${baseClasses} ${statusClasses[status]}`}>{status}</span>;
 };
 
-type FilterStatus = 'All' | 'Completed' | 'Upcoming' | 'Saved';
+type FilterStatus = 'Completed' | 'Upcoming' | 'Saved';
 
 interface Props {
   journeys?: Journey[];
@@ -22,7 +23,9 @@ interface Props {
   savedLoading?: boolean;
   onSelectSaved?: (quoteId: SavedQuote['id']) => void;
   onDeleteSaved?: (quoteId: SavedQuote['id']) => void;
+  onBookSaved?: (quoteId: SavedQuote['id']) => void;
   deletingSavedId?: SavedQuote['id'] | null;
+  bookingSavedId?: SavedQuote['id'] | null;
 }
 
 const ClientHistory: React.FC<Props> = ({
@@ -32,17 +35,16 @@ const ClientHistory: React.FC<Props> = ({
   savedLoading = false,
   onSelectSaved,
   onDeleteSaved,
+  onBookSaved,
   deletingSavedId = null,
+  bookingSavedId = null,
 }) => {
   const [filter, setFilter] = useState<FilterStatus>('Upcoming');
   const [query, setQuery] = useState('');
 
   const filteredJourneys = useMemo(() => {
-    if (filter === 'Saved') {
-      return journeys;
-    }
     return journeys.filter((journey) => {
-      const matchesStatus = filter === 'All' ? true : journey.status === filter;
+      const matchesStatus = filter === 'Saved' ? journey.status === 'Saved' : journey.status === filter;
       const search = query.trim().toLowerCase();
       const matchesQuery = !search
         ? true
@@ -130,6 +132,14 @@ const ClientHistory: React.FC<Props> = ({
                   </button>
                   <button
                     type="button"
+                    onClick={() => onBookSaved?.(quote.id)}
+                    className="px-3 py-1 text-xs font-semibold rounded-md bg-green-500/80 text-black hover:bg-green-400/80 transition-colors disabled:opacity-60"
+                    disabled={!onBookSaved || bookingSavedId === quote.id}
+                  >
+                    {bookingSavedId === quote.id ? 'Booking...' : 'Book Now!'}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => onDeleteSaved?.(quote.id)}
                     className="px-3 py-1 text-xs font-semibold rounded-md border border-red-500/60 text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-50"
                     disabled={!onDeleteSaved || deletingSavedId === quote.id}
@@ -180,7 +190,6 @@ const ClientHistory: React.FC<Props> = ({
         <div className="flex items-center gap-2">
           <FilterButton status="Upcoming" />
           <FilterButton status="Completed" />
-          <FilterButton status="All" />
           <FilterButton status="Saved" />
         </div>
       </div>
@@ -267,7 +276,7 @@ const ClientHistory: React.FC<Props> = ({
               ) : (
                 <tr>
                   <td colSpan={11} className="text-center p-8 text-gray-400">
-                    No {filter !== 'All' ? filter.toLowerCase() : ''} journeys found.
+                    No {filter.toLowerCase()} journeys found.
                   </td>
                 </tr>
               )}

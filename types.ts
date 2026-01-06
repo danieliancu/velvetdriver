@@ -23,7 +23,7 @@ export interface Journey {
   driver: string;
   car: string;
   plate: string;
-  status: 'Completed' | 'Upcoming' | 'Cancelled';
+  status: 'Completed' | 'Upcoming' | 'Cancelled' | 'Saved';
   price: number;
   invoiceUrl?: string | null;
 }

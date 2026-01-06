@@ -54,6 +54,7 @@ export async function POST(request: Request) {
       'INSERT INTO client_saved_quotes (client_id, label, payload) VALUES (?, ?, ?)',
       [user.id, label, JSON.stringify(payload)]
     );
+
     return NextResponse.json({ id: result.insertId });
   } catch (err) {
     console.error('Saved quote create error', err);

@@ -1,104 +1,33 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import AdminPageHeader from '@/components/AdminPageHeader';
 
 type Severity = 'critical' | 'warning' | 'info' | 'success';
 
+type AuditEvent = {
+  id: number;
+  table_name: string;
+  operation: 'INSERT' | 'UPDATE' | 'DELETE';
+  pk: string | null;
+  changed_at: string;
+  changed_by: number | null;
+  changed_by_email: string | null;
+  ip: string | null;
+  payload: any;
+};
+
 type NotificationItem = {
-  id: string;
+  id: string | number;
   category: string;
   title: string;
   message: string;
   datetime: string;
   severity: Severity;
   tags: string[];
+  details: Array<{ label: string; value: string }>;
 };
-
-const notifications: NotificationItem[] = [
-  {
-    id: 'notif-driver-pco',
-    category: 'Driver Document',
-    title: 'PCO licence expiring in 14 days',
-    message: 'James P. (PCO-70934) needs renewal submitted before 02 Dec.',
-    datetime: '2025-11-18T09:10:00Z',
-    severity: 'critical',
-    tags: ['Driver: James P.', 'PCO Licence', 'Renewal']
-  },
-  {
-    id: 'notif-car-mot',
-    category: 'Vehicle MOT',
-    title: 'MOT expiring soon for LC20 ABC',
-    message: 'Mercedes-Benz S-Class MOT due 15 Oct 2025. Schedule inspection.',
-    datetime: '2025-11-17T17:00:00Z',
-    severity: 'warning',
-    tags: ['VRM: LC20 ABC', 'MOT', 'Vehicle']
-  },
-  {
-    id: 'notif-car-insurance',
-    category: 'Vehicle Insurance',
-    title: 'Insurance expiring for BD68 XYZ',
-    message: 'BMW 7 Series insurance ends 01 Dec 2025. Upload renewed certificate.',
-    datetime: '2025-11-17T08:00:00Z',
-    severity: 'critical',
-    tags: ['VRM: BD68 XYZ', 'Insurance', 'Upload needed']
-  },
-  {
-    id: 'notif-car-phv',
-    category: 'PHV Vehicle Licence',
-    title: 'PHV licence renewal required for OT69 VEL',
-    message: 'Lexus RX PHV licence expires 10 Jan 2026. Start renewal pack.',
-    datetime: '2025-11-16T14:20:00Z',
-    severity: 'warning',
-    tags: ['VRM: OT69 VEL', 'PHV Licence', 'Vehicle']
-  },
-  {
-    id: 'notif-complaint',
-    category: 'Client Submission',
-    title: 'Complaint submitted (Ref: VD-1001)',
-    message: 'Passenger reported driver punctuality issue. Review and respond within SLA.',
-    datetime: '2025-11-18T11:35:00Z',
-    severity: 'critical',
-    tags: ['Complaint', 'Client', 'SLA 48h']
-  },
-  {
-    id: 'notif-review',
-    category: 'Client Submission',
-    title: 'New 5* review received',
-    message: '"Great ride, clean car, on time." from Kings Cross Hotel transfer.',
-    datetime: '2025-11-17T19:40:00Z',
-    severity: 'success',
-    tags: ['Review', 'Customer', 'Reputation']
-  },
-  {
-    id: 'notif-lost',
-    category: 'Lost Property',
-    title: 'Lost property form submitted',
-    message: 'Client reports missing laptop bag on VD-1010. Check vehicle BD68 XYZ.',
-    datetime: '2025-11-17T21:15:00Z',
-    severity: 'info',
-    tags: ['Lost Property', 'VD-1010', 'Follow-up']
-  },
-  {
-    id: 'notif-booking',
-    category: 'Booking Request',
-    title: 'Book a Journey request received',
-    message: 'New Heathrow to The Ned booking request. Awaiting client confirmation.',
-    datetime: '2025-11-18T08:55:00Z',
-    severity: 'info',
-    tags: ['New Booking', 'Dispatch', 'Heathrow']
-  },
-  {
-    id: 'notif-login',
-    category: 'Security',
-    title: 'New admin login detected',
-    message: 'Admin session opened from London IP 81.xx. Verify if expected.',
-    datetime: '2025-11-18T06:45:00Z',
-    severity: 'warning',
-    tags: ['Login', 'Audit', 'Security']
-  }
-] as const;
 
 const severityStyleMap: Record<
   Severity,
@@ -130,11 +59,9 @@ const severityStyleMap: Record<
     pill: 'bg-emerald-500 text-black',
     accent: 'text-emerald-200',
     button: 'border-emerald-400/70 text-emerald-100 hover:bg-emerald-400 hover:text-black',
-    label: 'Positive'
+    label: 'Notice'
   }
 };
-
-const notificationActions = ['Archive', 'Delete'] as const;
 
 const severityRank: Record<Severity, number> = {
   critical: 0,
@@ -149,17 +76,115 @@ const formatDateTime = (iso: string) =>
   );
 
 const AdminNotificationsPage: React.FC = () => {
-  const [query, setQuery] = React.useState('');
-  const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [newCount, setNewCount] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
-  const filtered = React.useMemo(() => {
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch('/api/admin/notifications', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { events: AuditEvent[] };
+        const mapped: NotificationItem[] = (data.events || []).map((evt) => {
+          const payload = evt.payload || {};
+          const toPairs = (obj: any) =>
+            Object.entries(obj || {})
+              .filter(([, v]) => v !== undefined && v !== null && `${v}`.trim() !== '')
+              .map(([k, v]) => `${k}: ${v}`);
+
+          const messageParts: string[] = [];
+          const details: Array<{ label: string; value: string }> = [];
+
+          if (payload.old) {
+            const oldPairs = toPairs(payload.old);
+            if (oldPairs.length) {
+              messageParts.push(`Old: ${oldPairs.join(' | ')}`);
+              details.push({ label: 'Old', value: oldPairs.join(' | ') });
+            }
+          }
+          if (payload.new) {
+            const newPairs = toPairs(payload.new);
+            if (newPairs.length) {
+              messageParts.push(`New: ${newPairs.join(' | ')}`);
+              details.push({ label: 'New', value: newPairs.join(' | ') });
+            }
+          }
+
+          const severityFromPayload = payload.severity as Severity | undefined;
+          const severity: Severity =
+            severityFromPayload && ['critical', 'warning', 'info', 'success'].includes(severityFromPayload)
+              ? severityFromPayload
+              : evt.operation === 'DELETE'
+              ? 'warning'
+              : evt.operation === 'UPDATE'
+              ? 'info'
+              : 'success';
+
+          const tagsFromPayload: string[] = [];
+          if (payload.tags && typeof payload.tags === 'object') {
+            Object.entries(payload.tags).forEach(([k, v]) => tagsFromPayload.push(`${k}: ${v ?? '-'}`));
+          }
+
+          const defaultTags = [
+            evt.changed_by ? `User ID: ${evt.changed_by}` : 'System',
+            evt.changed_by_email ? `Email: ${evt.changed_by_email}` : 'Unknown email',
+            evt.ip ? `IP: ${evt.ip}` : 'IP: n/a',
+          ];
+
+          return {
+            id: evt.id,
+            category: payload.category || evt.table_name,
+            title: payload.title || `${evt.operation} on ${evt.table_name}`,
+            message: payload.message || messageParts.join(' | ') || 'Change recorded.',
+            datetime: evt.changed_at,
+            severity,
+            tags: [...tagsFromPayload, ...defaultTags],
+            details,
+          };
+        });
+        setNotifications(mapped);
+        const lastSeen = sessionStorage.getItem('audit:lastSeenAt');
+        const latestChanged = data.events?.[0]?.changed_at;
+        if (latestChanged) {
+          const unseen = (data.events || []).filter((evt) =>
+            lastSeen ? new Date(evt.changed_at) > new Date(lastSeen) : true
+          ).length;
+          setNewCount(unseen);
+          sessionStorage.setItem('audit:latestFetchedAt', latestChanged);
+        }
+      } catch (err: any) {
+        setError(err?.message || 'Failed to load notifications');
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+
+    return () => {
+      const latest = sessionStorage.getItem('audit:latestFetchedAt');
+      if (latest) {
+        sessionStorage.setItem('audit:lastSeenAt', latest);
+      }
+      setNewCount(0);
+    };
+  }, []);
+
+  const filtered = useMemo(() => {
     if (!query.trim()) return notifications;
     const q = query.toLowerCase();
     return notifications.filter((item) => {
-      const haystack = `${item.id} ${item.category} ${item.title} ${item.message} ${item.tags.join(' ')}`.toLowerCase();
+      const haystack = `${item.id} ${item.category} ${item.title} ${item.message} ${item.tags.join(' ')} ${item.details.map((d) => `${d.label} ${d.value}`).join(' ')}`.toLowerCase();
       return haystack.includes(q);
     });
-  }, [query]);
+  }, [notifications, query]);
 
   const sortedNotifications = [...filtered].sort((a, b) => {
     const severityDiff = severityRank[a.severity] - severityRank[b.severity];
@@ -167,7 +192,12 @@ const AdminNotificationsPage: React.FC = () => {
     return new Date(b.datetime).getTime() - new Date(a.datetime).getTime();
   });
 
-  const toggleExpand = (id: string) => {
+  const totalPages = Math.max(1, Math.ceil(sortedNotifications.length / itemsPerPage));
+  const page = Math.min(currentPage, totalPages);
+  const start = (page - 1) * itemsPerPage;
+  const pageItems = sortedNotifications.slice(start, start + itemsPerPage);
+
+  const toggleExpand = (id: string | number) => {
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
@@ -175,7 +205,7 @@ const AdminNotificationsPage: React.FC = () => {
     <div className="min-h-screen bg-black text-white flex flex-col">
       <div className="w-full flex-grow p-4 sm:p-6 md:p-8">
         <div className="max-w-6xl mx-auto w-full space-y-8">
-          <AdminPageHeader active="notifications" />
+          <AdminPageHeader active="notifications" notificationsBadgeCount={newCount} />
 
           <main className="w-full space-y-4">
             <div className="relative">
@@ -193,78 +223,105 @@ const AdminNotificationsPage: React.FC = () => {
 
             <section className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
+                <div className="flex items-center gap-2">
                   <h2 className="text-xl font-semibold text-white">Notifications</h2>
                   <p className="text-sm text-gray-400">
-                    Document expiries, client submissions, logins — sorted by urgency & date.
+                    Live audit feed from database changes (sorted by urgency & date).
                   </p>
                 </div>
               </div>
-              <div className="space-y-3">
-                {sortedNotifications.map((item) => {
-                  const styles = severityStyleMap[item.severity];
-                  const isOpen = expanded[item.id] ?? false;
-                  return (
-                    <article
-                      key={item.id}
-                      className={`rounded-2xl border p-4 md:p-5 shadow-lg ${styles.card}`}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={() => toggleExpand(item.id)}
-                            className="h-7 w-7 flex items-center justify-center rounded-full border border-white/15 text-gray-200 hover:border-amber-400 hover:text-amber-300 transition"
-                            aria-label={isOpen ? 'Collapse notification' : 'Expand notification'}
-                          >
-                            <span className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}>▼</span>
-                          </button>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[11px] font-semibold uppercase tracking-[0.3em] ${styles.accent}`}>
-                              {item.category}
-                            </span>
-                            <span className={`text-[11px] px-2 py-1 rounded-full font-bold uppercase ${styles.pill}`}>
-                              {styles.label}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <p className="text-xs text-gray-300">{formatDateTime(item.datetime)}</p>
-                          <div className="flex flex-wrap gap-2">
-                            {notificationActions.map((action) => (
-                              <button
-                                key={`${item.id}-${action}`}
-                                type="button"
-                                className={`px-3 py-1 text-xs font-semibold rounded-full border transition ${styles.button}`}
-                              >
-                                {action}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                      {isOpen && (
-                        <div className="mt-3 space-y-3">
-                          <div className="space-y-1">
-                            <h3 className="text-lg font-semibold text-white">{item.title}</h3>
-                            <p className="text-sm text-gray-300">{item.message}</p>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {item.tags.map((tag) => (
-                              <span
-                                key={`${item.id}-${tag}`}
-                                className="text-[11px] rounded-full border border-white/10 bg-white/5 px-2 py-1 text-gray-200"
-                              >
-                                {tag}
+              {error ? (
+                <div className="rounded-lg border border-red-500/50 bg-red-950/40 text-red-200 px-4 py-3 text-sm">
+                  {error}
+                </div>
+              ) : null}
+              {loading ? (
+                <div className="text-sm text-gray-400">Loading notifications...</div>
+              ) : null}
+
+              <div className="grid grid-cols-1 gap-4">
+                {pageItems.length === 0 ? (
+                  <div className="text-sm text-gray-400">No notifications match your filters.</div>
+                ) : (
+                  pageItems.map((notif) => {
+                    const styles = severityStyleMap[notif.severity];
+                    const isOpen = expanded[notif.id];
+                    return (
+                      <article
+                        key={notif.id}
+                        className={`rounded-2xl border ${styles.card} p-4 sm:p-5 shadow-lg transition duration-200`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`text-[11px] font-semibold tracking-wide uppercase ${styles.pill} px-2 py-1 rounded-full`}>
+                                {styles.label}
                               </span>
-                            ))}
+                              <span className="text-xs text-gray-400">{notif.category}</span>
+                              <span className={`text-xs font-semibold ${styles.accent}`}>{formatDateTime(notif.datetime)}</span>
+                            </div>
+                            <h3 className="text-lg font-semibold text-white">{notif.title}</h3>
+                            <p className="text-sm text-gray-200 break-words">
+                              {isOpen ? notif.message : notif.message.slice(0, 280)}
+                              {notif.message.length > 280 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleExpand(notif.id)}
+                                  className="ml-2 text-amber-300 hover:text-amber-200 text-xs"
+                                >
+                                  {isOpen ? 'Show less' : 'Show more'}
+                                </button>
+                              ) : null}
+                            </p>
+                            <div className="flex flex-wrap gap-2 text-[11px] text-gray-400">
+                              {notif.tags.map((tag) => (
+                                <span key={tag} className="px-2 py-1 rounded-full bg-white/5 border border-white/10">
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                            {notif.details.length ? (
+                              <div className="mt-2 space-y-1 text-xs text-gray-200">
+                                {notif.details.map((d) => (
+                                  <div key={d.label}>
+                                    <span className="text-amber-200 font-semibold">{d.label}:</span>{' '}
+                                    <span className="text-gray-200">{d.value || '-'}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                         </div>
-                      )}
-                    </article>
-                  );
-                })}
+                      </article>
+                    );
+                  })
+                )}
               </div>
+              {sortedNotifications.length > itemsPerPage ? (
+                <div className="flex items-center justify-between text-sm text-gray-300">
+                  <span>
+                    Page {page} of {totalPages}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={page <= 1}
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className="px-3 py-1 rounded-md border border-white/10 bg-white/5 disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      disabled={page >= totalPages}
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      className="px-3 py-1 rounded-md border border-white/10 bg-white/5 disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </section>
           </main>
         </div>
