@@ -185,13 +185,22 @@ const ClientDashboardPage: React.FC = () => {
       case 'Review':
         return (
             <DashboardContentWrapper title="Leave a Review">
-                <ClientReview email={user?.email || ''} journeys={memoizedJourneys} />
+                <ClientReview
+                  email={user?.email || ''}
+                  journeys={memoizedJourneys}
+                  userName={profile?.name || user?.name || ''}
+                />
             </DashboardContentWrapper>
         );
       case 'Lost property':
         return (
             <DashboardContentWrapper title="Report Lost Property">
-                <ClientLostProperty email={user?.email || ''} journeys={memoizedJourneys} />
+                <ClientLostProperty
+                  email={user?.email || ''}
+                  journeys={memoizedJourneys}
+                  userName={profile?.name || user?.name || ''}
+                  userPhone={profile?.phone || user?.phone || ''}
+                />
             </DashboardContentWrapper>
         );
       case 'Update Details':

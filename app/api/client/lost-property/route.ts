@@ -65,13 +65,9 @@ export async function POST(request: Request) {
     const phone = String(body.phone ?? '').trim();
     const bookingReference = String(body.bookingReference ?? '').trim();
     const bookingDateTime = String(body.bookingDateTime ?? '').trim();
-    const handedInBy = String(body.handedInBy ?? '').trim();
-    const receivedDate = String(body.receivedDate ?? '').trim();
-    const returnMethod = String(body.returnMethod ?? '').trim();
-    const result = String(body.result ?? '').trim();
-    const representative = String(body.representative ?? '').trim();
+    const representativeTag = String(body.representative ?? '').trim();
 
-    if (!description || !details || !fullName || !address || !phone || !returnMethod || !representative) {
+    if (!description || !details || !fullName || !address || !phone) {
       return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
     }
 
@@ -89,9 +85,6 @@ export async function POST(request: Request) {
       throw err;
     }
 
-    const receivedAtDate = receivedDate ? new Date(receivedDate) : null;
-    const safeReceivedAt = receivedAtDate && !Number.isNaN(receivedAtDate.getTime()) ? receivedAtDate : null;
-
     const [resultSet] = await pool.execute<mysql.ResultSetHeader>(
       `INSERT INTO client_lost_property
        (client_id, journey_id, ref_no, handed_in_by, received_at, booking_datetime, customer_name, customer_email, customer_address, customer_phone, item_description, details, return_method, result, representative, source)
@@ -100,8 +93,8 @@ export async function POST(request: Request) {
         clientId,
         resolvedJourneyId,
         journeyRef || null,
-        handedInBy || null,
-        safeReceivedAt,
+        null,
+        null,
         bookingDateTime || null,
         fullName,
         email || '',
@@ -109,9 +102,9 @@ export async function POST(request: Request) {
         phone,
         description,
         details,
-        returnMethod || null,
-        result || null,
-        representative || null,
+        null,
+        null,
+        null,
         email ? 'client' : 'guest',
       ]
     );
@@ -124,7 +117,7 @@ export async function POST(request: Request) {
       tags: {
         ref: journeyRef || 'n/a',
         phone,
-        representative: representative || 'n/a',
+        representative: representativeTag || 'n/a',
         source: email ? 'client' : 'guest',
       },
     });

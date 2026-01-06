@@ -108,6 +108,8 @@ export async function POST(request: Request) {
         ref: journeyRef || 'n/a',
         rating,
         source: email ? 'client' : 'guest',
+        reviewer: reviewerName || 'n/a',
+        email: email || 'n/a',
       },
     });
 

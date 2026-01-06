@@ -10,42 +10,53 @@ interface ClientLostPropertyProps {
   email?: string;
   journeys?: Journey[];
   isGuest?: boolean;
+  userName?: string | null;
+  userPhone?: string | null;
 }
 
-const ClientLostProperty: React.FC<ClientLostPropertyProps> = ({ email, journeys = [], isGuest = false }) => {
+const ClientLostProperty: React.FC<ClientLostPropertyProps> = ({
+  email,
+  journeys = [],
+  isGuest = false,
+  userName,
+  userPhone,
+}) => {
   const { showAlert } = useAlert();
   const [journeyId, setJourneyId] = React.useState('');
   const [description, setDescription] = React.useState('');
   const [details, setDetails] = React.useState('');
   const [bookingReference, setBookingReference] = React.useState('');
   const [bookingDateTime, setBookingDateTime] = React.useState('');
-  const [fullName, setFullName] = React.useState('');
-  const [address, setAddress] = React.useState('');
-  const [phone, setPhone] = React.useState('');
-  const [handedInBy, setHandedInBy] = React.useState('');
-  const [receivedDate, setReceivedDate] = React.useState('');
-  const [returnMethod, setReturnMethod] = React.useState('');
-  const [result, setResult] = React.useState('');
-  const [representative, setRepresentative] = React.useState('');
+  const [fullName, setFullName] = React.useState(userName || '');
+  const [address, setAddress] = React.useState(email || '');
+  const [phone, setPhone] = React.useState(userPhone || '');
   const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!isGuest) {
+      setFullName((prev) => (prev ? prev : userName || ''));
+      setAddress((prev) => (prev ? prev : email || ''));
+      setPhone((prev) => (prev ? prev : userPhone || ''));
+    }
+  }, [isGuest, userName, email, userPhone]);
+
+  React.useEffect(() => {
+    if (!isGuest && journeyId) {
+      const selected = journeys.find((j) => String(j.id) === String(journeyId));
+      if (selected?.date) {
+        setBookingDateTime(selected.date);
+      }
+    } else if (!journeyId) {
+      setBookingDateTime('');
+    }
+  }, [journeyId, journeys, isGuest]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName || !address || !phone || !details || !description || !returnMethod || !representative) {
+    if (!fullName || !address || !phone || !details || !description) {
       showAlert('Please fill in all required fields.');
       return;
     }
-    const composedDetails = `Ref no: ${bookingReference || 'N/A'}
-Handed in By: ${handedInBy || 'N/A'}
-Date Property received: ${receivedDate || 'N/A'}
-Date and Time of related booking: ${bookingDateTime || 'N/A'}
-Customer details - Name: ${fullName}
-Customer details - Address: ${address}
-Customer details - Phone No: ${phone}
-Details of Property: ${details}
-Method/Enquiry to return property: ${returnMethod}
-Result: ${result || 'Pending'}
-Company Representative Name: ${representative}`;
 
     if (!isGuest && email && !journeyId) {
       showAlert('Select a journey to continue.');
@@ -61,17 +72,12 @@ Company Representative Name: ${representative}`;
           email,
           journeyId: journeyId || undefined,
           description,
-          details: composedDetails,
+          details,
           fullName,
           address,
           phone,
           bookingReference: bookingReference || (journeyId ? `VD_${journeyId}` : ''),
-          bookingDateTime,
-          handedInBy,
-          receivedDate,
-          returnMethod,
-          result,
-          representative,
+          bookingDateTime: bookingDateTime || undefined,
         }),
       });
       if (!res.ok) {
@@ -82,14 +88,9 @@ Company Representative Name: ${representative}`;
       setJourneyId('');
       setBookingReference('');
       setBookingDateTime('');
-      setFullName('');
-      setAddress('');
-      setPhone('');
-      setHandedInBy('');
-      setReceivedDate('');
-      setReturnMethod('');
-      setResult('');
-      setRepresentative('');
+      setFullName(isGuest ? '' : userName || '');
+      setAddress(isGuest ? '' : email || '');
+      setPhone(isGuest ? '' : userPhone || '');
       setDescription('');
       setDetails('');
     } catch (err: any) {
@@ -105,44 +106,19 @@ Company Representative Name: ${representative}`;
         <>
           <DashboardInput
             id="ref-no"
-            label="Ref. no."
+            label="Ref. no. or date and time"
             type="text"
             value={bookingReference}
             onChange={(e) => setBookingReference(e.target.value)}
           />
-          <div className="grid gap-4 sm:grid-cols-2">
-            <DashboardInput
-              id="handed-in-by"
-              label="Handed in By"
-              type="text"
-              value={handedInBy}
-              onChange={(e) => setHandedInBy(e.target.value)}
-            />
-            <DashboardInput
-              id="received-date"
-              label="Date Property received"
-              type="text"
-              value={receivedDate}
-              onChange={(e) => setReceivedDate(e.target.value)}
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <DashboardInput
-              id="booking-datetime-lost"
-              label="Date and Time of related booking"
-              type="text"
-              value={bookingDateTime}
-              onChange={(e) => setBookingDateTime(e.target.value)}
-            />
-            <DashboardInput
-              id="full-name-lost"
-              label="Name"
-              type="text"
-              required
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-            />
-          </div>
+          <DashboardInput
+            id="full-name-lost"
+            label="Name"
+            type="text"
+            required
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+          />
           <div className="grid gap-4 sm:grid-cols-2">
             <DashboardInput
               id="address-lost"
@@ -187,45 +163,14 @@ Company Representative Name: ${representative}`;
             </p>
           )}
           <DashboardInput
-            id="ref-no"
-            label="Ref. no."
+            id="full-name-lost"
+            label="Name"
             type="text"
-            value={bookingReference}
-            onChange={(e) => setBookingReference(e.target.value)}
+            required
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            readOnly
           />
-          <div className="grid gap-4 sm:grid-cols-2">
-            <DashboardInput
-              id="handed-in-by"
-              label="Handed in By"
-              type="text"
-              value={handedInBy}
-              onChange={(e) => setHandedInBy(e.target.value)}
-            />
-            <DashboardInput
-              id="received-date"
-              label="Date Property received"
-              type="text"
-              value={receivedDate}
-              onChange={(e) => setReceivedDate(e.target.value)}
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <DashboardInput
-              id="booking-datetime-lost"
-              label="Date and Time of related booking"
-              type="text"
-              value={bookingDateTime}
-              onChange={(e) => setBookingDateTime(e.target.value)}
-            />
-            <DashboardInput
-              id="full-name-lost"
-              label="Name"
-              type="text"
-              required
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-            />
-          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <DashboardInput
               id="address-lost"
@@ -234,6 +179,7 @@ Company Representative Name: ${representative}`;
               required
               value={address}
               onChange={(e) => setAddress(e.target.value)}
+              readOnly
             />
             <DashboardInput
               id="phone-lost"
@@ -242,6 +188,7 @@ Company Representative Name: ${representative}`;
               required
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
+              readOnly
             />
           </div>
         </>
@@ -262,43 +209,6 @@ Company Representative Name: ${representative}`;
         />
       </div>
 
-      <div>
-        <label htmlFor="lost-details" className="block text-xs font-semibold text-amber-200/70 uppercase tracking-wider mb-2">
-          Method/Enquiry to return property
-        </label>
-        <textarea
-          id="lost-details"
-          rows={4}
-          value={returnMethod}
-          onChange={(e) => setReturnMethod(e.target.value)}
-          className="w-full bg-gray-900 border border-amber-900/60 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
-          placeholder="How should we return the item?"
-        />
-      </div>
-      <div className="space-y-3">
-        <div>
-          <label className="block text-xs font-semibold text-amber-200/70 uppercase tracking-wider mb-2">
-            Result
-          </label>
-          <input
-            className="w-full bg-gray-900 border border-amber-900/60 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
-            value={result}
-            onChange={(e) => setResult(e.target.value)}
-            placeholder="Outcome or next step"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-semibold text-amber-200/70 uppercase tracking-wider mb-2">
-            Company Representative Name
-          </label>
-          <input
-            className="w-full bg-gray-900 border border-amber-900/60 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
-            value={representative}
-            onChange={(e) => setRepresentative(e.target.value)}
-            placeholder="Who is handling this?"
-          />
-        </div>
-      </div>
       <div className="pt-2 flex justify-start">
         <button type="submit" className="px-10 py-2.5 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-colors disabled:opacity-60" disabled={loading}>
           {loading ? 'Sending...' : 'Report Item'}

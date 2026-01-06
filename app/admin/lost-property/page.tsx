@@ -10,10 +10,8 @@ type LostItem = {
   journeyId?: number | null;
   handedInBy?: string | null;
   receivedAt?: string | null;
-  bookingDateTime?: string | null;
   customerName: string;
   customerEmail?: string;
-  customerAddress: string;
   customerPhone: string;
   itemDescription: string;
   details: string;
@@ -36,6 +34,9 @@ const AdminLostPropertyPage: React.FC = () => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [savingStatus, setSavingStatus] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     const load = async () => {
@@ -66,6 +67,46 @@ const AdminLostPropertyPage: React.FC = () => {
   }, [query, records]);
 
   const toggle = (ref: string) => setExpanded((prev) => ({ ...prev, [ref]: !prev[ref] }));
+
+  const handleFieldChange = (id: number, key: keyof LostItem, value: string) => {
+    setRecords((prev) => prev.map((r) => (r.id === id ? { ...r, [key]: value } : r)));
+  };
+
+  const handleStatusSelect = (id: number, status: string) => {
+    setRecords((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)));
+  };
+
+  const saveRecord = async (id: number) => {
+    const record = records.find((r) => r.id === id);
+    if (!record) return;
+    const prev = record.status;
+    setSavingStatus((p) => ({ ...p, [id]: true }));
+    setSaveError(null);
+    setSaveMessage(null);
+    try {
+      const res = await fetch('/api/admin/lost-property', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id,
+          status: record.status,
+          returnMethod: record.returnMethod,
+          result: record.result,
+          representative: record.representative,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to update record');
+      }
+      setSaveMessage(`Saved changes for ${record.refNo}`);
+    } catch (err: any) {
+      setSaveError(err?.message || 'Failed to save changes');
+      setRecords((prev) => prev.map((r) => (r.id === id ? { ...r, status: prev } : r)));
+    } finally {
+      setSavingStatus((p) => ({ ...p, [id]: false }));
+    }
+  };
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
@@ -98,6 +139,16 @@ const AdminLostPropertyPage: React.FC = () => {
               {error ? (
                 <div className="rounded-lg border border-red-500/50 bg-red-950/40 text-red-200 px-4 py-3 text-sm">
                   {error}
+                </div>
+              ) : null}
+              {saveError ? (
+                <div className="rounded-lg border border-red-500/50 bg-red-950/40 text-red-200 px-4 py-3 text-sm">
+                  {saveError}
+                </div>
+              ) : null}
+              {saveMessage ? (
+                <div className="rounded-lg border border-emerald-500/50 bg-emerald-950/40 text-emerald-100 px-4 py-3 text-sm">
+                  {saveMessage}
                 </div>
               ) : null}
               {loading ? <div className="text-sm text-gray-400">Loading reports...</div> : null}
@@ -134,14 +185,6 @@ const AdminLostPropertyPage: React.FC = () => {
                               />
                             </div>
                             <div className="sm:col-span-1">
-                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Address</label>
-                              <input
-                                className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white"
-                                value={r.customerAddress}
-                                readOnly
-                              />
-                            </div>
-                            <div className="sm:col-span-1">
                               <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Phone No</label>
                               <input
                                 className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white"
@@ -152,45 +195,27 @@ const AdminLostPropertyPage: React.FC = () => {
                           </div>
                           <div className="grid gap-3 sm:grid-cols-3">
                             <div className="sm:col-span-1">
-                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Email</label>
+                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Status</label>
+                              <select
+                                className="w-full rounded-lg bg-black/20 border border-white/10 px-3 py-2 text-sm text-white/80"
+                                value={r.status}
+                                onChange={(e) => handleStatusSelect(r.id, e.target.value)}
+                              >
+                                {['open', 'closed'].map((statusOption) => (
+                                  <option key={statusOption} value={statusOption}>
+                                    {statusOption}
+                                  </option>
+                                ))}
+                                {!['open', 'closed'].includes(r.status) ? (
+                                  <option value={r.status}>{r.status}</option>
+                                ) : null}
+                              </select>
+                            </div>
+                            <div className="sm:col-span-1">
+                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Email Address</label>
                               <input
                                 className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white"
                                 value={r.customerEmail || 'N/A'}
-                                readOnly
-                              />
-                            </div>
-                            <div className="sm:col-span-1">
-                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Booking</label>
-                              <input
-                                className="w-full rounded-lg bg-black/20 border border-white/10 px-3 py-2 text-sm text-white/80"
-                                value={r.bookingDateTime || 'Not provided'}
-                                readOnly
-                              />
-                            </div>
-                            <div className="sm:col-span-1">
-                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Status</label>
-                              <input
-                                className="w-full rounded-lg bg-black/20 border border-white/10 px-3 py-2 text-sm text-white/80"
-                                value={r.status}
-                                readOnly
-                              />
-                            </div>
-                          </div>
-
-                          <div className="grid gap-3 sm:grid-cols-3">
-                            <div className="sm:col-span-1">
-                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Handed in By</label>
-                              <input
-                                className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white"
-                                value={r.handedInBy || 'Not provided'}
-                                readOnly
-                              />
-                            </div>
-                            <div className="sm:col-span-1">
-                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Date received</label>
-                              <input
-                                className="w-full rounded-lg bg-black/20 border border-white/10 px-3 py-2 text-sm text-white/80"
-                                value={formatDateTime(r.receivedAt)}
                                 readOnly
                               />
                             </div>
@@ -210,8 +235,8 @@ const AdminLostPropertyPage: React.FC = () => {
                             <textarea
                               className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white"
                               rows={2}
-                              value={r.returnMethod || 'Not provided'}
-                              readOnly
+                              value={r.returnMethod || ''}
+                              onChange={(e) => handleFieldChange(r.id, 'returnMethod', e.target.value)}
                             />
                           </div>
                           <div className="grid gap-3 sm:grid-cols-3">
@@ -219,18 +244,28 @@ const AdminLostPropertyPage: React.FC = () => {
                               <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Result</label>
                               <input
                                 className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white"
-                                value={r.result || 'Pending'}
-                                readOnly
+                                value={r.result || ''}
+                                onChange={(e) => handleFieldChange(r.id, 'result', e.target.value)}
                               />
                             </div>
                             <div className="sm:col-span-1">
                               <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Company Representative Name</label>
                               <input
                                 className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white"
-                                value={r.representative || 'Not provided'}
-                                readOnly
+                                value={r.representative || ''}
+                                onChange={(e) => handleFieldChange(r.id, 'representative', e.target.value)}
                               />
                             </div>
+                          </div>
+                          <div className="pt-2 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => saveRecord(r.id)}
+                              className="rounded-lg bg-amber-500 text-black px-4 py-2.5 text-sm font-semibold hover:bg-amber-400 disabled:opacity-60"
+                              disabled={savingStatus[r.id]}
+                            >
+                              {savingStatus[r.id] ? 'Saving...' : 'Save'}
+                            </button>
                           </div>
                         </div>
                       )}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import DashboardInput from '@/components/DashboardInput';
 import DashboardSelect from '@/components/DashboardSelect';
 import { Star } from 'lucide-react';
@@ -11,18 +11,32 @@ interface ClientReviewProps {
   email?: string;
   journeys?: Journey[];
   isGuest?: boolean;
+  userName?: string | null;
 }
 
-const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGuest = false }) => {
+const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGuest = false, userName }) => {
   const [rating, setRating] = useState(0);
   const [hoverRating, setHoverRating] = useState(0);
   const [journeyId, setJourneyId] = useState('');
   const [review, setReview] = useState('');
   const [bookingReference, setBookingReference] = useState('');
   const [bookingDate, setBookingDate] = useState('');
-  const [reviewerName, setReviewerName] = useState('');
+  const [reviewerName, setReviewerName] = useState(userName || '');
+  const [reviewerEmail, setReviewerEmail] = useState(email || '');
   const [loading, setLoading] = useState(false);
   const { showAlert } = useAlert();
+
+  useEffect(() => {
+    if (userName && !reviewerName) {
+      setReviewerName(userName);
+    }
+  }, [userName, reviewerName]);
+
+  useEffect(() => {
+    if (email) {
+      setReviewerEmail(email);
+    }
+  }, [email]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,6 +52,14 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
       showAlert('Please add a short review.');
       return;
     }
+    if (!reviewerName.trim()) {
+      showAlert('Please add your name.');
+      return;
+    }
+    if (!reviewerEmail.trim()) {
+      showAlert('Please add your email.');
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch('/api/client/reviews', {
@@ -50,7 +72,8 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
           review,
           bookingReference: bookingReference || (journeyId ? `VD_${journeyId}` : ''),
           bookingDate,
-          reviewerName,
+          reviewerName: reviewerName.trim(),
+          email: reviewerEmail.trim(),
         }),
       });
       if (!res.ok) {
@@ -63,7 +86,8 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
       setReview('');
       setBookingReference('');
       setBookingDate('');
-      setReviewerName('');
+      setReviewerName(userName || '');
+      setReviewerEmail(email || '');
     } catch (err: any) {
       showAlert(err?.message || 'Failed to submit review');
     } finally {
@@ -82,13 +106,6 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
             required
             value={bookingReference}
             onChange={(e) => setBookingReference(e.target.value)}
-          />
-          <DashboardInput
-            id="booking-date-review"
-            label="Date of Journey (optional)"
-            type="text"
-            value={bookingDate}
-            onChange={(e) => setBookingDate(e.target.value)}
           />
         </>
       ) : (
@@ -140,11 +157,23 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
       </div>
 
       <DashboardInput
+        id="reviewer-email"
+        label="Email Address"
+        type="email"
+        required
+        value={reviewerEmail}
+        onChange={(e) => setReviewerEmail(e.target.value)}
+        readOnly={!isGuest && Boolean(email)}
+      />
+
+      <DashboardInput
         id="reviewer-name"
-        label="Your Name (optional)"
+        label="Your Name"
         type="text"
+        required
         value={reviewerName}
         onChange={(e) => setReviewerName(e.target.value)}
+        readOnly={!isGuest && Boolean(userName)}
       />
 
       <div>
