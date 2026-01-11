@@ -48,8 +48,8 @@ export async function POST(request: Request) {
 
       const [result] = await conn.execute<mysql.ResultSetHeader>(
         `INSERT INTO client_journeys
-          (client_id, journey_date, pickup, destination, service_type, driver_name, car, plate, status, price, invoice_url, passenger_name, passenger_email, passenger_phone, booking_payload)
-         VALUES (?, ?, ?, ?, ?, 'Pending assignment', 'TBD', 'TBD', 'Upcoming', ?, NULL, ?, ?, ?, ?)
+          (client_id, journey_date, pickup, destination, service_type, driver_name, car, plate, status, price, invoice_url, passenger_name, passenger_email, passenger_phone, vehicle_type_id, booking_payload)
+         VALUES (?, ?, ?, ?, ?, 'Pending assignment', 'TBD', 'TBD', 'Upcoming', ?, NULL, ?, ?, ?, ?, ?)
          `,
         [
           user.id,
@@ -61,6 +61,7 @@ export async function POST(request: Request) {
           passengerName,
           passengerEmail,
           passengerPhone,
+          payload?.vehicleTypeId ? Number(payload.vehicleTypeId) : null,
           JSON.stringify(payload),
         ]
       );

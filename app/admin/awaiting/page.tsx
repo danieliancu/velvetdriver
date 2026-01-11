@@ -14,7 +14,7 @@ type AwaitingDriver = {
   license: string;
   pcoExpiry: string;
   documents: Array<{ label: string; url: string; type: string }>;
-  cars: Array<{ vrm: string; make: string; model: string; colour: string; keeper: string }>;
+  cars: Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; vehicleTypeId: number | null; vehicleTypeLabel: string }>;
 };
 
 const tabs = ['Details', 'Car(s)', 'Documents Uploaded', 'Approve Now!'] as const;
@@ -23,6 +23,7 @@ const AwaitingApprovalPage: React.FC = () => {
   const [query, setQuery] = useState('');
   const [driverTabs, setDriverTabs] = useState<Record<string, typeof tabs[number]>>({});
   const [drivers, setDrivers] = useState<AwaitingDriver[]>([]);
+  const [pricingVehicles, setPricingVehicles] = useState<Array<{ id: number; label: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState<Record<string, boolean>>({});
@@ -47,6 +48,7 @@ const AwaitingApprovalPage: React.FC = () => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         setDrivers(data.drivers || []);
+        setPricingVehicles(data.pricingVehicles || []);
       } catch (err: any) {
         setError(err?.message || 'Failed to load awaiting drivers');
         setDrivers([]);
@@ -86,6 +88,36 @@ const AwaitingApprovalPage: React.FC = () => {
       setError(err?.message || 'Failed to approve driver');
     } finally {
       setApproving((prev) => ({ ...prev, [driverId]: false }));
+    }
+  };
+
+  const handleVehicleTypeChange = async (driverId: string, driverCarId: number, vehicleTypeId: number) => {
+    try {
+      const res = await fetch('/api/admin/awaiting', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverCarId, vehicleTypeId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to update vehicle type');
+      }
+      setDrivers((prev) =>
+        prev.map((driver) =>
+          driver.id !== driverId
+            ? driver
+            : {
+                ...driver,
+                cars: driver.cars.map((car) =>
+                  car.id === driverCarId
+                    ? { ...car, vehicleTypeId }
+                    : car
+                ),
+              }
+        )
+      );
+    } catch (err: any) {
+      setError(err?.message || 'Failed to update vehicle type');
     }
   };
 
@@ -206,6 +238,27 @@ const AwaitingApprovalPage: React.FC = () => {
                               <p><span className="text-amber-200 uppercase mr-2">VRM</span>{car.vrm}</p>
                               <p><span className="text-amber-200 uppercase mr-2">Colour</span>{car.colour}</p>
                               <p><span className="text-amber-200 uppercase mr-2">Keeper</span>{car.keeper}</p>
+                              <div className="mt-2">
+                                <label className="block text-[11px] uppercase tracking-wide text-amber-200/70 mb-1">
+                                  Vehicle Type
+                                </label>
+                                <select
+                                  value={car.vehicleTypeId ?? ''}
+                                  onChange={(event) =>
+                                    handleVehicleTypeChange(driver.id, car.id, Number(event.target.value))
+                                  }
+                                  className="w-full rounded-lg border border-amber-900/60 bg-black/40 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+                                >
+                                  <option value="" disabled>
+                                    Select vehicle type
+                                  </option>
+                                  {pricingVehicles.map((vehicle) => (
+                                    <option key={vehicle.id} value={vehicle.id}>
+                                      {vehicle.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
                           </div>
                         ))

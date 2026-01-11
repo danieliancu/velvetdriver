@@ -10,6 +10,7 @@ type ZoneRingRow = DbRow<{
 }>;
 
 type PricingVehicleRow = DbRow<{
+  id: number;
   code: string;
   label: string;
   as_directed_rate: number;
@@ -20,6 +21,7 @@ type PricingVehicleRow = DbRow<{
 }>;
 
 type PricingVehicle = {
+  id: number;
   code: string;
   label: string;
   asDirectedRate: number;
@@ -52,6 +54,7 @@ export async function GET() {
       .catch(() => [[], []] as unknown as [ZoneRingRow[], unknown]);
 
     const vehicles: PricingVehicle[] = vehiclesRows.map((v) => ({
+      id: Number(v.id),
       code: v.code,
       label: v.label,
       asDirectedRate: Number(v.as_directed_rate),

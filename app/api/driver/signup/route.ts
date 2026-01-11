@@ -218,14 +218,13 @@ export async function POST(request: Request) {
 
     let driverCarId: number | null = null;
     if (vehicleReg || make || model || colour || keeperInfo) {
-      const [carTypeRows] = await conn.query<mysql.RowDataPacket[]>(
+      const [pricingRows] = await conn.query<mysql.RowDataPacket[]>(
         `SELECT id
-         FROM vehicle_types
-         WHERE is_active = 1
-         ORDER BY (sort_order IS NULL), sort_order, id
+         FROM pricing_vehicles
+         ORDER BY id
          LIMIT 1`
       );
-      const vehicleTypeId = carTypeRows[0]?.id;
+      const vehicleTypeId = pricingRows[0]?.id || null;
       if (!vehicleTypeId) {
         throw new Error('Missing vehicle types');
       }
@@ -250,11 +249,16 @@ export async function POST(request: Request) {
         carId = carResult.insertId;
       }
 
+      const [countRows] = await conn.query<mysql.RowDataPacket[]>(
+        `SELECT COUNT(*) AS total FROM driver_cars WHERE driver_id = ? AND deleted_at IS NULL`,
+        [driverId]
+      );
+      const status = countRows[0]?.total ? 'inactive' : 'active';
       const [driverCarResult] = await conn.execute<mysql.ResultSetHeader>(
         `INSERT INTO driver_cars
          (driver_id, car_id, status, assigned_from)
-         VALUES (?, ?, 'active', NOW())`,
-        [driverId, carId]
+         VALUES (?, ?, ?, NOW())`,
+        [driverId, carId, status]
       );
       driverCarId = driverCarResult.insertId;
     }

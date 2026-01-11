@@ -48,6 +48,8 @@ type DriverCarEntry = {
     model: string;
     colour: string;
     keeperInfo: string;
+    status: string;
+    isActive: boolean;
     motExpiry: string;
     insuranceExpiry: string;
     phvExpiry: string;
@@ -786,6 +788,8 @@ const CarsPage: React.FC = () => {
                         model: car.model || '-',
                         colour: car.colour || '-',
                         keeperInfo: car.keeper_info || '-',
+                        status: car.status || 'active',
+                        isActive: !!car.isActive,
                         motExpiry: '',
                         insuranceExpiry: '',
                         phvExpiry: '',
@@ -888,6 +892,37 @@ const CarsPage: React.FC = () => {
             showAlert(err?.message || 'Failed to delete car');
         } finally {
             setCarDeleting((prev) => ({ ...prev, [carId]: false }));
+        }
+    };
+
+    const handleSetActiveCar = async (carId: string) => {
+        if (!user?.email) {
+            showAlert('Please sign in again.');
+            return;
+        }
+        if (cars.length <= 1) return;
+        setCarUpdating((prev) => ({ ...prev, [carId]: true }));
+        try {
+            const res = await fetch('/api/driver/cars', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: user.email, driverCarId: carId, setActive: true }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data?.error || 'Failed to set active car');
+            }
+            setCars((prev) =>
+                prev.map((car) => ({
+                    ...car,
+                    status: car.id === carId ? 'active' : 'inactive',
+                    isActive: car.id === carId,
+                }))
+            );
+        } catch (err: any) {
+            showAlert(err?.message || 'Failed to set active car');
+        } finally {
+            setCarUpdating((prev) => ({ ...prev, [carId]: false }));
         }
     };
 
@@ -1110,6 +1145,7 @@ const CarsPage: React.FC = () => {
                     updateNewCarDoc(entry.key, { status: 'Upload failed' });
                 }
             }
+            const nextIsActive = data.status ? data.status === 'active' : cars.length === 0;
             const newCar: DriverCarEntry = {
                 id: carId,
                 vrm: data.vehicleReg || vrm.trim().toUpperCase(),
@@ -1117,6 +1153,8 @@ const CarsPage: React.FC = () => {
                 model: data.model || model.trim(),
                 colour: data.colour || colour.trim(),
                 keeperInfo: data.keeperInfo || keeperInfo.trim(),
+                status: data.status || (nextIsActive ? 'active' : 'inactive'),
+                isActive: nextIsActive,
                 motExpiry: '',
                 insuranceExpiry: '',
                 phvExpiry: '',
@@ -1167,6 +1205,18 @@ const CarsPage: React.FC = () => {
                                       <h3 className="text-xl font-bold text-amber-400">{car.make} {car.model}</h3>
                                   </div>
                                   <div className="flex items-center gap-2">
+                                      <button
+                                          type="button"
+                                          onClick={() => handleSetActiveCar(car.id)}
+                                          disabled={cars.length <= 1 || car.isActive || !!carUpdating[car.id]}
+                                          className={`px-6 py-2.5 font-semibold rounded-lg transition-colors ${
+                                              car.isActive
+                                                  ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/50'
+                                                  : 'border border-amber-500/40 text-amber-200 hover:bg-amber-500/10'
+                                          } disabled:opacity-60`}
+                                      >
+                                          {car.isActive ? 'Active' : 'Set Active'}
+                                      </button>
                                       <button
                                           type="button"
                                           onClick={() => toggleCarEdit(car.id)}

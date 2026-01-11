@@ -57,6 +57,7 @@ const BookingPageInner = () => {
     const [date, setDate] = useState('');
     const [time, setTime] = useState('');
     const [vehicle, setVehicle] = useState('Executive');
+    const [vehicleTypeId, setVehicleTypeId] = useState('');
     const [serviceType, setServiceType] = useState('Transfer');
     const [passengers, setPassengers] = useState('1');
     const [smallSuitcases, setSmallSuitcases] = useState('0');
@@ -128,6 +129,7 @@ const BookingPageInner = () => {
     };
 
     type PricingVehicle = {
+        id: number;
         code: string;
         label: string;
         asDirectedRate: number;
@@ -150,9 +152,9 @@ const BookingPageInner = () => {
 
     const fallbackPricing: PricingData = {
         vehicles: [
-            { code: 'mpv', label: 'Luxury MPV', asDirectedRate: 60, mileage: { tier1: 20, tier2: 4, tier3: 3.5 }, innerZoneOverride: 20 },
-            { code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75 },
-            { code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25 }
+            { id: 3, code: 'mpv', label: 'Luxury MPV', asDirectedRate: 60, mileage: { tier1: 20, tier2: 4, tier3: 3.5 }, innerZoneOverride: 20 },
+            { id: 2, code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75 },
+            { id: 1, code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25 }
         ],
         surcharges: { airportPickup: 15, airportDropoff: 7, congestion: 15 },
         nightSurcharge: 30,
@@ -183,13 +185,25 @@ const BookingPageInner = () => {
                 const data = (await res.json()) as PricingData;
                 if (data?.vehicles?.length) {
                     setPricing(data);
+                    if (!vehicleTypeId) {
+                        setVehicleTypeId(String(data.vehicles[0].id));
+                        setVehicle(data.vehicles[0].label);
+                    }
                 } else {
                     setPricing(fallbackPricing);
+                    if (!vehicleTypeId) {
+                        setVehicleTypeId(String(fallbackPricing.vehicles[0]?.id ?? ''));
+                        setVehicle(fallbackPricing.vehicles[0]?.label ?? vehicle);
+                    }
                 }
             } catch (err) {
                 console.warn('Failed to load pricing from API, using defaults', err);
-                setPricingError('Using fallback pricing — failed to load from database.');
+                setPricingError('Using fallback pricing - failed to load from database.');
                 setPricing(fallbackPricing);
+                if (!vehicleTypeId) {
+                    setVehicleTypeId(String(fallbackPricing.vehicles[0]?.id ?? ''));
+                    setVehicle(fallbackPricing.vehicles[0]?.label ?? vehicle);
+                }
             }
         };
         loadPricing();
@@ -246,7 +260,12 @@ const BookingPageInner = () => {
         setDropOffs(Array.isArray(payload.dropOffs) && payload.dropOffs.length ? payload.dropOffs : ['']);
         setDate(payload.date || '');
         setTime(payload.time || '');
-        setVehicle(payload.vehicle || 'Luxury MPV');
+        const nextVehicle = payload.vehicle || 'Luxury MPV';
+        setVehicle(nextVehicle);
+        const knownVehicleId = payload.vehicleTypeId
+            ? String(payload.vehicleTypeId)
+            : String(pricingData.vehicles.find((v) => v.label === nextVehicle)?.id ?? '');
+        setVehicleTypeId(knownVehicleId);
         setServiceType(payload.serviceType || 'Transfer');
         setPassengers(payload.passengers || '1');
         setSmallSuitcases(payload.smallSuitcases || '0');
@@ -591,13 +610,21 @@ const BookingPageInner = () => {
 
     useEffect(() => {
         if (vehicle === 'Luxury' && !luxuryAllowed) {
-            setVehicle('Luxury MPV');
+            const fallback = pricingData.vehicles.find((v) => v.label === 'Luxury MPV') ?? pricingData.vehicles[0];
+            if (fallback) {
+                setVehicle(fallback.label);
+                setVehicleTypeId(String(fallback.id));
+            }
         } else if (vehicle === 'Executive' && !executiveAllowed) {
-            setVehicle('Luxury MPV');
+            const fallback = pricingData.vehicles.find((v) => v.label === 'Luxury MPV') ?? pricingData.vehicles[0];
+            if (fallback) {
+                setVehicle(fallback.label);
+                setVehicleTypeId(String(fallback.id));
+            }
         } else if (vehicle === 'Luxury MPV' && !luxuryMpvAllowed) {
             setPassengers('7');
         }
-    }, [vehicle, luxuryAllowed, executiveAllowed, luxuryMpvAllowed]);
+    }, [vehicle, luxuryAllowed, executiveAllowed, luxuryMpvAllowed, pricingData.vehicles]);
 
     const isNightTime = () => {
         if (!time) return false;
@@ -619,12 +646,17 @@ const BookingPageInner = () => {
 
     const extras: string[] = [];
 
+    const resolvedVehicleTypeId =
+        vehicleTypeId ||
+        String(pricingData.vehicles.find((v) => v.label === vehicle)?.id ?? '');
+
     const buildQuotePayload = () => ({
         pickup,
         dropOffs,
         date,
         time,
         vehicle,
+        vehicleTypeId: resolvedVehicleTypeId ? Number(resolvedVehicleTypeId) : null,
         serviceType,
         passengers,
         smallSuitcases,
@@ -1052,10 +1084,26 @@ const BookingPageInner = () => {
                                 onChange={e => setTime(e.target.value)}
                                 required
                             />
-                             <BookingSelect label="Vehicle" id="vehicle" value={vehicle} onChange={e => setVehicle(e.target.value)}>
-                                <option value="Luxury MPV">Luxury MPV</option>
-                                <option value="Luxury" disabled={!luxuryAllowed}>Luxury</option>
-                                <option value="Executive" disabled={!executiveAllowed}>Executive</option>
+                             <BookingSelect
+                                label="Vehicle"
+                                id="vehicle"
+                                value={vehicleTypeId}
+                                onChange={(e) => {
+                                    const selectedId = e.target.value;
+                                    setVehicleTypeId(selectedId);
+                                    const selected = pricingData.vehicles.find((v) => String(v.id) === selectedId);
+                                    if (selected) setVehicle(selected.label);
+                                }}
+                            >
+                                {pricingData.vehicles.map((veh) => (
+                                    <option
+                                        key={veh.id}
+                                        value={String(veh.id)}
+                                        disabled={(veh.label === 'Luxury' && !luxuryAllowed) || (veh.label === 'Executive' && !executiveAllowed)}
+                                    >
+                                        {veh.label}
+                                    </option>
+                                ))}
                             </BookingSelect>
                             <BookingInput label="Passengers" id="passengers" type="number" min="1" max="7" value={passengers} onChange={e => setPassengers(e.target.value)} />
                             <BookingInput label="Small Suitcases" id="small-suitcases" type="number" min="0" value={smallSuitcases} onChange={e => setSmallSuitcases(e.target.value)} />

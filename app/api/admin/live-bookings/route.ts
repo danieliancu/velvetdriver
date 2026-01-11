@@ -42,11 +42,14 @@ export async function GET() {
               cj.booking_payload,
               cj.booked_by_staff_id,
               cj.service_type,
+              cj.vehicle_type_id,
               u.email AS client_name
          , staff.full_name AS staff_name
+         , pv.label AS vehicle_label
          FROM client_journeys cj
          LEFT JOIN users u ON cj.client_id = u.id
          LEFT JOIN admin_staff staff ON cj.booked_by_staff_id = staff.id
+         LEFT JOIN pricing_vehicles pv ON pv.id = cj.vehicle_type_id
         WHERE cj.status = 'Upcoming'
         ORDER BY cj.journey_date ASC`
     );
@@ -64,6 +67,8 @@ export async function GET() {
       const priceNumber = Number(row.price ?? payload?.totalFare ?? 0) || 0;
       const bookedByStaffId = row.booked_by_staff_id ? Number(row.booked_by_staff_id) : null;
       const bookedByName = row.staff_name || null;
+      const vehicleLabel =
+        row.vehicle_label || payload?.vehicle || payload?.vehicleLabel || payload?.vehicleTypeLabel || 'Unknown';
       return {
         journeyId: Number(row.id),
         id: Number(row.id),
@@ -78,6 +83,8 @@ export async function GET() {
         date,
         time,
         priceDetails: formatPriceDetails(priceNumber, payload?.extras),
+        vehicle: vehicleLabel,
+        vehicleTypeId: row.vehicle_type_id ? Number(row.vehicle_type_id) : null,
       };
     });
 

@@ -31,11 +31,19 @@ type DocumentRow = DbRow<{
 type CarRow = DbRow<{
   id: number;
   driver_id: number;
+  status: string | null;
+  vehicle_type_id: number | null;
+  vehicle_type_label: string | null;
   vehicle_registration: string | null;
   make: string | null;
   model: string | null;
   colour: string | null;
   keeper_info: string | null;
+}>;
+
+type PricingVehicleRow = DbRow<{
+  id: number;
+  label: string;
 }>;
 
 type CarDocRow = DbRow<{
@@ -81,7 +89,8 @@ export async function GET() {
     const driverIds = rows.map((row) => row.driver_id);
     let documentsByDriver: Record<number, Array<{ name: string; url: string; type: string }>> = {};
     let profilePhotoByDriver: Record<number, string> = {};
-    let carsByDriver: Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>> = {};
+    let carsByDriver: Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; status: string; vehicleTypeId: number | null; vehicleTypeLabel: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>> = {};
+    let pricingVehicles: Array<{ id: number; label: string }> = [];
     if (driverIds.length) {
       const [docs] = await pool.query<DocumentRow[]>(
         `SELECT driver_id, doc_type, file_url, format, file_name
@@ -104,6 +113,9 @@ export async function GET() {
       const [cars] = await pool.query<CarRow[]>(
         `SELECT dc.id,
                 dc.driver_id,
+                dc.status,
+                c.vehicle_type_id,
+                pv.label AS vehicle_type_label,
                 c.vehicle_registration,
                 c.make,
                 c.model,
@@ -111,6 +123,7 @@ export async function GET() {
                 c.keeper_info
          FROM driver_cars dc
          INNER JOIN cars c ON c.id = dc.car_id
+         LEFT JOIN pricing_vehicles pv ON pv.id = c.vehicle_type_id
          WHERE dc.driver_id IN (${driverIds.map(() => '?').join(',')})
            AND dc.deleted_at IS NULL`,
         driverIds
@@ -152,10 +165,18 @@ export async function GET() {
           model: car.model || '-',
           colour: car.colour || '-',
           keeper: car.keeper_info || '-',
+          status: car.status || 'inactive',
+          vehicleTypeId: car.vehicle_type_id,
+          vehicleTypeLabel: car.vehicle_type_label || '-',
           documents: carDocsByCar[car.id] || [],
         });
         return acc;
-      }, {} as Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>>);
+      }, {} as Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; status: string; vehicleTypeId: number | null; vehicleTypeLabel: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>>);
+
+      const [pricingRows] = await pool.query<PricingVehicleRow[]>(
+        `SELECT id, label FROM pricing_vehicles ORDER BY id`
+      );
+      pricingVehicles = pricingRows.map((row) => ({ id: row.id, label: row.label }));
     }
 
     const drivers = rows.map((row) => ({
@@ -175,7 +196,7 @@ export async function GET() {
       carDetails: carsByDriver[row.driver_id] || [],
     }));
 
-    return NextResponse.json({ drivers });
+    return NextResponse.json({ drivers, pricingVehicles });
   } catch (err) {
     console.error('Admin drivers fetch error', err);
     return NextResponse.json({ error: 'Failed to load drivers' }, { status: 500 });
@@ -188,10 +209,14 @@ export async function PATCH(request: Request) {
     const driverId = Number(body.driverId);
     const nextStatus = body.status !== undefined ? String(body.status ?? '').trim().toLowerCase() : null;
     const commission = body.commission !== undefined ? Number(body.commission) : null;
+    const driverCarId = Number(body.driverCarId);
+    const vehicleTypeId = body.vehicleTypeId !== undefined ? Number(body.vehicleTypeId) : null;
     if (!driverId) {
-      return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
+      if (!driverCarId) {
+        return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
+      }
     }
-    if (commission === null && !nextStatus) {
+    if (commission === null && !nextStatus && !driverCarId) {
       return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
     }
 
@@ -207,6 +232,20 @@ export async function PATCH(request: Request) {
       if (!result.affectedRows) {
         return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
       }
+    }
+
+    if (driverCarId && vehicleTypeId) {
+      const [result] = await pool.execute<mysql.ResultSetHeader>(
+        `UPDATE cars c
+         INNER JOIN driver_cars dc ON dc.car_id = c.id
+         SET c.vehicle_type_id = ?
+         WHERE dc.id = ?`,
+        [vehicleTypeId, driverCarId]
+      );
+      if (!result.affectedRows) {
+        return NextResponse.json({ error: 'Car not found' }, { status: 404 });
+      }
+      return NextResponse.json({ ok: true });
     }
 
     let updatedAt: string | null = null;

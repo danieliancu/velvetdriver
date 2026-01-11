@@ -4,52 +4,14 @@ import React, { useEffect, useState } from 'react';
 import AdminPageHeader from '@/components/AdminPageHeader';
 
 type DriverDirectoryEntry = {
+  id: string;
   name: string;
   phone: string;
   plateNo: string;
   make: string;
   model: string;
+  vehicleTypeId: number | null;
 };
-
-const driverDirectory: Record<string, DriverDirectoryEntry> = {
-  james: {
-    name: 'James P.',
-    phone: '+447404494690',
-    plateNo: 'DL 123 ABC',
-    make: 'Mercedes-Benz',
-    model: 'S-Class'
-  },
-  robert: {
-    name: 'Robert K.',
-    phone: '+44 7700 900234',
-    plateNo: 'RX70 DVE',
-    make: 'BMW',
-    model: '7 Series'
-  },
-  david: {
-    name: 'David C.',
-    phone: '+44 7700 900345',
-    plateNo: 'DC19 PCO',
-    make: 'Audi',
-    model: 'A8'
-  },
-  anna: {
-    name: 'Anna B.',
-    phone: '+44 7700 900456',
-    plateNo: 'AB21 LUX',
-    make: 'Mercedes-Benz',
-    model: 'E-Class'
-  },
-  oliver: {
-    name: 'Oliver T.',
-    phone: '+44 7700 900567',
-    plateNo: 'OT69 VEL',
-    make: 'Lexus',
-    model: 'RX'
-  }
-};
-
-type BookingDriverId = keyof typeof driverDirectory;
 
 type LiveBooking = {
   journeyId: number;
@@ -64,7 +26,9 @@ type LiveBooking = {
   priceDetails: string;
   bookedBy: string;
   bookedByStaffId?: number | null;
-  drivers: BookingDriverId[];
+  drivers: string[];
+  vehicle?: string;
+  vehicleTypeId?: number | null;
 };
 
 type LiveBookingResponse = {
@@ -80,10 +44,11 @@ type LiveBookingResponse = {
   priceDetails: string;
   bookedBy: string;
   bookedByStaffId?: number | null;
+  vehicle?: string;
+  vehicleTypeId?: number | null;
 };
 
 const formatPhoneForWhatsApp = (phone: string) => phone.replace(/\D/g, '');
-const defaultDriverRoster = Object.keys(driverDirectory) as BookingDriverId[];
 
 const jobDoneStatusLabels = ['Client request', 'Client confirmation', 'Driver confirmed'] as const;
 const buildGoogleMapsLink = (location: string) => {
@@ -118,6 +83,7 @@ const AdminDashboardPage: React.FC = () => {
   const [pendingClientConfirmId, setPendingClientConfirmId] = useState<string | null>(null);
   const [historyToggle, setHistoryToggle] = useState<Record<string, boolean>>({});
   const [commissionInputs, setCommissionInputs] = useState<Record<string, string>>({});
+  const [availableDrivers, setAvailableDrivers] = useState<DriverDirectoryEntry[]>([]);
   // Manual booking modal removed; navigate to booking page instead.
   const [staffOptions, setStaffOptions] = useState<Array<{ id: number; name: string }>>([]);
   const [bookedBySelection, setBookedBySelection] = useState<Record<string, string>>({});
@@ -135,7 +101,7 @@ const AdminDashboardPage: React.FC = () => {
       date: '2026-01-10',
       priceDetails: 'GBP 145.00 | Exec | includes parking',
       bookedBy: 'Velvet Concierge',
-      drivers: defaultDriverRoster
+      drivers: []
     }
   ];
 
@@ -151,9 +117,42 @@ const AdminDashboardPage: React.FC = () => {
       date: '2026-01-09',
       priceDetails: 'GBP 78.00 | Luxury',
       bookedBy: 'D. Iancu',
-      drivers: ['james', 'anna']
+      drivers: []
     }
   ];
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadDrivers = async () => {
+      try {
+        const res = await fetch('/api/admin/drivers', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!isMounted) return;
+        const mapped = (data.drivers || []).map((driver: any) => {
+          const activeCar = Array.isArray(driver.carDetails)
+            ? driver.carDetails.find((car: any) => car.status === 'active')
+            : null;
+          return {
+            id: String(driver.id),
+            name: driver.name,
+            phone: driver.phone || '-',
+            plateNo: activeCar?.vrm || '-',
+            make: activeCar?.make || '-',
+            model: activeCar?.model || '-',
+            vehicleTypeId: activeCar?.vehicleTypeId ?? null,
+          } as DriverDirectoryEntry;
+        });
+        setAvailableDrivers(mapped);
+      } catch (err) {
+        console.error('Failed to load drivers roster', err);
+      }
+    };
+    loadDrivers();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -177,7 +176,9 @@ const AdminDashboardPage: React.FC = () => {
           priceDetails: item.priceDetails,
           bookedBy: item.bookedBy,
           bookedByStaffId: item.bookedByStaffId ?? null,
-          drivers: defaultDriverRoster,
+          vehicle: item.vehicle || 'Unknown',
+          vehicleTypeId: item.vehicleTypeId ?? null,
+          drivers: [],
         }));
         setLiveBookings(bookings);
         const defaults: Record<string, string> = {};
@@ -273,8 +274,8 @@ const AdminDashboardPage: React.FC = () => {
   };
 
   const hasDriverConfirmation = (booking: LiveBooking) =>
-    booking.drivers.some((driverId) => {
-      const driverKey = `${booking.id}-${driverId}`;
+    availableDrivers.some((driver) => {
+      const driverKey = `${booking.id}-${driver.id}`;
       return Boolean(driverConfirmed[driverKey]);
     });
 
@@ -336,7 +337,7 @@ const AdminDashboardPage: React.FC = () => {
     if (!text) return;
     const driverId = driverKey.split('-').at(-1);
     if (!driverId) return;
-    const driver = driverDirectory[driverId as BookingDriverId];
+    const driver = availableDrivers.find((entry) => entry.id === driverId);
     if (!driver) return;
     const digits = formatPhoneForWhatsApp(driver.phone);
     if (!digits) return;
@@ -382,8 +383,8 @@ const AdminDashboardPage: React.FC = () => {
     setClientConfirmed((prev) => ({ ...prev, [booking.id]: false }));
     setDriverConfirmed((prev) => {
       const updated = { ...prev };
-      booking.drivers.forEach((driverId) => {
-        const key = `${booking.id}-${driverId}`;
+      availableDrivers.forEach((driver) => {
+        const key = `${booking.id}-${driver.id}`;
         delete updated[key];
       });
       return updated;
@@ -418,13 +419,16 @@ const AdminDashboardPage: React.FC = () => {
                 ) : (
                   activeBookings.map((booking) => {
                     const confirmed = clientConfirmed[booking.id];
-                    const bookingDrivers = booking.drivers
-                      .map((driverId) => {
-                        const driver = driverDirectory[driverId];
-                        if (!driver) return null;
-                        return { id: driverId, ...driver };
-                      })
-                      .filter(Boolean) as Array<{ id: BookingDriverId } & DriverDirectoryEntry>;
+                    const bookingDrivers = availableDrivers
+                      .filter((driver) =>
+                        booking.vehicleTypeId
+                          ? driver.vehicleTypeId === booking.vehicleTypeId
+                          : true
+                      )
+                      .map((driver) => ({
+                        id: driver.id,
+                        ...driver,
+                      }));
                     const bookingConfirmed = hasDriverConfirmation(booking);
 
                     return (
@@ -447,6 +451,9 @@ const AdminDashboardPage: React.FC = () => {
                             <p className="text-sm text-gray-300">
                               Price:{' '}
                               <span className="font-semibold text-white">{booking.priceDetails}</span>
+                            </p>
+                            <p className="text-sm text-gray-300">
+                              Vehicle: <span className="font-semibold text-white">{booking.vehicle || 'Unknown'}</span>
                             </p>
                             <div className="text-sm text-gray-300 space-y-1">
                               <span className="block text-gray-400 text-xs uppercase tracking-[0.2em]">Booked by</span>

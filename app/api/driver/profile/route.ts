@@ -27,6 +27,7 @@ type DocumentRow = DbRow<{
 type CarRow = DbRow<{
   driver_car_id: number;
   car_id: number;
+  status: string | null;
   vehicle_registration: string | null;
   make: string | null;
   model: string | null;
@@ -122,6 +123,7 @@ export async function GET(request: Request) {
     const [cars] = await pool.query<CarRow[]>(
       `SELECT dc.id AS driver_car_id,
               c.id AS car_id,
+              dc.status,
               c.vehicle_registration,
               c.make,
               c.model,
@@ -199,6 +201,8 @@ export async function GET(request: Request) {
         const useFallback = docsForCar.length === 0 && fallbackCarDocs.length > 0 && cars.length === 1;
         return {
           id: car.driver_car_id,
+          status: car.status || 'active',
+          isActive: car.status === 'active',
           vehicle_registration: car.vehicle_registration,
           make: car.make,
           model: car.model,

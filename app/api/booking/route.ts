@@ -46,8 +46,8 @@ export async function POST(request: Request) {
 
     await pool.execute(
       `INSERT INTO client_journeys
-        (client_id, journey_date, pickup, destination, service_type, driver_name, car, plate, status, price, invoice_url, passenger_name, passenger_email, passenger_phone, booking_payload)
-       VALUES (?, ?, ?, ?, ?, 'Pending assignment', 'TBD', 'TBD', 'Upcoming', ?, NULL, ?, ?, ?, ?)`,
+        (client_id, journey_date, pickup, destination, service_type, driver_name, car, plate, status, price, invoice_url, passenger_name, passenger_email, passenger_phone, vehicle_type_id, booking_payload)
+       VALUES (?, ?, ?, ?, ?, 'Pending assignment', 'TBD', 'TBD', 'Upcoming', ?, NULL, ?, ?, ?, ?, ?)`,
       [
         clientId,
         journeyDate.toISOString().slice(0, 19).replace('T', ' '),
@@ -58,6 +58,7 @@ export async function POST(request: Request) {
         passengerName,
         passengerEmail,
         passengerPhone,
+        body.vehicleTypeId ? Number(body.vehicleTypeId) : null,
         JSON.stringify(payload),
       ]
     );

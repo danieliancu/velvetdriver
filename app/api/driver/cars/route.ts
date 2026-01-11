@@ -32,14 +32,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
     }
 
-    const [carTypeRows] = await pool.query<mysql.RowDataPacket[]>(
+    const [pricingRows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT id
-       FROM vehicle_types
-       WHERE is_active = 1
-       ORDER BY (sort_order IS NULL), sort_order, id
+       FROM pricing_vehicles
+       ORDER BY id
        LIMIT 1`
     );
-    const vehicleTypeId = carTypeRows[0]?.id;
+    const vehicleTypeId = pricingRows[0]?.id || null;
     if (!vehicleTypeId) {
       return NextResponse.json({ error: 'No vehicle types configured' }, { status: 400 });
     }
@@ -62,18 +61,33 @@ export async function POST(request: Request) {
     }
 
     const [existingDriverCar] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT id FROM driver_cars WHERE driver_id = ? AND car_id = ? AND deleted_at IS NULL LIMIT 1`,
+      `SELECT id, status FROM driver_cars WHERE driver_id = ? AND car_id = ? AND deleted_at IS NULL LIMIT 1`,
       [driverId, carId]
     );
     let driverCarId = existingDriverCar[0]?.id || null;
     if (!driverCarId) {
+      const [countRows] = await pool.query<mysql.RowDataPacket[]>(
+        `SELECT COUNT(*) AS total FROM driver_cars WHERE driver_id = ? AND deleted_at IS NULL`,
+        [driverId]
+      );
+      const status = countRows[0]?.total ? 'inactive' : 'active';
       const [result] = await pool.execute<mysql.ResultSetHeader>(
         `INSERT INTO driver_cars
          (driver_id, car_id, status, assigned_from)
-         VALUES (?, ?, 'active', NOW())`,
-        [driverId, carId]
+         VALUES (?, ?, ?, NOW())`,
+        [driverId, carId, status]
       );
       driverCarId = result.insertId;
+      return NextResponse.json({
+        ok: true,
+        id: driverCarId,
+        vehicleReg,
+        make,
+        model,
+        colour: colour || null,
+        keeperInfo: keeperInfo || null,
+        status,
+      });
     }
 
     return NextResponse.json({
@@ -84,6 +98,7 @@ export async function POST(request: Request) {
       model,
       colour: colour || null,
       keeperInfo: keeperInfo || null,
+      status: existingDriverCar[0]?.status || 'active',
     });
   } catch (err: any) {
     if (err?.code === 'ER_DUP_ENTRY' && String(err?.message || '').includes('uq_driver_active')) {
@@ -139,6 +154,7 @@ export async function PATCH(request: Request) {
     const body = await request.json();
     const email = String(body.email ?? '').trim().toLowerCase();
     const driverCarId = Number(body.driverCarId);
+    const setActive = body.setActive === true;
     const vehicleReg = String(body.vehicleReg ?? '').trim();
     const make = String(body.make ?? '').trim();
     const model = String(body.model ?? '').trim();
@@ -161,6 +177,36 @@ export async function PATCH(request: Request) {
     const driverId = rows[0]?.driver_id;
     if (!driverId) {
       return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
+    }
+
+    if (setActive) {
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        await conn.execute(
+          `UPDATE driver_cars
+           SET status = 'inactive'
+           WHERE driver_id = ? AND deleted_at IS NULL AND id <> ?`,
+          [driverId, driverCarId]
+        );
+        const [updateResult] = await conn.execute<mysql.ResultSetHeader>(
+          `UPDATE driver_cars
+           SET status = 'active'
+           WHERE id = ? AND driver_id = ? AND deleted_at IS NULL`,
+          [driverCarId, driverId]
+        );
+        if (!updateResult.affectedRows) {
+          await conn.rollback();
+          return NextResponse.json({ error: 'Car not found' }, { status: 404 });
+        }
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
+      return NextResponse.json({ ok: true });
     }
 
     const [carRows] = await pool.query<mysql.RowDataPacket[]>(

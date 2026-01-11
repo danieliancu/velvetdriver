@@ -77,6 +77,9 @@ type DriverProfileData = {
     model: string;
     colour: string;
     keeper: string;
+    status?: string;
+    vehicleTypeId?: number | null;
+    vehicleTypeLabel?: string;
     documents?: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }>;
   }>;
   upcomingJobs: DriverJob[];
@@ -209,6 +212,7 @@ const AdminDriversPage: React.FC = () => {
   const [photoError, setPhotoError] = useState<Record<string, string | null>>({});
   const [query, setQuery] = useState('');
   const [activeTabs, setActiveTabs] = useState<Record<string, (typeof tabs)[number]>>({});
+  const [pricingVehicles, setPricingVehicles] = useState<Array<{ id: number; label: string }>>([]);
   const [rowStatuses, setRowStatuses] = useState<Record<string, Record<string, 'Paid' | 'Unpaid'>>>({});
   const [carCeasedState, setCarCeasedState] = useState<Record<string, Record<string, boolean>>>({});
   const [commissions, setCommissions] = useState<Record<string, { value: string; editing: boolean }>>({});
@@ -294,6 +298,7 @@ const AdminDriversPage: React.FC = () => {
           commission: Number(driver.commission ?? 20),
         })) as DriverProfileData[];
         setDriverProfiles(mapped);
+        setPricingVehicles(data.pricingVehicles || []);
       } catch (err: any) {
         setError(err?.message || 'Failed to load drivers');
         setDriverProfiles([]);
@@ -383,6 +388,38 @@ const AdminDriversPage: React.FC = () => {
       );
     } catch (err: any) {
       setCommissionError(err?.message || 'Failed to update status');
+    }
+  };
+
+  const handleVehicleTypeChange = async (driverId: string, driverCarId: string | undefined, vehicleTypeId: number) => {
+    if (!driverCarId) return;
+    setCommissionError(null);
+    try {
+      const res = await fetch('/api/admin/drivers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverCarId, vehicleTypeId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to update vehicle type');
+      }
+      setDriverProfiles((prev) =>
+        prev.map((driver) =>
+          driver.id !== driverId
+            ? driver
+            : {
+                ...driver,
+                carDetails: driver.carDetails.map((car) =>
+                  car.id === driverCarId
+                    ? { ...car, vehicleTypeId }
+                    : car
+                ),
+              }
+        )
+      );
+    } catch (err: any) {
+      setCommissionError(err?.message || 'Failed to update vehicle type');
     }
   };
 
@@ -657,14 +694,42 @@ const AdminDriversPage: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-xs uppercase text-amber-300">Vehicle</p>
-                      <p className="text-lg font-bold text-white">{car.make} {car.model}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-lg font-bold text-white">{car.make} {car.model}</p>
+                        {car.status === 'active' ? (
+                          <span className="rounded-full border border-emerald-500/60 bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-200">
+                            Active
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
-                  <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-white/80">
-                    <p><span className="text-amber-200 uppercase mr-2">VRM</span>{car.vrm}</p>
-                    <p><span className="text-amber-200 uppercase mr-2">Colour</span>{car.colour}</p>
-                    <p><span className="text-amber-200 uppercase mr-2">Keeper</span>{car.keeper}</p>
-                  </div>
+                            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-white/80">
+                              <p><span className="text-amber-200 uppercase mr-2">VRM</span>{car.vrm}</p>
+                              <p><span className="text-amber-200 uppercase mr-2">Colour</span>{car.colour}</p>
+                              <p><span className="text-amber-200 uppercase mr-2">Keeper</span>{car.keeper}</p>
+                              <div className="mt-2">
+                                <label className="block text-[11px] uppercase tracking-wide text-amber-200/70 mb-1">
+                                  Vehicle Type
+                                </label>
+                                <select
+                                  value={car.vehicleTypeId ?? ''}
+                                  onChange={(event) =>
+                                    handleVehicleTypeChange(driver.id, car.id, Number(event.target.value))
+                                  }
+                                  className="w-full rounded-lg border border-amber-900/60 bg-black/40 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+                                >
+                                  <option value="" disabled>
+                                    Select vehicle type
+                                  </option>
+                                  {pricingVehicles.map((vehicle) => (
+                                    <option key={vehicle.id} value={vehicle.id}>
+                                      {vehicle.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
                   <div className="mt-4 border-t border-amber-900/40 pt-3 text-xs text-white/80">
                     <p className="text-xs uppercase text-amber-300 mb-2">Documents</p>
                     {car.documents && car.documents.length > 0 ? (
