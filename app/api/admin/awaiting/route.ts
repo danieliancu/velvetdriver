@@ -38,10 +38,6 @@ const DOC_LABELS: Record<string, string> = {
   driving_license_front: 'Driving Licence Front',
   driving_license_back: 'Driving Licence Back',
   profile_photo: 'Profile Photo',
-  mot: 'MOT',
-  insurance: 'Insurance',
-  phv_car_licence: 'PHV Car Licence',
-  logbook_v5: 'Logbook V5',
 };
 
 export async function GET() {
@@ -83,9 +79,16 @@ export async function GET() {
       }, {} as Record<number, Array<{ label: string; url: string; type: string }>>);
 
       const [cars] = await pool.query<CarRow[]>(
-        `SELECT driver_id, vehicle_registration, make, model, colour, keeper_info
-         FROM driver_car_details
-         WHERE driver_id IN (${driverIds.map(() => '?').join(',')})`,
+        `SELECT dc.driver_id,
+                c.vehicle_registration,
+                c.make,
+                c.model,
+                c.colour,
+                c.keeper_info
+         FROM driver_cars dc
+         INNER JOIN cars c ON c.id = dc.car_id
+         WHERE dc.driver_id IN (${driverIds.map(() => '?').join(',')})
+           AND dc.deleted_at IS NULL`,
         driverIds
       );
       carsByDriver = cars.reduce((acc, car) => {

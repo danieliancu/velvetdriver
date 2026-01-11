@@ -8,11 +8,14 @@ export const runtime = 'nodejs';
 
 const pool = getDbPool();
 
-const DOC_TYPE_MAP: Record<string, string> = {
+const DRIVER_DOC_TYPE_MAP: Record<string, string> = {
   pcoLicenseDoc: 'pco_license',
   drivingLicenseFront: 'driving_license_front',
   drivingLicenseBack: 'driving_license_back',
   profilePhoto: 'profile_photo',
+};
+
+const CAR_DOC_TYPE_MAP: Record<string, string> = {
   motDoc: 'mot',
   insuranceDoc: 'insurance',
   phvDoc: 'phv_car_licence',
@@ -52,6 +55,32 @@ async function uploadToCloudinary(file: File, driverId: number, docType: string)
   const apiSecret = getEnv('CLOUDINARY_API_SECRET');
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const folder = `drivers/${driverId}`;
+  const publicId = docType;
+  const signature = buildSignature({ folder, public_id: publicId, timestamp }, apiSecret);
+  const form = new FormData();
+  form.append('file', file);
+  form.append('api_key', apiKey);
+  form.append('timestamp', timestamp);
+  form.append('signature', signature);
+  form.append('folder', folder);
+  form.append('public_id', publicId);
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Cloudinary upload failed: ${res.status} ${text}`);
+  }
+  return (await res.json()) as CloudinaryUpload;
+}
+
+async function uploadCarDoc(file: File, driverId: number, carId: number, docType: string) {
+  const cloudName = getEnv('CLOUDINARY_CLOUD_NAME');
+  const apiKey = getEnv('CLOUDINARY_API_KEY');
+  const apiSecret = getEnv('CLOUDINARY_API_SECRET');
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const folder = `drivers/${driverId}/cars/${carId}`;
   const publicId = docType;
   const signature = buildSignature({ folder, public_id: publicId, timestamp }, apiSecret);
   const form = new FormData();
@@ -187,23 +216,50 @@ export async function POST(request: Request) {
     );
     const driverId = driverResult.insertId;
 
+    let driverCarId: number | null = null;
     if (vehicleReg || make || model || colour || keeperInfo) {
-      await conn.execute(
-        `INSERT INTO driver_car_details
-         (driver_id, vehicle_registration, make, model, colour, keeper_info)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          driverId,
-          vehicleReg || null,
-          make || null,
-          model || null,
-          colour || null,
-          keeperInfo || null,
-        ]
+      const [carTypeRows] = await conn.query<mysql.RowDataPacket[]>(
+        `SELECT id
+         FROM vehicle_types
+         WHERE is_active = 1
+         ORDER BY (sort_order IS NULL), sort_order, id
+         LIMIT 1`
       );
+      const vehicleTypeId = carTypeRows[0]?.id;
+      if (!vehicleTypeId) {
+        throw new Error('Missing vehicle types');
+      }
+
+      let carId: number | null = null;
+      if (vehicleReg) {
+        const [existingCar] = await conn.query<mysql.RowDataPacket[]>(
+          `SELECT id FROM cars WHERE vehicle_registration = ? LIMIT 1`,
+          [vehicleReg]
+        );
+        if (existingCar.length) {
+          carId = existingCar[0].id;
+        }
+      }
+      if (!carId) {
+        const [carResult] = await conn.execute<mysql.ResultSetHeader>(
+          `INSERT INTO cars
+           (vehicle_type_id, vehicle_registration, make, model, colour, keeper_info)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [vehicleTypeId, vehicleReg || null, make || null, model || null, colour || null, keeperInfo || null]
+        );
+        carId = carResult.insertId;
+      }
+
+      const [driverCarResult] = await conn.execute<mysql.ResultSetHeader>(
+        `INSERT INTO driver_cars
+         (driver_id, car_id, status, assigned_from)
+         VALUES (?, ?, 'active', NOW())`,
+        [driverId, carId]
+      );
+      driverCarId = driverCarResult.insertId;
     }
 
-    for (const [field, docType] of Object.entries(DOC_TYPE_MAP)) {
+    for (const [field, docType] of Object.entries(DRIVER_DOC_TYPE_MAP)) {
       const file = form.get(field);
       if (!file || !(file instanceof File)) {
         continue;
@@ -230,6 +286,37 @@ export async function POST(request: Request) {
           upload.height || null,
         ]
       );
+    }
+
+    if (driverCarId) {
+      for (const [field, docType] of Object.entries(CAR_DOC_TYPE_MAP)) {
+        const file = form.get(field);
+        if (!file || !(file instanceof File)) {
+          continue;
+        }
+        const upload = await uploadCarDoc(file, driverId, driverCarId, docType);
+        uploaded.push({ publicId: upload.public_id, resourceType: upload.resource_type });
+        const fileName = upload.original_filename
+          ? `${upload.original_filename}${upload.format ? `.${upload.format}` : ''}`
+          : null;
+        await conn.execute(
+          `INSERT INTO driver_car_documents
+           (car_id, doc_type, file_name, file_url, public_id, resource_type, format, bytes, width, height)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            driverCarId,
+            docType,
+            fileName,
+            upload.secure_url,
+            upload.public_id,
+            upload.resource_type,
+            upload.format || null,
+            upload.bytes || null,
+            upload.width || null,
+            upload.height || null,
+          ]
+        );
+      }
     }
 
     await conn.commit();

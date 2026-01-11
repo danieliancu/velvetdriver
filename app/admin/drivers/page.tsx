@@ -70,7 +70,15 @@ type DriverProfileData = {
   dateStarted: string;
   dateStopped?: string | null;
   cars: DriverCar[];
-  carDetails: Array<{ vrm: string; make: string; model: string; colour: string; keeper: string }>;
+  carDetails: Array<{
+    id?: string;
+    vrm: string;
+    make: string;
+    model: string;
+    colour: string;
+    keeper: string;
+    documents?: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }>;
+  }>;
   upcomingJobs: DriverJob[];
   completedJobs: DriverJob[];
   statementRows: StatementRow[];
@@ -274,7 +282,10 @@ const AdminDriversPage: React.FC = () => {
           dateStarted: formatShortDate(driver.createdAt || '-'),
           dateStopped: null,
           cars: [],
-          carDetails: driver.carDetails || [],
+          carDetails: (driver.carDetails || []).map((car: any) => ({
+            ...car,
+            documents: Array.isArray(car.documents) ? car.documents : [],
+          })),
           upcomingJobs: [],
           completedJobs: [],
           statementRows: [],
@@ -653,6 +664,44 @@ const AdminDriversPage: React.FC = () => {
                     <p><span className="text-amber-200 uppercase mr-2">VRM</span>{car.vrm}</p>
                     <p><span className="text-amber-200 uppercase mr-2">Colour</span>{car.colour}</p>
                     <p><span className="text-amber-200 uppercase mr-2">Keeper</span>{car.keeper}</p>
+                  </div>
+                  <div className="mt-4 border-t border-amber-900/40 pt-3 text-xs text-white/80">
+                    <p className="text-xs uppercase text-amber-300 mb-2">Documents</p>
+                    {car.documents && car.documents.length > 0 ? (
+                      <div className="space-y-2">
+                        {[
+                          { label: 'MOT', type: 'mot' },
+                          { label: 'Insurance', type: 'insurance' },
+                          { label: 'PHV Car Licence', type: 'phv_car_licence' },
+                          { label: 'Logbook V5', type: 'logbook_v5' },
+                          { label: 'Other', type: 'other' },
+                        ].map((entry) => {
+                          const doc = car.documents?.find((item) => item.docType === entry.type);
+                          return (
+                            <div key={`${driver.id}-${car.vrm}-${entry.type}`} className="flex items-center justify-between">
+                              <span>{entry.label}</span>
+                              <span className="flex items-center gap-2">
+                                <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide">
+                                  {doc ? 'Uploaded' : 'Missing'}
+                                </span>
+                                {doc?.url ? (
+                                  <a
+                                    href={doc.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-amber-200 hover:text-amber-100"
+                                  >
+                                    View
+                                  </a>
+                                ) : null}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400">No documents uploaded for this car yet.</p>
+                    )}
                   </div>
                 </div>
               ))

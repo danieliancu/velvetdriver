@@ -15,11 +15,36 @@ export default function DriverLoginPage() {
   const [isRecoverModalOpen, setRecoverModalOpen] = useState(false);
   const [recoverEmail, setRecoverEmail] = useState('');
   const [recoverMessage, setRecoverMessage] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: FormEvent) => {
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
-    login(Role.DRIVER);
-    router.push('/driver/dashboard');
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to sign in');
+      }
+      const data = await res.json();
+      if (data.role !== 'driver') {
+        throw new Error('This account is not a driver.');
+      }
+      login(Role.DRIVER, { id: data.id, name: data.name, email: data.email, phone: data.phone });
+      router.push('/driver/dashboard');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to sign in');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleRecoverSubmit = (event: FormEvent) => {
@@ -30,13 +55,15 @@ export default function DriverLoginPage() {
   return (
     <FormLayout title="Driver Sign In">
       <form onSubmit={handleLogin} className="space-y-6">
-        <Input id="email" label="Email Address" type="email" required />
-        <Input id="password" label="Password" type="password" required />
+        <Input id="email" label="Email Address" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input id="password" label="Password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+        {error && <p className="text-sm text-red-400">{error}</p>}
         <button
           type="submit"
-          className="w-full px-8 py-3 text-lg font-semibold bg-amber-500 text-black rounded-md hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)]"
+          className="w-full px-8 py-3 text-lg font-semibold bg-amber-500 text-black rounded-md hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)] disabled:opacity-60"
+          disabled={loading}
         >
-          Sign In
+          {loading ? 'Signing in...' : 'Sign In'}
         </button>
         <p className="text-center text-sm text-gray-400">
           Not a registered driver?{' '}

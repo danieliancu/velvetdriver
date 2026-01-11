@@ -29,6 +29,7 @@ type DocumentRow = DbRow<{
 }>;
 
 type CarRow = DbRow<{
+  id: number;
   driver_id: number;
   vehicle_registration: string | null;
   make: string | null;
@@ -37,15 +38,20 @@ type CarRow = DbRow<{
   keeper_info: string | null;
 }>;
 
+type CarDocRow = DbRow<{
+  car_id: number;
+  doc_type: string;
+  expiry_date: string | null;
+  file_url: string;
+  format: string | null;
+  file_name: string | null;
+}>;
+
 const DOC_LABELS: Record<string, string> = {
   pco_license: 'PCO Licence',
   driving_license_front: 'Driving Licence Front',
   driving_license_back: 'Driving Licence Back',
   profile_photo: 'Profile Photo',
-  mot: 'MOT',
-  insurance: 'Insurance',
-  phv_car_licence: 'PHV Car Licence',
-  logbook_v5: 'Logbook V5',
 };
 
 export async function GET() {
@@ -75,7 +81,7 @@ export async function GET() {
     const driverIds = rows.map((row) => row.driver_id);
     let documentsByDriver: Record<number, Array<{ name: string; url: string; type: string }>> = {};
     let profilePhotoByDriver: Record<number, string> = {};
-    let carsByDriver: Record<number, Array<{ vrm: string; make: string; model: string; colour: string; keeper: string }>> = {};
+    let carsByDriver: Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>> = {};
     if (driverIds.length) {
       const [docs] = await pool.query<DocumentRow[]>(
         `SELECT driver_id, doc_type, file_url, format, file_name
@@ -96,22 +102,60 @@ export async function GET() {
       }, {} as Record<number, Array<{ name: string; url: string; type: string }>>);
 
       const [cars] = await pool.query<CarRow[]>(
-        `SELECT driver_id, vehicle_registration, make, model, colour, keeper_info
-         FROM driver_car_details
-         WHERE driver_id IN (${driverIds.map(() => '?').join(',')})`,
+        `SELECT dc.id,
+                dc.driver_id,
+                c.vehicle_registration,
+                c.make,
+                c.model,
+                c.colour,
+                c.keeper_info
+         FROM driver_cars dc
+         INNER JOIN cars c ON c.id = dc.car_id
+         WHERE dc.driver_id IN (${driverIds.map(() => '?').join(',')})
+           AND dc.deleted_at IS NULL`,
         driverIds
       );
+      const carIds = cars.map((car) => car.id);
+      let carDocsByCar: Record<number, Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }>> = {};
+      if (carIds.length) {
+        try {
+          const [carDocs] = await pool.query<CarDocRow[]>(
+            `SELECT car_id, doc_type, expiry_date, file_url, format, file_name
+             FROM driver_car_documents
+             WHERE car_id IN (${carIds.map(() => '?').join(',')})`,
+            carIds
+          );
+          carDocsByCar = carDocs.reduce((acc, doc) => {
+            if (!acc[doc.car_id]) acc[doc.car_id] = [];
+            acc[doc.car_id].push({
+              docType: doc.doc_type,
+              name: doc.file_name || doc.doc_type,
+              url: doc.file_url,
+              type: (doc.format || '').toUpperCase() || 'FILE',
+              expiryDate: doc.expiry_date || null,
+            });
+            return acc;
+          }, {} as Record<number, Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }>>);
+        } catch (err: any) {
+          if (err?.code !== 'ER_NO_SUCH_TABLE') {
+            throw err;
+          }
+          console.warn('driver_car_documents missing, skipping car docs');
+        }
+      }
       carsByDriver = cars.reduce((acc, car) => {
         if (!acc[car.driver_id]) acc[car.driver_id] = [];
         acc[car.driver_id].push({
+          id: car.id,
           vrm: car.vehicle_registration || '-',
           make: car.make || '-',
           model: car.model || '-',
           colour: car.colour || '-',
           keeper: car.keeper_info || '-',
+          documents: carDocsByCar[car.id] || [],
         });
         return acc;
-      }, {} as Record<number, Array<{ vrm: string; make: string; model: string; colour: string; keeper: string }>>);
+      }, {} as Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>>);
     }
 
     const drivers = rows.map((row) => ({

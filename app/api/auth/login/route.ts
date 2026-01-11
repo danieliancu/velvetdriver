@@ -20,6 +20,7 @@ export async function POST(request: Request) {
       phone: string | null;
       password_hash: string | null;
       role: string;
+      status: string;
       client_name: string | null;
       driver_first: string | null;
       driver_surname: string | null;
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
               u.phone,
               u.password_hash,
               r.code AS role,
+              u.status,
               c.full_name AS client_name,
               d.first_and_middle_name AS driver_first,
               d.surname AS driver_surname,
@@ -50,6 +52,9 @@ export async function POST(request: Request) {
     const user = rows[0];
     if (!user || !(await bcrypt.compare(password, user.password_hash || ''))) {
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+    }
+    if (user.role === 'driver' && user.status !== 'active') {
+      return NextResponse.json({ error: 'Driver account not active.' }, { status: 403 });
     }
 
     let name: string | null = null;

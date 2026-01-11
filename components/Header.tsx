@@ -4,6 +4,7 @@
 import Link from 'next/link';
 import { Lock, User } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
+import { Role } from '@/types';
 
 const Logo = () => (
   <Link href="/" className="z-10">
@@ -15,8 +16,16 @@ const Header = () => {
   const { user } = useAuth();
   const isLoggedIn = Boolean(user);
   const StatusIcon = isLoggedIn ? Lock : User;
-  const statusLabel = isLoggedIn ? user?.name || 'Client' : 'Sign In';
-  const href = isLoggedIn ? '/client/dashboard' : '/';
+  const statusLabel = isLoggedIn
+    ? user?.name || (user?.role === Role.DRIVER ? 'Driver' : user?.role === Role.ADMIN ? 'Administrator' : 'Client')
+    : 'Sign In';
+  const href = isLoggedIn
+    ? user?.role === Role.DRIVER
+      ? '/driver/dashboard'
+      : user?.role === Role.ADMIN
+        ? '/admin/dashboard'
+        : '/client/dashboard'
+    : '/';
   const iconColor = isLoggedIn ? 'text-green-400' : 'text-amber-300';
 
   return (
