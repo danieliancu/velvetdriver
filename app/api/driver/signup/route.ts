@@ -1,0 +1,254 @@
+import { NextResponse } from 'next/server';
+import mysql from 'mysql2/promise';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import { getDbPool } from '@/lib/db';
+
+export const runtime = 'nodejs';
+
+const pool = getDbPool();
+
+const DOC_TYPE_MAP: Record<string, string> = {
+  pcoLicenseDoc: 'pco_license',
+  drivingLicenseFront: 'driving_license_front',
+  drivingLicenseBack: 'driving_license_back',
+  profilePhoto: 'profile_photo',
+  motDoc: 'mot',
+  insuranceDoc: 'insurance',
+  phvDoc: 'phv_car_licence',
+  logbookDoc: 'logbook_v5',
+};
+
+type CloudinaryUpload = {
+  secure_url: string;
+  public_id: string;
+  resource_type: string;
+  format?: string;
+  bytes?: number;
+  width?: number;
+  height?: number;
+  original_filename?: string;
+};
+
+function getEnv(name: string) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing ${name}`);
+  }
+  return value;
+}
+
+function buildSignature(params: Record<string, string>, apiSecret: string) {
+  const pairs = Object.keys(params)
+    .sort()
+    .map((key) => `${key}=${params[key]}`)
+    .join('&');
+  return crypto.createHash('sha1').update(pairs + apiSecret).digest('hex');
+}
+
+async function uploadToCloudinary(file: File, driverId: number, docType: string) {
+  const cloudName = getEnv('CLOUDINARY_CLOUD_NAME');
+  const apiKey = getEnv('CLOUDINARY_API_KEY');
+  const apiSecret = getEnv('CLOUDINARY_API_SECRET');
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const folder = `drivers/${driverId}`;
+  const publicId = docType;
+  const signature = buildSignature({ folder, public_id: publicId, timestamp }, apiSecret);
+  const form = new FormData();
+  form.append('file', file);
+  form.append('api_key', apiKey);
+  form.append('timestamp', timestamp);
+  form.append('signature', signature);
+  form.append('folder', folder);
+  form.append('public_id', publicId);
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Cloudinary upload failed: ${res.status} ${text}`);
+  }
+  return (await res.json()) as CloudinaryUpload;
+}
+
+async function destroyCloudinary(publicId: string, resourceType: string) {
+  try {
+    const cloudName = getEnv('CLOUDINARY_CLOUD_NAME');
+    const apiKey = getEnv('CLOUDINARY_API_KEY');
+    const apiSecret = getEnv('CLOUDINARY_API_SECRET');
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = buildSignature({ public_id: publicId, timestamp }, apiSecret);
+    const form = new FormData();
+    form.append('public_id', publicId);
+    form.append('api_key', apiKey);
+    form.append('timestamp', timestamp);
+    form.append('signature', signature);
+    await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/destroy`, {
+      method: 'POST',
+      body: form,
+    });
+  } catch (err) {
+    console.error('Cloudinary cleanup failed', err);
+  }
+}
+
+function requireField(value: string, label: string) {
+  if (!value) {
+    throw new Error(`Missing ${label}`);
+  }
+}
+
+export async function POST(request: Request) {
+  let conn: mysql.PoolConnection | null = null;
+  const uploaded: Array<{ publicId: string; resourceType: string }> = [];
+  try {
+    const form = await request.formData();
+    const getText = (key: string) => String(form.get(key) ?? '').trim();
+
+    const surname = getText('surname');
+    const firstMiddleNames = getText('firstMiddleNames');
+    const address = getText('address');
+    const postcode = getText('postcode');
+    const dob = getText('dob');
+    const nino = getText('nationalInsurance');
+    const phone = getText('phone');
+    const email = getText('email').toLowerCase();
+    const password = getText('password');
+    const pcoLicenseNumber = getText('pcoLicenseNumber');
+    const pcoExpiry = getText('pcoExpiry');
+    const drivingLicenseNumber = getText('drivingLicenseNumber');
+    const dvlaCode = getText('dvlaCode');
+    const vehicleReg = getText('vehicleReg');
+    const make = getText('make');
+    const model = getText('model');
+    const colour = getText('colour');
+    const keeperInfo = getText('keeperInfo');
+
+    requireField(surname, 'surname');
+    requireField(firstMiddleNames, 'first & middle names');
+    requireField(address, 'address');
+    requireField(postcode, 'postcode');
+    requireField(dob, 'date of birth');
+    requireField(nino, 'national insurance');
+    requireField(phone, 'phone');
+    requireField(email, 'email');
+    requireField(password, 'password');
+    requireField(pcoLicenseNumber, 'PCO licence number');
+    requireField(pcoExpiry, 'PCO expiry date');
+    requireField(drivingLicenseNumber, 'driving licence number');
+    requireField(dvlaCode, 'DVLA code');
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [existing] = await conn.query<mysql.RowDataPacket[]>(
+      'SELECT id FROM users WHERE email = ? LIMIT 1',
+      [email]
+    );
+    if (existing.length) {
+      await conn.rollback();
+      return NextResponse.json({ error: 'Email already registered' }, { status: 409 });
+    }
+
+    const [roleResult] = await conn.execute<mysql.ResultSetHeader>(
+      `INSERT INTO roles (code, label, is_active)
+       VALUES ('driver', 'Driver', 1)
+       ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
+    );
+    const roleId = roleResult.insertId;
+
+    const hash = await bcrypt.hash(password, 10);
+    const [userResult] = await conn.execute<mysql.ResultSetHeader>(
+      `INSERT INTO users (role_id, email, phone, password_hash, status)
+       VALUES (?, ?, ?, ?, 'pending')`,
+      [roleId, email, phone || null, hash]
+    );
+    const userId = userResult.insertId;
+
+    const [driverResult] = await conn.execute<mysql.ResultSetHeader>(
+      `INSERT INTO drivers
+       (user_id, surname, first_and_middle_name, address, postcode, date_of_birth, nino, phone, pco_license_no, pco_expires_date, driving_license_no, dvla_check_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        surname,
+        firstMiddleNames,
+        address,
+        postcode,
+        dob || null,
+        nino,
+        phone,
+        pcoLicenseNumber,
+        pcoExpiry || null,
+        drivingLicenseNumber,
+        dvlaCode,
+      ]
+    );
+    const driverId = driverResult.insertId;
+
+    if (vehicleReg || make || model || colour || keeperInfo) {
+      await conn.execute(
+        `INSERT INTO driver_car_details
+         (driver_id, vehicle_registration, make, model, colour, keeper_info)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          driverId,
+          vehicleReg || null,
+          make || null,
+          model || null,
+          colour || null,
+          keeperInfo || null,
+        ]
+      );
+    }
+
+    for (const [field, docType] of Object.entries(DOC_TYPE_MAP)) {
+      const file = form.get(field);
+      if (!file || !(file instanceof File)) {
+        continue;
+      }
+      const upload = await uploadToCloudinary(file, driverId, docType);
+      uploaded.push({ publicId: upload.public_id, resourceType: upload.resource_type });
+      const fileName = upload.original_filename
+        ? `${upload.original_filename}${upload.format ? `.${upload.format}` : ''}`
+        : null;
+      await conn.execute(
+        `INSERT INTO driver_documents
+         (driver_id, doc_type, file_name, file_url, public_id, resource_type, format, bytes, width, height)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          driverId,
+          docType,
+          fileName,
+          upload.secure_url,
+          upload.public_id,
+          upload.resource_type,
+          upload.format || null,
+          upload.bytes || null,
+          upload.width || null,
+          upload.height || null,
+        ]
+      );
+    }
+
+    await conn.commit();
+    return NextResponse.json({ ok: true });
+  } catch (err: any) {
+    if (conn) {
+      try {
+        await conn.rollback();
+      } catch {}
+    }
+    for (const item of uploaded) {
+      await destroyCloudinary(item.publicId, item.resourceType);
+    }
+    if (err?.message?.startsWith('Missing')) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    console.error('Driver signup error', err);
+    return NextResponse.json({ error: 'Failed to submit driver application' }, { status: 500 });
+  } finally {
+    if (conn) conn.release();
+  }
+}

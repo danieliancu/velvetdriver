@@ -29,25 +29,52 @@ export default function DriverSignUpPage() {
   const { showAlert } = useAlert();
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState<Record<string, string>>({});
+  const [fileData, setFileData] = useState<Record<string, File | null>>({});
   const [isFindingVehicle, setIsFindingVehicle] = useState(false);
 
   const handleFieldChange =
     (field: string) => (event: ChangeEvent<HTMLInputElement>) => {
-      const value = event.target.type === 'file' ? event.target.files?.[0]?.name ?? '' : event.target.value;
-      setFormData((prev) => ({ ...prev, [field]: value }));
+      if (event.target.type === 'file') {
+        const file = event.target.files?.[0] ?? null;
+        setFileData((prev) => ({ ...prev, [field]: file }));
+        return;
+      }
+      setFormData((prev) => ({ ...prev, [field]: event.target.value }));
     };
 
   const goBack = () => setStep((prev) => Math.max(prev - 1, 1));
 
-  const handleSubmit = (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (step < steps.length) {
       setStep((prev) => prev + 1);
       return;
     }
 
-    showAlert('Application submitted for review. You will be notified via email.');
-    router.push('/driver/login');
+    const password = formData.password ?? '';
+    const confirmPassword = formData.confirmPassword ?? '';
+    if (!password || !confirmPassword || password !== confirmPassword) {
+      showAlert('Passwords do not match.');
+      return;
+    }
+
+    const payload = new FormData();
+    Object.entries(formData).forEach(([key, value]) => payload.append(key, value));
+    Object.entries(fileData).forEach(([key, file]) => {
+      if (file) payload.append(key, file);
+    });
+
+    try {
+      const res = await fetch('/api/driver/signup', { method: 'POST', body: payload });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to submit application');
+      }
+      showAlert('Application submitted for review. You will be notified via email.');
+      router.push('/driver/login');
+    } catch (err: any) {
+      showAlert(err?.message || 'Failed to submit application');
+    }
   };
 
   const renderYourDetails = () => (
@@ -107,10 +134,10 @@ export default function DriverSignUpPage() {
                   className="flex items-center justify-between rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:border-amber-400 cursor-pointer"
                 >
                   <span>Choose file</span>
-                  <span className="text-xs text-gray-200">{formData[field.id] ? 'Ready' : 'Tap to upload'}</span>
+                  <span className="text-xs text-gray-200">{fileData[field.id] ? 'Ready' : 'Tap to upload'}</span>
                 </label>
                 <input id={field.id} type="file" className="sr-only" onChange={handleFieldChange(field.id)} />
-                {formData[field.id] && <span className="text-xs text-gray-400 truncate">{formData[field.id]}</span>}
+                {fileData[field.id]?.name && <span className="text-xs text-gray-400 truncate">{fileData[field.id]?.name}</span>}
               </div>
             </div>
           ))}
@@ -212,10 +239,10 @@ export default function DriverSignUpPage() {
                   className="flex items-center justify-between rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:border-amber-400 cursor-pointer"
                 >
                   <span>Choose file</span>
-                  <span className="text-xs text-gray-200">{formData[field.id] ? 'Ready' : 'Tap to upload'}</span>
+                  <span className="text-xs text-gray-200">{fileData[field.id] ? 'Ready' : 'Tap to upload'}</span>
                 </label>
                 <input id={field.id} type="file" className="sr-only" onChange={handleFieldChange(field.id)} />
-                {formData[field.id] && <span className="text-xs text-gray-400 truncate">{formData[field.id]}</span>}
+                {fileData[field.id]?.name && <span className="text-xs text-gray-400 truncate">{fileData[field.id]?.name}</span>}
               </div>
             </div>
           ))}

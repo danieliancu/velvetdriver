@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import AdminPageHeader from '@/components/AdminPageHeader';
@@ -13,148 +13,87 @@ type AwaitingDriver = {
   address: string;
   license: string;
   pcoExpiry: string;
-  rating: string;
-  tenure: string;
-  lastOnline: string;
-  upcomingJobs: number;
-  cars: {
-    vrm: string;
-    make: string;
-    model: string;
-    motExpiry: string;
-    insuranceExpiry: string;
-    phvExpiry: string;
-    logbook: string;
-    status: 'Active' | 'Reserve';
-  }[];
+  documents: Array<{ label: string; url: string; type: string }>;
+  cars: Array<{ vrm: string; make: string; model: string; colour: string; keeper: string }>;
 };
-
-const awaitingDrivers: AwaitingDriver[] = [
-  {
-    id: 'james',
-    name: 'James P.',
-    phone: '+447479666343',
-    email: 'james@velvetdrivers.co.uk',
-    address: '17 Fleet Street, London, EC4M 9AF',
-    license: 'PCO-70934',
-    pcoExpiry: '2026-02-14',
-    rating: '4.9 / 5',
-    tenure: '6 yrs with Velvet',
-    lastOnline: '01:20 UTC',
-    upcomingJobs: 2,
-    cars: [
-      {
-        vrm: 'LC20 ABC',
-        make: 'Mercedes-Benz',
-        model: 'S-Class',
-        motExpiry: '2025-10-15',
-        insuranceExpiry: '2025-08-31',
-        phvExpiry: '2025-09-20',
-        logbook: 'Uploaded',
-        status: 'Active'
-      }
-    ]
-  },
-  {
-    id: 'anna',
-    name: 'Anna B.',
-    phone: '+44 7700 900456',
-    email: 'anna@velvetdrivers.co.uk',
-    address: '29 Berkeley Square, London, W1J 6EN',
-    license: 'PCO-70935',
-    pcoExpiry: '2026-05-21',
-    rating: '4.8 / 5',
-    tenure: '4 yrs with Velvet',
-    lastOnline: '03:10 UTC',
-    upcomingJobs: 1,
-    cars: [
-      {
-        vrm: 'BD68 XYZ',
-        make: 'BMW',
-        model: '7 Series',
-        motExpiry: '2026-01-22',
-        insuranceExpiry: '2025-12-01',
-        phvExpiry: '2026-01-10',
-        logbook: 'Uploaded',
-        status: 'Reserve'
-      }
-    ]
-  },
-  {
-    id: 'david',
-    name: 'David C.',
-    phone: '+44 7700 900345',
-    email: 'david@velvetdrivers.co.uk',
-    address: '45 Park Lane, London, W1K 1PN',
-    license: 'PCO-70936',
-    pcoExpiry: '2026-07-09',
-    rating: '5.0 / 5',
-    tenure: '3 yrs with Velvet',
-    lastOnline: '00:05 UTC',
-    upcomingJobs: 0,
-    cars: [
-      {
-        vrm: 'LR75 QNE',
-        make: 'Lexus',
-        model: 'ES 300h',
-        motExpiry: '2025-11-10',
-        insuranceExpiry: '2025-12-22',
-        phvExpiry: '2025-12-01',
-        logbook: 'Uploaded',
-        status: 'Active'
-      }
-    ]
-  },
-  {
-    id: 'robert',
-    name: 'Robert K.',
-    phone: '+44 7700 900234',
-    email: 'robert@velvetdrivers.co.uk',
-    address: '10 Downing Street, London, SW1A 2AA',
-    license: 'PCO-70937',
-    pcoExpiry: '2026-03-11',
-    rating: '4.7 / 5',
-    tenure: '5 yrs with Velvet',
-    lastOnline: '02:40 UTC',
-    upcomingJobs: 3,
-    cars: [
-      {
-        vrm: 'EV13 TES',
-        make: 'Tesla',
-        model: 'Model S',
-        motExpiry: '2025-09-18',
-        insuranceExpiry: '2025-11-02',
-        phvExpiry: '2026-01-12',
-        logbook: 'Uploaded',
-        status: 'Active'
-      }
-    ]
-  }
-];
 
 const tabs = ['Details', 'Car(s)', 'Documents Uploaded', 'Approve Now!'] as const;
 
 const AwaitingApprovalPage: React.FC = () => {
   const [query, setQuery] = useState('');
   const [driverTabs, setDriverTabs] = useState<Record<string, typeof tabs[number]>>({});
+  const [drivers, setDrivers] = useState<AwaitingDriver[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [approving, setApproving] = useState<Record<string, boolean>>({});
+
+  const formatDate = (value: string) => {
+    if (!value || value === '-') return '-';
+    const dateValue = new Date(value);
+    if (Number.isNaN(dateValue.getTime())) return value;
+    return new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    }).format(dateValue);
+  };
+
+  useEffect(() => {
+    const loadDrivers = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch('/api/admin/awaiting', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        setDrivers(data.drivers || []);
+      } catch (err: any) {
+        setError(err?.message || 'Failed to load awaiting drivers');
+        setDrivers([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadDrivers();
+  }, []);
 
   const filteredDrivers = useMemo(() => {
-    if (!query.trim()) return awaitingDrivers;
+    if (!query.trim()) return drivers;
     const term = query.toLowerCase();
-    return awaitingDrivers.filter((driver) =>
+    return drivers.filter((driver) =>
       `${driver.name} ${driver.email} ${driver.id} ${driver.license}`.toLowerCase().includes(term)
     );
-  }, [query]);
+  }, [query, drivers]);
 
   const getActiveTab = (driverId: string) => driverTabs[driverId] ?? tabs[0];
   const setActiveTab = (driverId: string, tab: typeof tabs[number]) =>
     setDriverTabs((prev) => ({ ...prev, [driverId]: tab }));
 
+  const approveDriver = async (driverId: string) => {
+    setApproving((prev) => ({ ...prev, [driverId]: true }));
+    try {
+      const res = await fetch('/api/admin/awaiting', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to approve driver');
+      }
+      setDrivers((prev) => prev.filter((driver) => driver.id !== driverId));
+    } catch (err: any) {
+      setError(err?.message || 'Failed to approve driver');
+    } finally {
+      setApproving((prev) => ({ ...prev, [driverId]: false }));
+    }
+  };
+
   return (
     <PageShell mainClassName="flex flex-col px-4 sm:px-6 md:px-8 py-10" hideFooter hideHeader>
       <div className="w-full flex-grow">
         <div className="max-w-6xl mx-auto space-y-8">
-          <AdminPageHeader active="awaiting" liveBadgeCount={4} />
+          <AdminPageHeader active="awaiting" liveBadgeCount={drivers.length} />
           <section className="space-y-10">
             <div className="relative w-full">
               <span className="absolute inset-y-0 left-3 flex items-center text-gray-400">
@@ -169,7 +108,16 @@ const AwaitingApprovalPage: React.FC = () => {
               />
             </div>
 
-            {filteredDrivers.length === 0 ? (
+            {error ? (
+              <div className="rounded-2xl border border-red-500/50 bg-red-950/40 p-6 text-center text-red-200">
+                {error}
+              </div>
+            ) : null}
+            {loading ? (
+              <div className="rounded-2xl border border-white/10 bg-black/50 p-6 text-center text-gray-400">
+                Loading awaiting drivers...
+              </div>
+            ) : !loading && filteredDrivers.length === 0 ? (
               <div className="rounded-2xl border border-white/10 bg-black/50 p-6 text-center text-gray-400">
                 No drivers match your search. Try a different name or ID.
               </div>
@@ -189,7 +137,7 @@ const AwaitingApprovalPage: React.FC = () => {
                     </div>
                     <div className="text-sm text-gray-300">
                       <p>Phone: {driver.phone}</p>
-                      <p>PCO Expiry: {driver.pcoExpiry}</p>
+                      <p>PCO Expiry: {formatDate(driver.pcoExpiry)}</p>
                     </div>
                   </header>
                   <div className="flex flex-wrap items-center gap-3">
@@ -231,39 +179,73 @@ const AwaitingApprovalPage: React.FC = () => {
                       </div>
                       <div className="rounded-2xl border border-white/5 bg-white/5 p-4">
                         <p className="text-xs uppercase text-amber-200">PCO Expiry</p>
-                        <p className="text-lg text-white font-semibold">{driver.pcoExpiry}</p>
+                        <p className="text-lg text-white font-semibold">{formatDate(driver.pcoExpiry)}</p>
                       </div>
                     </div>
                   )}
 
                   {getActiveTab(driver.id) === 'Car(s)' && (
                     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                      {driver.cars.map((car) => (
-                        <div key={`${driver.id}-${car.vrm}`} className="rounded-2xl border border-amber-900/50 bg-gradient-to-br from-[#1E1212] via-[#100808] to-black p-4">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-xs uppercase text-amber-300">Vehicle</p>
-                              <p className="text-lg font-bold text-white">{car.make} {car.model}</p>
-                            </div>
-                            <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-300">
-                              {car.status}
-                            </span>
-                          </div>
-                          <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-white/80">
-                            <p><span className="text-amber-200 uppercase mr-2">VRM</span>{car.vrm}</p>
-                            <p><span className="text-amber-200 uppercase mr-2">MOT</span>{car.motExpiry}</p>
-                            <p><span className="text-amber-200 uppercase mr-2">Insurance</span>{car.insuranceExpiry}</p>
-                            <p><span className="text-amber-200 uppercase mr-2">PHV</span>{car.phvExpiry}</p>
-                            <p><span className="text-amber-200 uppercase mr-2">Logbook</span>{car.logbook}</p>
-                          </div>
+                      {driver.cars.length === 0 ? (
+                        <div className="rounded-2xl border border-amber-900/50 bg-gradient-to-br from-[#1E1212] via-[#100808] to-black p-4 text-sm text-gray-300">
+                          <p className="text-gray-400">No car details submitted yet.</p>
                         </div>
-                      ))}
+                      ) : (
+                        driver.cars.map((car, index) => (
+                          <div
+                            key={`${driver.id}-car-${index}`}
+                            className="rounded-2xl border border-amber-900/50 bg-gradient-to-br from-[#1E1212] via-[#100808] to-black p-4"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="text-xs uppercase text-amber-300">Vehicle</p>
+                                <p className="text-lg font-bold text-white">{car.make} {car.model}</p>
+                              </div>
+                            </div>
+                            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-white/80">
+                              <p><span className="text-amber-200 uppercase mr-2">VRM</span>{car.vrm}</p>
+                              <p><span className="text-amber-200 uppercase mr-2">Colour</span>{car.colour}</p>
+                              <p><span className="text-amber-200 uppercase mr-2">Keeper</span>{car.keeper}</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </div>
                   )}
 
                   {getActiveTab(driver.id) === 'Documents Uploaded' && (
-                    <div className="rounded-2xl border border-amber-900/50 bg-gradient-to-br from-[#1E1212] via-[#100808] to-black p-4 text-sm text-gray-300">
-                      <p className="text-gray-400">Awaiting document review.</p>
+                    <div className="overflow-x-auto rounded-2xl border border-amber-900/50 bg-gradient-to-br from-[#1E1212] via-[#100808] to-black p-4">
+                      {driver.documents.length === 0 ? (
+                        <p className="text-sm text-gray-400">No documents uploaded yet.</p>
+                      ) : (
+                        <table className="w-full min-w-max text-left text-sm text-white/80">
+                          <thead>
+                            <tr className="border-b border-amber-900/50 text-xs uppercase tracking-wider text-amber-300">
+                              <th className="py-2 px-3">Name</th>
+                              <th className="py-2 px-3">Type</th>
+                              <th className="py-2 px-3 text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {driver.documents.map((doc) => (
+                              <tr key={`${driver.id}-${doc.label}`} className="border-b border-white/5">
+                                <td className="py-2 px-3 text-white/90">{doc.label}</td>
+                                <td className="py-2 px-3 text-white/70">{doc.type}</td>
+                                <td className="py-2 px-3 text-right">
+                                  <a
+                                    href={doc.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="rounded-full border border-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-white transition hover:border-amber-400 hover:text-amber-300"
+                                  >
+                                    View
+                                  </a>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
                     </div>
                   )}
 
@@ -274,9 +256,11 @@ const AwaitingApprovalPage: React.FC = () => {
                       </div>
                       <button
                         type="button"
+                        onClick={() => approveDriver(driver.id)}
                         className="rounded-full bg-emerald-500 text-black px-6 py-2 text-sm font-semibold hover:bg-emerald-400 transition shadow-[0_0_15px_rgba(52,211,153,0.4)]"
+                        disabled={approving[driver.id]}
                       >
-                        Approve Now!
+                        {approving[driver.id] ? 'Approving...' : 'Approve Now!'}
                       </button>
                     </div>
                   )}

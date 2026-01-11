@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Clock, User, DollarSign, Car, Search } from 'lucide-react';
 import AdminPageHeader from '@/components/AdminPageHeader';
 import PageShell from '@/components/PageShell';
@@ -48,7 +48,7 @@ type StatementRow = {
 
 type DocumentRow = {
   name: string;
-  type: 'jpg' | 'png' | 'jpeg';
+  type: string;
   url: string;
 };
 
@@ -60,17 +60,23 @@ type DriverProfileData = {
   address: string;
   license: string;
   pcoExpiry: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  profilePhotoUrl?: string | null;
   rating: string;
   tenure: string;
   lastOnline: string;
   dateStarted: string;
   dateStopped?: string | null;
   cars: DriverCar[];
+  carDetails: Array<{ vrm: string; make: string; model: string; colour: string; keeper: string }>;
   upcomingJobs: DriverJob[];
   completedJobs: DriverJob[];
   statementRows: StatementRow[];
   documents: DocumentRow[];
   logs: LogEntry[];
+  commission: number;
 };
 
 type DriverStatusAction = 'holiday' | 'resume' | 'block';
@@ -80,199 +86,7 @@ type ConfirmationState =
   | { type: 'vehicle-cease'; driverId: string; vrm: string; message: string }
   | null;
 
-const driverProfiles: DriverProfileData[] = [
-  {
-    id: 'james',
-    name: 'James P.',
-    phone: '+447479666343',
-    email: 'james@velvetdrivers.co.uk',
-    address: '17 Fleet Street, London, EC4M 9AF',
-    license: 'PCO-70934',
-    pcoExpiry: '2026-02-14',
-    rating: '4.9 / 5',
-    tenure: '6 yrs with Velvet',
-    lastOnline: '01:20 UTC',
-    dateStarted: '2019-04-15',
-    dateStopped: null,
-    cars: [
-      {
-        vrm: 'LC20 ABC',
-        make: 'Mercedes-Benz',
-        model: 'S-Class',
-        motExpiry: '2025-10-15',
-        insuranceExpiry: '2025-08-31',
-        phvExpiry: '2025-09-20',
-        logbook: 'Uploaded',
-        status: 'Active',
-        startDate: '2022-03-01'
-      }
-    ],
-    upcomingJobs: [],
-    completedJobs: [
-      {
-        id: 'VD-0998',
-        pickup: 'Canary Wharf',
-        destination: 'Gatwick North',
-        client: 'Bob Builder',
-        time: '14:00',
-        pay: 92.0,
-        notes: 'VIP water bottle'
-      }
-    ],
-    statementRows: [
-      { date: '2025-10-01', ref: 'VD-1001', pickup: 'WD3 4PQ', dropoff: 'Heathrow T5', vehicle: 'Saloon', miles: 18, wait: 10, fare: 64, status: 'Paid' },
-      { date: '2025-10-04', ref: 'VD-1004', pickup: 'W1J 7NT', dropoff: 'Heathrow T3', vehicle: 'MPV', miles: 22, wait: 7, fare: 78, status: 'Unpaid' },
-      { date: '2025-10-07', ref: 'VD-1006', pickup: 'SW1A 1AA', dropoff: 'City Airport', vehicle: 'Saloon', miles: 16, wait: 4, fare: 69, status: 'Paid' },
-      { date: '2025-10-09', ref: 'VD-1009', pickup: 'E1 6AN', dropoff: 'Gatwick South', vehicle: 'MPV', miles: 24, wait: 6, fare: 82, status: 'Unpaid' }
-    ],
-    documents: [
-      { name: 'Driving License Front', type: 'jpg', url: '/docs/james-license-front.jpg' },
-      { name: 'Driving License Back', type: 'png', url: '/docs/james-license-back.png' },
-      { name: 'PCO Licence', type: 'jpeg', url: '/docs/james-pco.jpeg' }
-    ],
-    logs: [
-      { timestamp: '2025-10-01 08:12', action: 'Profile created', actor: 'Admin • Sarah' },
-      { timestamp: '2025-10-10 12:44', action: 'PCO expiry updated', actor: 'Compliance • Nina' },
-      { timestamp: '2025-10-15 09:20', action: 'Assigned Mercedes S-Class', actor: 'Fleet • Omar' }
-    ]
-  },
-  {
-    id: 'anna',
-    name: 'Anna B.',
-    phone: '+44 7700 900456',
-    email: 'anna@velvetdrivers.co.uk',
-    address: '29 Berkeley Square, London, W1J 6EN',
-    license: 'PCO-70935',
-    pcoExpiry: '2026-05-21',
-    rating: '4.8 / 5',
-    tenure: '4 yrs with Velvet',
-    lastOnline: '03:10 UTC',
-    dateStarted: '2020-07-03',
-    dateStopped: null,
-    cars: [
-      {
-        vrm: 'BD68 XYZ',
-        make: 'BMW',
-        model: '7 Series',
-        motExpiry: '2026-01-22',
-        insuranceExpiry: '2025-12-01',
-        phvExpiry: '2026-01-10',
-        logbook: 'Uploaded',
-        status: 'Reserve',
-        startDate: '2023-05-20'
-      }
-    ],
-    upcomingJobs: [
-      { id: 'VD-1001', pickup: 'St. Pancras', destination: 'Heathrow T3', client: 'Alice Wonderland', time: '08:30', pay: 85, notes: 'Meet at platform' }
-    ],
-    completedJobs: [],
-    statementRows: [
-      { date: '2025-10-05', ref: 'VD-1015', pickup: 'E3 2PA', dropoff: 'London City', vehicle: 'V-Class', miles: 19, wait: 3, fare: 86, status: 'Unpaid' },
-      { date: '2025-10-10', ref: 'VD-1016', pickup: 'TW1 3PU', dropoff: 'Heathrow T5', vehicle: 'V-Class', miles: 21, wait: 5, fare: 92, status: 'Paid' }
-    ],
-    documents: [
-      { name: 'Driving License Front', type: 'jpg', url: '/docs/anna-license-front.jpg' },
-      { name: 'PCO Licence', type: 'jpeg', url: '/docs/anna-pco.jpeg' }
-    ],
-    logs: [
-      { timestamp: '2025-09-12 10:02', action: 'Profile created', actor: 'Admin • Sarah' },
-      { timestamp: '2025-10-05 11:18', action: 'Insurance verified', actor: 'Compliance • Nina' },
-      { timestamp: '2025-10-11 07:30', action: 'Upcoming job assigned VD-1001', actor: 'Dispatch • Leo' }
-    ]
-  },
-  {
-    id: 'david',
-    name: 'David C.',
-    phone: '+44 7700 900345',
-    email: 'david@velvetdrivers.co.uk',
-    address: '45 Park Lane, London, W1K 1PN',
-    license: 'PCO-70936',
-    pcoExpiry: '2026-07-09',
-    rating: '5.0 / 5',
-    tenure: '3 yrs with Velvet',
-    lastOnline: '00:05 UTC',
-    dateStarted: '2021-01-11',
-    dateStopped: null,
-    cars: [
-      {
-        vrm: 'LR75 QNE',
-        make: 'Lexus',
-        model: 'ES 300h',
-        motExpiry: '2025-11-10',
-        insuranceExpiry: '2025-12-22',
-        phvExpiry: '2025-12-01',
-        logbook: 'Uploaded',
-        status: 'Active',
-        startDate: '2022-08-15'
-      }
-    ],
-    upcomingJobs: [
-      { id: 'VD-1004', pickup: 'SW1A 1AA', destination: 'City Airport', client: 'VIP Client', time: '12:15', pay: 120, notes: 'Handle bags carefully' }
-    ],
-    completedJobs: [
-      { id: 'VD-1020', pickup: 'Mayfair', destination: 'LHR T5', client: 'Eminem', time: '2025-10-02', pay: 150, notes: 'Security escort' }
-    ],
-    statementRows: [
-      { date: '2025-10-03', ref: 'VD-1003', pickup: 'HA4 0HJ', dropoff: 'Heathrow T5', vehicle: 'Saloon', miles: 12, wait: 0, fare: 52, status: 'Paid' },
-      { date: '2025-10-06', ref: 'VD-1007', pickup: 'EC4M 9AF', dropoff: 'Stansted', vehicle: 'Saloon', miles: 40, wait: 5, fare: 120, status: 'Unpaid' }
-    ],
-    documents: [
-      { name: 'Driving License Front', type: 'jpg', url: '/docs/david-license-front.jpg' },
-      { name: 'Driving License Back', type: 'png', url: '/docs/david-license-back.png' },
-      { name: 'Insurance Certificate', type: 'jpeg', url: '/docs/david-insurance.jpeg' }
-    ],
-    logs: [
-      { timestamp: '2025-08-22 15:40', action: 'Profile created', actor: 'Admin • Sarah' },
-      { timestamp: '2025-10-02 16:05', action: 'Vehicle swapped to Lexus ES 300h', actor: 'Fleet • Omar' },
-      { timestamp: '2025-10-07 08:55', action: 'Statement rows refreshed', actor: 'Finance • Priya' }
-    ]
-  },
-  {
-    id: 'robert',
-    name: 'Robert K.',
-    phone: '+44 7700 900234',
-    email: 'robert@velvetdrivers.co.uk',
-    address: '10 Downing Street, London, SW1A 2AA',
-    license: 'PCO-70937',
-    pcoExpiry: '2026-03-11',
-    rating: '4.7 / 5',
-    tenure: '5 yrs with Velvet',
-    lastOnline: '02:40 UTC',
-    dateStarted: '2018-09-19',
-    dateStopped: null,
-    cars: [
-      {
-        vrm: 'EV13 TES',
-        make: 'Tesla',
-        model: 'Model S',
-        motExpiry: '2025-09-18',
-        insuranceExpiry: '2025-11-02',
-        phvExpiry: '2026-01-12',
-        logbook: 'Uploaded',
-        status: 'Active',
-        startDate: '2021-11-30'
-      }
-    ],
-    upcomingJobs: [
-      { id: 'VD-1006', pickup: 'W6 9JZ', destination: 'LHR T5', client: 'Corp Client', time: '09:45', pay: 72, notes: 'Quiet ride' }
-    ],
-    completedJobs: [],
-    statementRows: [
-      { date: '2025-10-02', ref: 'VD-1002', pickup: 'SW1A 0AA', dropoff: 'LHR T3', vehicle: 'MPV', miles: 15, wait: 6, fare: 68, status: 'Paid' }
-    ],
-    documents: [
-      { name: 'Driving License Front', type: 'jpg', url: '/docs/robert-license-front.jpg' },
-      { name: 'PCO Licence', type: 'png', url: '/docs/robert-pco.png' }
-    ],
-    logs: [
-      { timestamp: '2025-07-14 09:10', action: 'Profile created', actor: 'Admin • Sarah' },
-      { timestamp: '2025-10-01 14:25', action: 'Teslsa insurance renewed', actor: 'Compliance • Nina' },
-      { timestamp: '2025-10-06 09:42', action: 'Added job VD-1006', actor: 'Dispatch • Leo' }
-    ]
-  }
-];
-
-const tabs = ['Details', 'Jobs', 'Car(s)', 'Monthly Statement', 'Documents Uploaded', 'Logs'] as const;
+const tabs = ['Details', 'Jobs', 'Car(s)', 'Monthly Statement', 'Documents Uploaded', 'Logs', 'New Photo Upload'] as const;
 
 const InfoItem: React.FC<{ label: string; value: string }> = ({ label, value }) => (
   <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -378,37 +192,125 @@ const downloadStatementCSV = (rows: StatementRow[]) => {
 };
 
 const AdminDriversPage: React.FC = () => {
+  const [driverProfiles, setDriverProfiles] = useState<DriverProfileData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [commissionError, setCommissionError] = useState<string | null>(null);
+  const [commissionSaving, setCommissionSaving] = useState<Record<string, boolean>>({});
+  const [photoUploading, setPhotoUploading] = useState<Record<string, boolean>>({});
+  const [photoError, setPhotoError] = useState<Record<string, string | null>>({});
   const [query, setQuery] = useState('');
   const [activeTabs, setActiveTabs] = useState<Record<string, (typeof tabs)[number]>>({});
   const [rowStatuses, setRowStatuses] = useState<Record<string, Record<string, 'Paid' | 'Unpaid'>>>({});
-  const [driverStatuses, setDriverStatuses] = useState<Record<string, 'active' | 'holiday' | 'blocked'>>(() =>
-    Object.fromEntries(driverProfiles.map((driver) => [driver.id, 'active']))
-  );
-  const [driverStopDates, setDriverStopDates] = useState<Record<string, string | null>>(() =>
-    Object.fromEntries(driverProfiles.map((driver) => [driver.id, driver.dateStopped ?? null]))
-  );
-  const [carCeasedState, setCarCeasedState] = useState<Record<string, Record<string, boolean>>>(() =>
-    driverProfiles.reduce<Record<string, Record<string, boolean>>>((acc, driver) => {
-      acc[driver.id] = driver.cars.reduce<Record<string, boolean>>((carMap, car) => {
-        carMap[car.vrm] = false;
-        return carMap;
-      }, {});
-      return acc;
-    }, {})
-  );
-  const [commissions, setCommissions] = useState<Record<string, { value: string; editing: boolean }>>(() =>
-    Object.fromEntries(driverProfiles.map((driver) => [driver.id, { value: '20', editing: false }]))
-  );
-  const [photoUploadVisible, setPhotoUploadVisible] = useState<Record<string, boolean>>({});
+  const [carCeasedState, setCarCeasedState] = useState<Record<string, Record<string, boolean>>>({});
+  const [commissions, setCommissions] = useState<Record<string, { value: string; editing: boolean }>>({});
   const [confirmation, setConfirmation] = useState<ConfirmationState>(null);
-  const getNowString = () =>
-    new Date().toLocaleString('en-GB', {
+
+  const formatDate = (value: string) => {
+    if (!value || value === '-') return '-';
+    const dateValue = new Date(value);
+    if (Number.isNaN(dateValue.getTime())) return value;
+    return new Intl.DateTimeFormat('en-GB', {
       day: '2-digit',
-      month: '2-digit',
+      month: 'long',
       year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+    }).format(dateValue);
+  };
+
+  const formatShortDate = (value: string) => {
+    if (!value || value === '-') return 'n/a';
+    const dateValue = new Date(value);
+    if (Number.isNaN(dateValue.getTime())) return value;
+    return new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }).format(dateValue);
+  };
+
+  const formatTenure = (startValue: string) => {
+    if (!startValue || startValue === '-') return 'n/a';
+    const start = new Date(startValue);
+    if (Number.isNaN(start.getTime())) return 'n/a';
+    const now = new Date();
+    const diffMs = Math.max(0, now.getTime() - start.getTime());
+    const totalDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (totalDays < 31) {
+      return `${totalDays} day${totalDays === 1 ? '' : 's'}`;
+    }
+    if (totalDays < 365) {
+      const months = Math.floor(totalDays / 30);
+      const days = totalDays % 30;
+      return `${months} month${months === 1 ? '' : 's'}${days ? ` ${days} day${days === 1 ? '' : 's'}` : ''}`;
+    }
+    const years = Math.floor(totalDays / 365);
+    const months = Math.floor((totalDays % 365) / 30);
+    return `${years} year${years === 1 ? '' : 's'}${months ? ` ${months} month${months === 1 ? '' : 's'}` : ''}`;
+  };
+
+  useEffect(() => {
+    const loadDrivers = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch('/api/admin/drivers', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const mapped = (data.drivers || []).map((driver: any) => ({
+          id: String(driver.id),
+          name: driver.name,
+          phone: driver.phone,
+          email: driver.email,
+          address: driver.address,
+          license: driver.license,
+          pcoExpiry: driver.pcoExpiry,
+          status: driver.status || 'active',
+          createdAt: driver.createdAt || '-',
+          updatedAt: driver.updatedAt || '-',
+          profilePhotoUrl: driver.profilePhotoUrl || null,
+          rating: 'n/a',
+          tenure: formatTenure(driver.createdAt || '-'),
+          lastOnline: 'n/a',
+          dateStarted: formatShortDate(driver.createdAt || '-'),
+          dateStopped: null,
+          cars: [],
+          carDetails: driver.carDetails || [],
+          upcomingJobs: [],
+          completedJobs: [],
+          statementRows: [],
+          documents: driver.documents || [],
+          logs: [],
+          commission: Number(driver.commission ?? 20),
+        })) as DriverProfileData[];
+        setDriverProfiles(mapped);
+      } catch (err: any) {
+        setError(err?.message || 'Failed to load drivers');
+        setDriverProfiles([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadDrivers();
+  }, []);
+
+  useEffect(() => {
+    setCarCeasedState((prev) => {
+      const next = { ...prev };
+      driverProfiles.forEach((driver) => {
+        if (!next[driver.id]) next[driver.id] = {};
+      });
+      return next;
     });
+    setCommissions((prev) => {
+      const next = { ...prev };
+      driverProfiles.forEach((driver) => {
+        if (!next[driver.id]) {
+          next[driver.id] = { value: String(driver.commission ?? 20), editing: false };
+        }
+      });
+      return next;
+    });
+  }, [driverProfiles]);
 
   const getActiveTab = (driverId: string) => activeTabs[driverId] ?? tabs[0];
   const handleTabChange = (driverId: string, tab: (typeof tabs)[number]) => {
@@ -426,7 +328,7 @@ const AdminDriversPage: React.FC = () => {
         driver.phone.toLowerCase().includes(searchTerm)
       );
     });
-  }, [query]);
+  }, [query, driverProfiles]);
 
   const getRowStatus = (driverId: string, ref: string): 'Paid' | 'Unpaid' => {
     return rowStatuses[driverId]?.[ref] ?? driverProfiles.find((d) => d.id === driverId)?.statementRows.find((r) => r.ref === ref)?.status ?? 'Unpaid';
@@ -442,13 +344,80 @@ const AdminDriversPage: React.FC = () => {
     }));
   };
 
-  const applyDriverStatusChange = (driverId: string, action: DriverStatusAction) => {
-    if (action === 'resume') {
-      setDriverStatuses((prev) => ({ ...prev, [driverId]: 'active' }));
-      setDriverStopDates((prev) => ({ ...prev, [driverId]: null }));
-    } else {
-      setDriverStatuses((prev) => ({ ...prev, [driverId]: action === 'holiday' ? 'holiday' : 'blocked' }));
-      setDriverStopDates((prev) => ({ ...prev, [driverId]: getNowString() }));
+  const applyDriverStatusChange = async (driverId: string, action: DriverStatusAction) => {
+    const nextStatus = action === 'resume' ? 'active' : action === 'holiday' ? 'holiday' : 'blocked';
+    setCommissionError(null);
+    try {
+      const res = await fetch('/api/admin/drivers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverId, status: nextStatus }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to update status');
+      }
+      const data = await res.json().catch(() => ({}));
+      setDriverProfiles((prev) =>
+        prev.map((driver) =>
+          driver.id === driverId
+            ? {
+                ...driver,
+                status: data.status || nextStatus,
+                updatedAt: data.updatedAt || driver.updatedAt,
+                tenure: formatTenure(driver.createdAt),
+              }
+            : driver
+        )
+      );
+    } catch (err: any) {
+      setCommissionError(err?.message || 'Failed to update status');
+    }
+  };
+
+  const handlePhotoUpload = async (driverId: string, file: File | null) => {
+    if (!file) return;
+    setPhotoUploading((prev) => ({ ...prev, [driverId]: true }));
+    setPhotoError((prev) => ({ ...prev, [driverId]: null }));
+    try {
+      const payload = new FormData();
+      payload.append('driverId', driverId);
+      payload.append('file', file);
+      const res = await fetch('/api/admin/drivers/photo', {
+        method: 'POST',
+        body: payload,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to upload photo');
+      }
+      const data = await res.json().catch(() => ({}));
+      setDriverProfiles((prev) =>
+        prev.map((driver) => {
+          if (driver.id !== driverId) return driver;
+          const nextDocs = driver.documents.slice();
+          const existingIndex = nextDocs.findIndex((doc) => doc.name === 'Profile Photo');
+          const docEntry = {
+            name: 'Profile Photo',
+            type: (data.format || 'FILE').toUpperCase(),
+            url: data.url,
+          };
+          if (existingIndex >= 0) {
+            nextDocs[existingIndex] = docEntry;
+          } else {
+            nextDocs.push(docEntry);
+          }
+          return {
+            ...driver,
+            profilePhotoUrl: data.url || driver.profilePhotoUrl,
+            documents: nextDocs,
+          };
+        })
+      );
+    } catch (err: any) {
+      setPhotoError((prev) => ({ ...prev, [driverId]: err?.message || 'Failed to upload photo' }));
+    } finally {
+      setPhotoUploading((prev) => ({ ...prev, [driverId]: false }));
     }
   };
 
@@ -489,11 +458,35 @@ const AdminDriversPage: React.FC = () => {
     });
   };
 
-  const toggleCommissionEditing = (driverId: string) => {
-    setCommissions((prev) => {
-      const current = prev[driverId] ?? { value: '20', editing: false };
-      return { ...prev, [driverId]: { ...current, editing: !current.editing } };
-    });
+  const toggleCommissionEditing = async (driverId: string) => {
+    const current = commissions[driverId] ?? { value: '20', editing: false };
+    if (!current.editing) {
+      setCommissions((prev) => ({ ...prev, [driverId]: { ...current, editing: true } }));
+      return;
+    }
+    const numericValue = Number(current.value);
+    if (Number.isNaN(numericValue)) {
+      setCommissionError('Commission must be a number.');
+      return;
+    }
+    setCommissionSaving((prev) => ({ ...prev, [driverId]: true }));
+    setCommissionError(null);
+    try {
+      const res = await fetch('/api/admin/drivers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverId, commission: numericValue }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to update commission');
+      }
+      setCommissions((prev) => ({ ...prev, [driverId]: { ...current, editing: false } }));
+    } catch (err: any) {
+      setCommissionError(err?.message || 'Failed to update commission');
+    } finally {
+      setCommissionSaving((prev) => ({ ...prev, [driverId]: false }));
+    }
   };
 
   const handleCommissionChange = (driverId: string, value: string) => {
@@ -518,6 +511,9 @@ const AdminDriversPage: React.FC = () => {
   const renderTabContent = (driver: DriverProfileData) => {
     const tab = getActiveTab(driver.id);
     const commissionState = commissions[driver.id] ?? { value: '20', editing: false };
+    const status = driver.status || 'active';
+    const dateStopped =
+      status !== 'active' ? formatShortDate(driver.updatedAt || '-') : '—';
     switch (tab) {
       case 'Details':
         return (
@@ -527,9 +523,9 @@ const AdminDriversPage: React.FC = () => {
               <InfoItem label="Email" value={driver.email} />
               <InfoItem label="Address" value={driver.address} />
               <InfoItem label="PCO Licence" value={driver.license} />
-              <InfoItem label="PCO Expiry" value={driver.pcoExpiry} />
+              <InfoItem label="PCO Expiry" value={formatDate(driver.pcoExpiry)} />
               <InfoItem label="Rating" value={driver.rating} />
-              <InfoItem label="Tenure" value={driver.tenure} />
+              <InfoItem label="Tenure" value={formatTenure(driver.createdAt)} />
               <InfoItem label="Last online" value={driver.lastOnline} />
               <div className="relative rounded-2xl border border-white/10 bg-white/5 p-4">
                 <p className="text-xs uppercase tracking-wider text-amber-200/70">Commission</p>
@@ -553,8 +549,9 @@ const AdminDriversPage: React.FC = () => {
                   type="button"
                   onClick={() => toggleCommissionEditing(driver.id)}
                   className="absolute bottom-3 right-3 rounded-full border border-amber-400/40 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-amber-200 transition hover:bg-amber-400/10"
+                  disabled={commissionSaving[driver.id]}
                 >
-                  {commissionState.editing ? 'Save' : 'Edit'}
+                  {commissionSaving[driver.id] ? 'Saving...' : commissionState.editing ? 'Save' : 'Edit'}
                 </button>
               </div>
             </div>
@@ -562,12 +559,12 @@ const AdminDriversPage: React.FC = () => {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <p className="text-xs uppercase tracking-wider text-amber-200/70">Date started</p>
-                  <p className="text-lg font-semibold text-white/90">{driver.dateStarted}</p>
+                  <p className="text-lg font-semibold text-white/90">{formatShortDate(driver.createdAt)}</p>
                 </div>
                 <div>
                   <p className="text-xs uppercase tracking-wider text-amber-200/70">Date stopped</p>
                   <p className="text-lg font-semibold text-white/90">
-                    {driverStopDates[driver.id] ?? '—'}
+                    {dateStopped}
                   </p>
                 </div>
               </div>
@@ -575,7 +572,7 @@ const AdminDriversPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => requestDriverStatusChange(driver.id, 'holiday')}
-                  disabled={driverStatuses[driver.id] === 'holiday'}
+                  disabled={status === 'holiday'}
                   className="rounded-full border border-amber-500/60 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-amber-200 hover:bg-amber-500/10 disabled:opacity-50"
                 >
                   Holiday mode
@@ -583,7 +580,7 @@ const AdminDriversPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => requestDriverStatusChange(driver.id, 'resume')}
-                  disabled={driverStatuses[driver.id] === 'active'}
+                  disabled={status === 'active'}
                   className="rounded-full border border-emerald-500/60 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-50"
                 >
                   Resume work
@@ -591,7 +588,7 @@ const AdminDriversPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => requestDriverStatusChange(driver.id, 'block')}
-                  disabled={driverStatuses[driver.id] === 'blocked'}
+                  disabled={status === 'blocked'}
                   className="rounded-full border border-red-500/60 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-red-200 hover:bg-red-500/10 disabled:opacity-50"
                 >
                   Block driver
@@ -636,14 +633,30 @@ const AdminDriversPage: React.FC = () => {
       case 'Car(s)':
         return (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {driver.cars.map((car) => (
-              <CarCard
-                car={car}
-                key={car.vrm}
-                isCeased={Boolean(carCeasedState[driver.id]?.[car.vrm])}
-                onVehicleCease={() => requestVehicleCease(driver.id, car.vrm)}
-              />
-            ))}
+            {driver.carDetails.length === 0 ? (
+              <div className="rounded-2xl border border-amber-900/50 bg-gradient-to-br from-[#1E1212] via-[#100808] to-black p-4 text-sm text-gray-300">
+                <p className="text-gray-400">No car details submitted yet.</p>
+              </div>
+            ) : (
+              driver.carDetails.map((car, index) => (
+                <div
+                  key={`${driver.id}-car-${index}`}
+                  className="rounded-2xl border border-amber-900/50 bg-gradient-to-br from-[#1E1212] via-[#100808] to-black p-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs uppercase text-amber-300">Vehicle</p>
+                      <p className="text-lg font-bold text-white">{car.make} {car.model}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-white/80">
+                    <p><span className="text-amber-200 uppercase mr-2">VRM</span>{car.vrm}</p>
+                    <p><span className="text-amber-200 uppercase mr-2">Colour</span>{car.colour}</p>
+                    <p><span className="text-amber-200 uppercase mr-2">Keeper</span>{car.keeper}</p>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         );
       case 'Monthly Statement':
@@ -705,31 +718,37 @@ const AdminDriversPage: React.FC = () => {
       case 'Documents Uploaded':
         return (
           <div className="overflow-x-auto rounded-2xl border border-amber-900/50 bg-gradient-to-br from-[#1E1212] via-[#100808] to-black p-4">
-            <table className="w-full min-w-max text-left text-sm text-white/80">
-              <thead>
-                <tr className="border-b border-amber-900/50 text-xs uppercase tracking-wider text-amber-300">
-                  <th className="py-2 px-3">Name</th>
-                  <th className="py-2 px-3">Type</th>
-                  <th className="py-2 px-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {driver.documents.map((doc) => (
-                  <tr key={`${driver.id}-${doc.name}`} className="border-b border-white/5">
-                    <td className="py-2 px-3 text-white/90">{doc.name}</td>
-                    <td className="py-2 px-3 text-white/70">{doc.type.toUpperCase()}</td>
-                    <td className="py-2 px-3 text-right">
-                      <a
-                        href={doc.url}
-                        className="rounded-full border border-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-white transition hover:border-amber-400 hover:text-amber-300"
-                      >
-                        Download
-                      </a>
-                    </td>
+            {driver.documents.length === 0 ? (
+              <p className="text-sm text-gray-400">No documents uploaded yet.</p>
+            ) : (
+              <table className="w-full min-w-max text-left text-sm text-white/80">
+                <thead>
+                  <tr className="border-b border-amber-900/50 text-xs uppercase tracking-wider text-amber-300">
+                    <th className="py-2 px-3">Name</th>
+                    <th className="py-2 px-3">Type</th>
+                    <th className="py-2 px-3 text-right">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {driver.documents.map((doc) => (
+                    <tr key={`${driver.id}-${doc.name}`} className="border-b border-white/5">
+                      <td className="py-2 px-3 text-white/90">{doc.name}</td>
+                      <td className="py-2 px-3 text-white/70">{doc.type}</td>
+                      <td className="py-2 px-3 text-right">
+                        <a
+                          href={doc.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-full border border-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-white transition hover:border-amber-400 hover:text-amber-300"
+                        >
+                          View
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         );
       case 'Logs':
@@ -751,6 +770,29 @@ const AdminDriversPage: React.FC = () => {
                 ))}
               </ul>
             )}
+          </div>
+        );
+      case 'New Photo Upload':
+        return (
+          <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
+            <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-2">
+              Upload image
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white file:mr-3 file:rounded-md file:border-0 file:bg-amber-400 file:px-3 file:py-1 file:text-black file:font-semibold file:cursor-pointer"
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                handlePhotoUpload(driver.id, file);
+              }}
+            />
+            {photoUploading[driver.id] ? (
+              <p className="mt-2 text-xs text-amber-300">Uploading...</p>
+            ) : null}
+            {photoError[driver.id] ? (
+              <p className="mt-2 text-xs text-red-300">{photoError[driver.id]}</p>
+            ) : null}
           </div>
         );
       default:
@@ -777,7 +819,22 @@ const AdminDriversPage: React.FC = () => {
                   className="w-full rounded-2xl border border-white/10 bg-black/40 px-10 py-3 text-white placeholder-gray-500 focus:border-amber-400 focus:outline-none"
                 />
               </div>
-              {filteredDrivers.length === 0 ? (
+              {error ? (
+                <div className="rounded-2xl border border-red-500/50 bg-red-950/40 p-6 text-center text-red-200">
+                  {error}
+                </div>
+              ) : null}
+              {commissionError ? (
+                <div className="rounded-2xl border border-red-500/50 bg-red-950/40 p-4 text-center text-red-200 text-sm">
+                  {commissionError}
+                </div>
+              ) : null}
+              {loading ? (
+                <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center text-gray-400">
+                  Loading drivers...
+                </div>
+              ) : null}
+              {!loading && filteredDrivers.length === 0 ? (
                 <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center text-gray-400">
                   No drivers match your search. Try a different name or ID.
                 </div>
@@ -790,10 +847,30 @@ const AdminDriversPage: React.FC = () => {
                     >
                       <header className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                         <div className="flex items-center gap-[10px]">
-                          <div className="w-[100px] min-h-[90px] rounded-xl bg-gray-800/70" aria-hidden="true" />
+                          <div className="w-[100px] min-h-[90px] rounded-xl bg-gray-800/70 overflow-hidden">
+                            {driver.profilePhotoUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={driver.profilePhotoUrl}
+                                alt={`${driver.name} profile`}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : null}
+                          </div>
                           <div>
                             <p className="text-xs uppercase tracking-wider text-amber-300/70">
                               Driver ID {driver.id.toUpperCase()}
+                              <span
+                                className={`ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                                  driver.status === 'holiday'
+                                    ? 'border-amber-500/60 bg-amber-500/20 text-amber-200'
+                                    : driver.status === 'blocked'
+                                      ? 'border-red-500/60 bg-red-500/20 text-red-200'
+                                      : 'border-emerald-500/60 bg-emerald-500/20 text-emerald-200'
+                                }`}
+                              >
+                                {driver.status || 'active'}
+                              </span>
                             </p>
                             <h2 className="text-2xl font-bold text-white">{driver.name}</h2>
                             <p className="text-sm text-gray-400">{driver.email}</p>
@@ -801,7 +878,7 @@ const AdminDriversPage: React.FC = () => {
                         </div>
                         <div className="text-sm text-gray-300">
                           <p>Phone: {driver.phone}</p>
-                          <p>PCO Expiry: {driver.pcoExpiry}</p>
+                          <p>PCO Expiry: {formatDate(driver.pcoExpiry)}</p>
                         </div>
                       </header>
                       <div className="flex flex-wrap items-center gap-3">
@@ -826,28 +903,7 @@ const AdminDriversPage: React.FC = () => {
                             </button>
                           ))}
                         </nav>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setPhotoUploadVisible((prev) => ({ ...prev, [driver.id]: !prev[driver.id] }))
-                          }
-                          className="px-4 py-2 text-sm font-semibold rounded-full border border-amber-400/60 bg-black/40 text-amber-200 hover:bg-amber-400/10 transition whitespace-nowrap"
-                        >
-                          New Photo Upload
-                        </button>
                       </div>
-                      {photoUploadVisible[driver.id] && (
-                        <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
-                          <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-2">
-                            Upload image
-                          </label>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white file:mr-3 file:rounded-md file:border-0 file:bg-amber-400 file:px-3 file:py-1 file:text-black file:font-semibold file:cursor-pointer"
-                          />
-                        </div>
-                      )}
                       <div>{renderTabContent(driver)}</div>
                     </article>
                   ))}
