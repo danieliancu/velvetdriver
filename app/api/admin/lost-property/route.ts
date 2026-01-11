@@ -11,6 +11,7 @@ type LostRow = DbRow<{
   ref_no: string | null;
   handed_in_by: string | null;
   received_at: string | null;
+  booking_datetime: string | null;
   customer_name: string;
   customer_email: string;
   customer_address: string;
@@ -28,7 +29,7 @@ type LostRow = DbRow<{
 export async function GET() {
   try {
     const [rows] = await pool.query<LostRow[]>(
-      `SELECT id, client_id, journey_id, ref_no, handed_in_by, received_at, customer_name, customer_email, customer_address, customer_phone, item_description, details, return_method, result, representative, status, source, created_at
+      `SELECT id, client_id, journey_id, ref_no, handed_in_by, received_at, booking_datetime, customer_name, customer_email, customer_address, customer_phone, item_description, details, return_method, result, representative, status, source, created_at
        FROM client_lost_property
        ORDER BY created_at DESC
        LIMIT 200`
@@ -40,6 +41,7 @@ export async function GET() {
       journeyId: row.journey_id,
       handedInBy: row.handed_in_by,
       receivedAt: row.received_at,
+      bookingDateTime: row.booking_datetime,
       customerName: row.customer_name,
       customerEmail: row.customer_email,
       customerAddress: row.customer_address,

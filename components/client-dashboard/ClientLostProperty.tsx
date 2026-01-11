@@ -28,32 +28,35 @@ const ClientLostProperty: React.FC<ClientLostPropertyProps> = ({
   const [bookingReference, setBookingReference] = React.useState('');
   const [bookingDateTime, setBookingDateTime] = React.useState('');
   const [fullName, setFullName] = React.useState(userName || '');
-  const [address, setAddress] = React.useState(email || '');
+  const [guestEmail, setGuestEmail] = React.useState('');
   const [phone, setPhone] = React.useState(userPhone || '');
   const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
     if (!isGuest) {
       setFullName((prev) => (prev ? prev : userName || ''));
-      setAddress((prev) => (prev ? prev : email || ''));
       setPhone((prev) => (prev ? prev : userPhone || ''));
     }
   }, [isGuest, userName, email, userPhone]);
 
   React.useEffect(() => {
-    if (!isGuest && journeyId) {
+    if (isGuest) {
+      return;
+    }
+    if (journeyId) {
       const selected = journeys.find((j) => String(j.id) === String(journeyId));
       if (selected?.date) {
         setBookingDateTime(selected.date);
       }
-    } else if (!journeyId) {
-      setBookingDateTime('');
+      return;
     }
+    setBookingDateTime('');
   }, [journeyId, journeys, isGuest]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName || !address || !phone || !details || !description) {
+    const submitEmail = isGuest ? guestEmail.trim() : (email || '').trim();
+    if (!fullName || !phone || !details || !description || !submitEmail || !bookingDateTime.trim()) {
       showAlert('Please fill in all required fields.');
       return;
     }
@@ -69,12 +72,13 @@ const ClientLostProperty: React.FC<ClientLostPropertyProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email,
+          source: isGuest ? 'guest' : 'client',
+          email: submitEmail,
           journeyId: journeyId || undefined,
           description,
           details,
           fullName,
-          address,
+          address: '',
           phone,
           bookingReference: bookingReference || (journeyId ? `VD_${journeyId}` : ''),
           bookingDateTime: bookingDateTime || undefined,
@@ -89,7 +93,7 @@ const ClientLostProperty: React.FC<ClientLostPropertyProps> = ({
       setBookingReference('');
       setBookingDateTime('');
       setFullName(isGuest ? '' : userName || '');
-      setAddress(isGuest ? '' : email || '');
+      setGuestEmail('');
       setPhone(isGuest ? '' : userPhone || '');
       setDescription('');
       setDetails('');
@@ -106,10 +110,18 @@ const ClientLostProperty: React.FC<ClientLostPropertyProps> = ({
         <>
           <DashboardInput
             id="ref-no"
-            label="Ref. no. or date and time"
+            label="Booking Reference (if known)"
             type="text"
             value={bookingReference}
             onChange={(e) => setBookingReference(e.target.value)}
+          />
+          <DashboardInput
+            id="booking-datetime-lost"
+            label="Date and Time"
+            type="text"
+            required
+            value={bookingDateTime}
+            onChange={(e) => setBookingDateTime(e.target.value)}
           />
           <DashboardInput
             id="full-name-lost"
@@ -119,24 +131,22 @@ const ClientLostProperty: React.FC<ClientLostPropertyProps> = ({
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
           />
-          <div className="grid gap-4 sm:grid-cols-2">
-            <DashboardInput
-              id="address-lost"
-              label="Address"
-              type="text"
-              required
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-            />
-            <DashboardInput
-              id="phone-lost"
-              label="Phone No"
-              type="tel"
-              required
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-            />
-          </div>
+          <DashboardInput
+            id="email-lost"
+            label="Email Address"
+            type="email"
+            required
+            value={guestEmail}
+            onChange={(e) => setGuestEmail(e.target.value)}
+          />
+          <DashboardInput
+            id="phone-lost"
+            label="Phone No"
+            type="tel"
+            required
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+          />
         </>
       ) : (
         <>
@@ -163,6 +173,14 @@ const ClientLostProperty: React.FC<ClientLostPropertyProps> = ({
             </p>
           )}
           <DashboardInput
+            id="booking-datetime-lost"
+            label="Date and Time"
+            type="text"
+            value={bookingDateTime}
+            readOnly
+            required
+          />
+          <DashboardInput
             id="full-name-lost"
             label="Name"
             type="text"
@@ -171,26 +189,23 @@ const ClientLostProperty: React.FC<ClientLostPropertyProps> = ({
             onChange={(e) => setFullName(e.target.value)}
             readOnly
           />
-          <div className="grid gap-4 sm:grid-cols-2">
-            <DashboardInput
-              id="address-lost"
-              label="Address"
-              type="text"
-              required
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              readOnly
-            />
-            <DashboardInput
-              id="phone-lost"
-              label="Phone No"
-              type="tel"
-              required
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              readOnly
-            />
-          </div>
+          <DashboardInput
+            id="email-lost"
+            label="Email Address"
+            type="email"
+            required
+            value={email || ''}
+            readOnly
+          />
+          <DashboardInput
+            id="phone-lost"
+            label="Phone No"
+            type="tel"
+            required
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            readOnly
+          />
         </>
       )}
       <div>

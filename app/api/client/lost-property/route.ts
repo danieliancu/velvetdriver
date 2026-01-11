@@ -57,21 +57,23 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const email = String(body.email ?? '').trim().toLowerCase();
+    const requestedSource = String(body.source ?? '').trim().toLowerCase();
+    const isGuest = body.isGuest === true || requestedSource === 'guest';
+    const source = isGuest ? 'guest' : 'client';
     const journeyId = Number(body.journeyId) || null;
     const description = String(body.description ?? '').trim();
     const details = String(body.details ?? '').trim();
     const fullName = String(body.fullName ?? '').trim();
-    const address = String(body.address ?? '').trim();
     const phone = String(body.phone ?? '').trim();
     const bookingReference = String(body.bookingReference ?? '').trim();
     const bookingDateTime = String(body.bookingDateTime ?? '').trim();
     const representativeTag = String(body.representative ?? '').trim();
 
-    if (!description || !details || !fullName || !address || !phone) {
+    if (!description || !details || !fullName || !email || !phone) {
       return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
     }
 
-    const clientId = await resolveClientId(email);
+    const clientId = isGuest ? null : await resolveClientId(email);
     let resolvedJourneyId: number | null = null;
     let journeyRef: string | null = bookingReference || null;
     try {
@@ -98,14 +100,14 @@ export async function POST(request: Request) {
         bookingDateTime || null,
         fullName,
         email || '',
-        address,
+        '',
         phone,
         description,
         details,
         null,
         null,
         null,
-        email ? 'client' : 'guest',
+        source,
       ]
     );
 
@@ -118,7 +120,7 @@ export async function POST(request: Request) {
         ref: journeyRef || 'n/a',
         phone,
         representative: representativeTag || 'n/a',
-        source: email ? 'client' : 'guest',
+        source,
       },
     });
 

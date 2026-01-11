@@ -10,6 +10,7 @@ type LostItem = {
   journeyId?: number | null;
   handedInBy?: string | null;
   receivedAt?: string | null;
+  bookingDateTime?: string | null;
   customerName: string;
   customerEmail?: string;
   customerPhone: string;
@@ -208,6 +209,14 @@ const AdminLostPropertyPage: React.FC = () => {
                                 readOnly
                               />
                             </div>
+                            <div className="sm:col-span-1">
+                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Date and Time</label>
+                              <input
+                                className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white"
+                                value={r.bookingDateTime || 'Not provided'}
+                                readOnly
+                              />
+                            </div>
                           </div>
                           <div className="grid gap-3 sm:grid-cols-3">
                             <div className="sm:col-span-1">
@@ -235,6 +244,7 @@ const AdminLostPropertyPage: React.FC = () => {
                                 readOnly
                               />
                             </div>
+                            <div className="sm:col-span-1" />
                           </div>
 
                           <div className="space-y-2">

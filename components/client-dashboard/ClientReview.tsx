@@ -67,6 +67,7 @@ const ClientReview: React.FC<ClientReviewProps> = ({ email, journeys = [], isGue
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          source: isGuest ? 'guest' : 'client',
           email: contactEmail,
           journeyId: journeyId || undefined,
           rating,

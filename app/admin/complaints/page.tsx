@@ -229,7 +229,7 @@ const AdminComplaintsPage: React.FC = () => {
 
                           <div className="grid gap-3 sm:grid-cols-3">
                             <div className="sm:col-span-1">
-                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Booking</label>
+                              <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Date and Time</label>
                               <input
                                 className="w-full rounded-lg bg-black/20 border border-white/10 px-3 py-2 text-sm text-white/80"
                                 value={c.bookingDateTime || 'Not provided'}

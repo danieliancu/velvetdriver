@@ -62,8 +62,9 @@ const ClientComplain: React.FC<ClientComplainProps> = ({
     e.preventDefault();
     const trimmedDetails = details.trim();
     const contactEmail = (email || address || '').trim();
+    const dateTimeValue = bookingDateTime.trim();
 
-    if ((showSubjectInput && !subject) || !trimmedDetails || !fullName || !contactEmail || !phone) {
+    if ((showSubjectInput && !subject) || !trimmedDetails || !fullName || !contactEmail || !phone || !dateTimeValue) {
       showAlert('Please fill in all required fields, including complaint details.');
       return;
     }
@@ -80,6 +81,7 @@ const ClientComplain: React.FC<ClientComplainProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          source: isGuest ? 'guest' : 'client',
           email: email || contactEmail,
           journeyId: journeyId || undefined,
           subject: effectiveSubject,
@@ -138,6 +140,7 @@ const ClientComplain: React.FC<ClientComplainProps> = ({
               id="booking-datetime"
               label="Date and Time"
               type="text"
+              required
               value={bookingDateTime}
               onChange={(e) => setBookingDateTime(e.target.value)}
             />
@@ -231,6 +234,7 @@ const ClientComplain: React.FC<ClientComplainProps> = ({
             type="text"
             value={bookingDateTime}
             readOnly
+            required
           />
         </>
       )}
