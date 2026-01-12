@@ -225,3 +225,88 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Failed to load driver profile' }, { status: 500 });
   }
 }
+
+export async function PUT(request: Request) {
+  try {
+    const body = await request.json();
+    const email = String(body.email ?? '').trim().toLowerCase();
+    const nextEmail = String(body.nextEmail ?? '').trim().toLowerCase();
+    const firstName = String(body.firstName ?? '').trim();
+    const lastName = String(body.lastName ?? '').trim();
+    const phone = String(body.phone ?? '').trim();
+    const drivingLicense = String(body.drivingLicense ?? '').trim();
+    const address = String(body.address ?? '').trim();
+    const pcoLicenceNo = String(body.pcoLicenceNo ?? '').trim();
+    const pcoExpiry = body.pcoExpiry ? String(body.pcoExpiry).trim() : null;
+
+    if (!email || !firstName || !lastName) {
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [users] = await conn.query<mysql.RowDataPacket[]>(
+        'SELECT id FROM users WHERE email = ? LIMIT 1',
+        [email]
+      );
+      const user = users[0];
+      if (!user) {
+        await conn.rollback();
+        return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
+      }
+
+      if (nextEmail && nextEmail !== email) {
+        const [existing] = await conn.query<mysql.RowDataPacket[]>(
+          'SELECT id FROM users WHERE email = ? LIMIT 1',
+          [nextEmail]
+        );
+        if (existing.length) {
+          await conn.rollback();
+          return NextResponse.json({ error: 'Email already in use' }, { status: 409 });
+        }
+      }
+
+      await conn.execute(
+        `UPDATE users
+         SET email = ?, phone = ?
+         WHERE id = ?`,
+        [nextEmail || email, phone || null, user.id]
+      );
+
+      await conn.execute(
+        `UPDATE drivers
+         SET first_and_middle_name = ?,
+             surname = ?,
+             address = ?,
+             phone = ?,
+             pco_license_no = ?,
+             pco_expires_date = ?,
+             driving_license_no = ?
+         WHERE user_id = ?`,
+        [
+          firstName,
+          lastName,
+          address || null,
+          phone || null,
+          pcoLicenceNo || null,
+          pcoExpiry || null,
+          drivingLicense || null,
+          user.id,
+        ]
+      );
+
+      await conn.commit();
+      return NextResponse.json({ ok: true, email: nextEmail || email });
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    console.error('Driver profile update error', err);
+    return NextResponse.json({ error: 'Failed to update driver profile' }, { status: 500 });
+  }
+}

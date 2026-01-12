@@ -7,9 +7,12 @@ type DriverDirectoryEntry = {
   id: string;
   name: string;
   phone: string;
+  email: string;
+  license: string;
   plateNo: string;
   make: string;
   model: string;
+  carLabel: string;
   vehicleTypeId: number | null;
 };
 
@@ -20,15 +23,22 @@ type LiveBooking = {
   dropOff: string;
   passenger: string;
   phone: string;
+  email: string;
   notes: string;
   time: string;
   date: string;
+  journeyDate?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   priceDetails: string;
   bookedBy: string;
   bookedByStaffId?: number | null;
   drivers: string[];
   vehicle?: string;
   vehicleTypeId?: number | null;
+  clientEmail?: string;
+  driverId?: string;
+  clientConfirmed?: boolean;
 };
 
 type LiveBookingResponse = {
@@ -38,19 +48,25 @@ type LiveBookingResponse = {
   dropOff: string;
   passenger: string;
   phone: string;
+  passengerEmail?: string;
+  clientEmail?: string;
   notes: string;
   time: string;
   date: string;
+  journeyDate?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   priceDetails: string;
   bookedBy: string;
   bookedByStaffId?: number | null;
   vehicle?: string;
   vehicleTypeId?: number | null;
+  driverId?: string;
+  clientConfirmed?: boolean;
 };
 
 const formatPhoneForWhatsApp = (phone: string) => phone.replace(/\D/g, '');
 
-const jobDoneStatusLabels = ['Client request', 'Client confirmation', 'Driver confirmed'] as const;
 const buildGoogleMapsLink = (location: string) => {
   const trimmed = location.trim();
   if (!trimmed) return '';
@@ -70,18 +86,17 @@ const buildBookingSummary = (booking: LiveBooking) => {
 
   return `Time: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${pickupLine}\n\nTO\n\n${dropOffLine}\n\nPrice:  ${booking.priceDetails}\n\nNotes: ${booking.notes}`;
 };
+
 const AdminDashboardPage: React.FC = () => {
   const [liveBookings, setLiveBookings] = useState<LiveBooking[]>([]);
   const [liveLoading, setLiveLoading] = useState(true);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [clientConfirmed, setClientConfirmed] = useState<Record<string, boolean>>({});
-  const [driverConfirmed, setDriverConfirmed] = useState<Record<string, boolean>>({});
   const [whatsappOpen, setWhatsappOpen] = useState<Record<string, boolean>>({});
   const [driverMessages, setDriverMessages] = useState<Record<string, string>>({});
   const [driversExpanded, setDriversExpanded] = useState<Record<string, boolean>>({});
   const [pendingDriverConfirmKey, setPendingDriverConfirmKey] = useState<string | null>(null);
   const [pendingClientConfirmId, setPendingClientConfirmId] = useState<string | null>(null);
-  const [historyToggle, setHistoryToggle] = useState<Record<string, boolean>>({});
   const [commissionInputs, setCommissionInputs] = useState<Record<string, string>>({});
   const [availableDrivers, setAvailableDrivers] = useState<DriverDirectoryEntry[]>([]);
   // Manual booking modal removed; navigate to booking page instead.
@@ -96,6 +111,7 @@ const AdminDashboardPage: React.FC = () => {
       dropOff: 'The Langham, 1C Portland Pl, London W1B 1JA',
       passenger: 'Maria Popescu',
       phone: '+44 7700 900111',
+      email: 'maria.popescu@example.com',
       notes: 'Meet & greet, 1x large suitcase, flight BA0892, watch delays',
       time: '13:15',
       date: '2026-01-10',
@@ -105,21 +121,7 @@ const AdminDashboardPage: React.FC = () => {
     }
   ];
 
-  const fallbackCompleted: LiveBooking[] = [
-    {
-      id: 'BK-1011',
-      pickup: '99 Bishopsgate, London EC2M 3XD',
-      dropOff: 'Soho Hotel, 4 Richmond Mews, W1D 3DH',
-      passenger: 'John Carter',
-      phone: '+44 7700 900222',
-      notes: 'VIP, no calls, text on arrival',
-      time: '08:30',
-      date: '2026-01-09',
-      priceDetails: 'GBP 78.00 | Luxury',
-      bookedBy: 'D. Iancu',
-      drivers: []
-    }
-  ];
+  const fallbackCompleted: LiveBooking[] = [];
 
   useEffect(() => {
     let isMounted = true;
@@ -133,14 +135,26 @@ const AdminDashboardPage: React.FC = () => {
           const activeCar = Array.isArray(driver.carDetails)
             ? driver.carDetails.find((car: any) => car.status === 'active')
             : null;
+          const fallbackCar = !activeCar && Array.isArray(driver.carDetails) ? driver.carDetails[0] : null;
+          const selectedCar = activeCar || fallbackCar;
+          const make = selectedCar?.make || '-';
+          const model = selectedCar?.model || '-';
+          const plateNo = selectedCar?.vrm || '-';
+          const carLabel =
+            make !== '-' || model !== '-'
+              ? `${[make, model].filter((value) => value && value !== '-').join(' ')} · ${plateNo}`
+              : plateNo;
           return {
             id: String(driver.id),
             name: driver.name,
             phone: driver.phone || '-',
-            plateNo: activeCar?.vrm || '-',
-            make: activeCar?.make || '-',
-            model: activeCar?.model || '-',
-            vehicleTypeId: activeCar?.vehicleTypeId ?? null,
+            email: driver.email || '-',
+            license: driver.license || '-',
+            plateNo,
+            make,
+            model,
+            carLabel,
+            vehicleTypeId: selectedCar?.vehicleTypeId ?? null,
           } as DriverDirectoryEntry;
         });
         setAvailableDrivers(mapped);
@@ -170,17 +184,29 @@ const AdminDashboardPage: React.FC = () => {
           dropOff: item.dropOff,
           passenger: item.passenger,
           phone: item.phone,
+          email: item.passengerEmail || item.clientEmail || '',
           notes: item.notes,
           time: item.time,
           date: item.date,
+          journeyDate: item.journeyDate ?? null,
+          createdAt: item.createdAt ?? null,
+          updatedAt: item.updatedAt ?? null,
           priceDetails: item.priceDetails,
           bookedBy: item.bookedBy,
           bookedByStaffId: item.bookedByStaffId ?? null,
           vehicle: item.vehicle || 'Unknown',
           vehicleTypeId: item.vehicleTypeId ?? null,
+          clientEmail: item.clientEmail || '',
+          driverId: item.driverId || '',
+          clientConfirmed: Boolean(item.clientConfirmed),
           drivers: [],
         }));
         setLiveBookings(bookings);
+        const confirmMap: Record<string, boolean> = {};
+        bookings.forEach((b) => {
+          confirmMap[b.id] = Boolean(b.clientConfirmed);
+        });
+        setClientConfirmed(confirmMap);
         const defaults: Record<string, string> = {};
         bookings.forEach((b) => {
           defaults[b.id] = b.bookedByStaffId ? String(b.bookedByStaffId) : '';
@@ -191,14 +217,6 @@ const AdminDashboardPage: React.FC = () => {
         console.error(err);
         if (isMounted) {
           const confirmMap: Record<string, boolean> = {};
-          const driverMap: Record<string, boolean> = {};
-
-          fallbackCompleted.forEach((booking) => {
-            confirmMap[booking.id] = true;
-            booking.drivers.forEach((driverId) => {
-              driverMap[`${booking.id}-${driverId}`] = true;
-            });
-          });
 
           setLiveBookings([...fallbackActive, ...fallbackCompleted]);
           const defaults: Record<string, string> = {};
@@ -207,7 +225,6 @@ const AdminDashboardPage: React.FC = () => {
           });
           setBookedBySelection(defaults);
           setClientConfirmed(confirmMap);
-          setDriverConfirmed(driverMap);
           setLiveError(null);
         }
       } finally {
@@ -273,35 +290,21 @@ const AdminDashboardPage: React.FC = () => {
     }
   };
 
-  const hasDriverConfirmation = (booking: LiveBooking) =>
-    availableDrivers.some((driver) => {
-      const driverKey = `${booking.id}-${driver.id}`;
-      return Boolean(driverConfirmed[driverKey]);
-    });
+  const hasAllocation = (booking: LiveBooking) => Boolean(booking.driverId);
 
-  const isBookingCompleted = (booking: LiveBooking) =>
-    Boolean(clientConfirmed[booking.id]) && hasDriverConfirmation(booking);
-
-  const activeBookings = liveBookings.filter((booking) => !isBookingCompleted(booking));
-  const completedLiveBookings = liveBookings.filter(isBookingCompleted);
-  const jobsDoneEntries = completedLiveBookings;
+  const activeBookings = liveBookings.filter((booking) => !hasAllocation(booking));
 
   const pendingClientConfirmations = activeBookings.filter(
     (booking) => !clientConfirmed[booking.id]
   ).length;
   const liveBadgeCount = pendingClientConfirmations;
 
-  const toggleClientConfirmation = (bookingId: string) => {
-    setClientConfirmed((prev) => ({ ...prev, [bookingId]: !prev[bookingId] }));
-  };
-
-  const toggleDriverConfirmation = (driverKey: string) => {
-    setDriverConfirmed((prev) => ({ ...prev, [driverKey]: !prev[driverKey] }));
+  const toggleClientConfirmation = (bookingId: string, nextValue: boolean) => {
+    setClientConfirmed((prev) => ({ ...prev, [bookingId]: nextValue }));
   };
 
   const confirmDriverToggle = (driverKey: string, isAlreadyConfirmed: boolean) => {
     if (isAlreadyConfirmed) {
-      toggleDriverConfirmation(driverKey);
       return;
     }
     setPendingDriverConfirmKey(driverKey);
@@ -309,8 +312,42 @@ const AdminDashboardPage: React.FC = () => {
 
   const handleConfirmDriver = () => {
     if (!pendingDriverConfirmKey) return;
-    toggleDriverConfirmation(pendingDriverConfirmKey);
-    setPendingDriverConfirmKey(null);
+    const lastDash = pendingDriverConfirmKey.lastIndexOf('-');
+    if (lastDash <= 0) {
+      setPendingDriverConfirmKey(null);
+      return;
+    }
+    const bookingId = pendingDriverConfirmKey.slice(0, lastDash);
+    const driverId = pendingDriverConfirmKey.slice(lastDash + 1);
+    const booking = liveBookings.find((entry) => entry.id === bookingId);
+    if (!booking) {
+      setPendingDriverConfirmKey(null);
+      return;
+    }
+    fetch('/api/admin/allocate-driver', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ journeyId: booking.journeyId, driverId }),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.error || 'Failed to allocate driver');
+        }
+        setLiveBookings((prev) =>
+          prev.map((entry) =>
+            entry.id === booking.id
+              ? { ...entry, driverId, updatedAt: new Date().toISOString() }
+              : entry
+          )
+        );
+      })
+      .catch((err) => {
+        console.error('Failed to allocate driver', err);
+      })
+      .finally(() => {
+        setPendingDriverConfirmKey(null);
+      });
   };
 
   const handleCancelDriver = () => {
@@ -323,10 +360,6 @@ const AdminDashboardPage: React.FC = () => {
 
   const toggleDriversSection = (bookingId: string) => {
     setDriversExpanded((prev) => ({ ...prev, [bookingId]: !prev[bookingId] }));
-  };
-
-  const toggleHistoryStatus = (bookingId: string) => {
-    setHistoryToggle((prev) => ({ ...prev, [bookingId]: !prev[bookingId] }));
   };
 
   const handlePasteInfo = (driverKey: string, booking: LiveBooking) => {
@@ -361,17 +394,57 @@ const AdminDashboardPage: React.FC = () => {
     setDriverMessages((prev) => ({ ...prev, [driverKey]: '' }));
   };
 
-  const requestClientConfirmation = (bookingId: string) => {
-    if (clientConfirmed[bookingId]) {
-      toggleClientConfirmation(bookingId);
-      return;
+  const sendClientConfirmationEmail = async (booking: LiveBooking) => {
+    if (!booking.journeyId) return;
+    try {
+      const res = await fetch('/api/admin/client-confirmation-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journeyId: booking.journeyId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to send confirmation email');
+      }
+    } catch (err) {
+      console.error('Failed to send client confirmation email', err);
     }
-    setPendingClientConfirmId(bookingId);
   };
 
-  const handleConfirmClient = () => {
+  const requestClientConfirmation = (booking: LiveBooking) => {
+    setPendingClientConfirmId(booking.id);
+  };
+
+  const updateClientConfirmation = async (bookingId: string, confirmedValue: boolean) => {
+    const booking = liveBookings.find((entry) => entry.id === bookingId);
+    if (!booking?.journeyId) return false;
+    try {
+      const res = await fetch('/api/admin/client-confirmation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journeyId: booking.journeyId, confirmed: confirmedValue }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to update client confirmation');
+      }
+      toggleClientConfirmation(bookingId, confirmedValue);
+      return true;
+    } catch (err) {
+      console.error('Failed to update client confirmation', err);
+      return false;
+    }
+  };
+
+  const handleConfirmClient = async () => {
     if (!pendingClientConfirmId) return;
-    toggleClientConfirmation(pendingClientConfirmId);
+    const updated = await updateClientConfirmation(pendingClientConfirmId, true);
+    if (updated) {
+      const booking = liveBookings.find((entry) => entry.id === pendingClientConfirmId);
+      if (booking) {
+        await sendClientConfirmationEmail(booking);
+      }
+    }
     setPendingClientConfirmId(null);
   };
 
@@ -379,16 +452,28 @@ const AdminDashboardPage: React.FC = () => {
     setPendingClientConfirmId(null);
   };
 
-  const handleReturnToLive = (booking: LiveBooking) => {
-    setClientConfirmed((prev) => ({ ...prev, [booking.id]: false }));
-    setDriverConfirmed((prev) => {
-      const updated = { ...prev };
-      availableDrivers.forEach((driver) => {
-        const key = `${booking.id}-${driver.id}`;
-        delete updated[key];
+  const handleCancelAllocation = async (booking: LiveBooking) => {
+    if (!booking.journeyId) return;
+    try {
+      const res = await fetch('/api/admin/unassign-driver', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journeyId: booking.journeyId }),
       });
-      return updated;
-    });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to unassign driver');
+      }
+      setLiveBookings((prev) =>
+        prev.map((entry) =>
+          entry.id === booking.id
+            ? { ...entry, driverId: '', updatedAt: new Date().toISOString() }
+            : entry
+        )
+      );
+    } catch (err) {
+      console.error('Failed to unassign driver', err);
+    }
   };
   return (
     <>
@@ -429,7 +514,7 @@ const AdminDashboardPage: React.FC = () => {
                         id: driver.id,
                         ...driver,
                       }));
-                    const bookingConfirmed = hasDriverConfirmation(booking);
+                    const bookingAllocated = Boolean(booking.driverId);
 
                     return (
                       <article
@@ -440,13 +525,26 @@ const AdminDashboardPage: React.FC = () => {
                           <div className="flex-1 space-y-3">
                             <p className="text-sm font-semibold tracking-wide text-white">{booking.id}</p>
                             <p className="text-sm text-gray-300">
-                              Pickup: {booking.pickup} � Drop-off: {booking.dropOff}
+                              Pickup: <span className="font-semibold text-white">{booking.pickup}</span>
                             </p>
                             <p className="text-sm text-gray-300">
-                              Time: {booking.time} � Date: {booking.date}
+                              Drop-off: <span className="font-semibold text-white">{booking.dropOff}</span>
                             </p>
                             <p className="text-sm text-gray-300">
-                              Passenger: {booking.passenger} � Phone: {booking.phone}
+                              Time: <span className="font-semibold text-white">{booking.time}</span>
+                            </p>
+                            <p className="text-sm text-gray-300">
+                              Date: <span className="font-semibold text-white">{booking.date}</span>
+                            </p>
+                            <p className="text-sm text-gray-300">
+                              Passenger: <span className="font-semibold text-white">{booking.passenger}</span>
+                            </p>
+                            <p className="text-sm text-gray-300">
+                              Phone: <span className="font-semibold text-white">{booking.phone}</span>
+                            </p>
+                            <p className="text-sm text-gray-300">
+                              Email:{' '}
+                              <span className="font-semibold text-white">{booking.email || booking.clientEmail || '-'}</span>
                             </p>
                             <p className="text-sm text-gray-300">
                               Price:{' '}
@@ -480,7 +578,11 @@ const AdminDashboardPage: React.FC = () => {
                             </div>
                             <button
                               type="button"
-                              onClick={() => requestClientConfirmation(booking.id)}
+                              onClick={() =>
+                                confirmed
+                                  ? updateClientConfirmation(booking.id, false)
+                                  : requestClientConfirmation(booking)
+                              }
                               className={`flex items-center gap-2 text-sm font-semibold transition ${
                                 confirmed ? 'text-green-400' : 'text-gray-300'
                               }`}
@@ -511,10 +613,10 @@ const AdminDashboardPage: React.FC = () => {
                                 >
                                   <span
                                     className={`flex items-center gap-2 ${
-                                      bookingConfirmed ? 'text-green-300' : 'text-gray-400'
+                                      bookingAllocated ? 'text-green-300' : 'text-gray-400'
                                     }`}
                                   >
-                                    {bookingConfirmed ? 'Driver confirmed' : 'Drivers available'}
+                                    {bookingAllocated ? 'Driver confirmed' : 'Drivers available'}
                                     <svg
                                       className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                                       viewBox="0 0 10 6"
@@ -530,10 +632,10 @@ const AdminDashboardPage: React.FC = () => {
                                   <div className="space-y-3 pt-3">
                                     {bookingDrivers.map((driver) => {
                                       const driverKey = `${booking.id}-${driver.id}`;
-                                      const confirmedDriver = driverConfirmed[driverKey];
+                                      const confirmedDriver = booking.driverId === driver.id;
                                       const isWhatsappOpen = whatsappOpen[driverKey];
                                       const messageValue = driverMessages[driverKey] ?? '';
-                                      const bookingLocked = bookingConfirmed && !confirmedDriver;
+                                      const bookingLocked = bookingAllocated && !confirmedDriver;
                                       const commissionValue = commissionInputs[driverKey] ?? '20';
 
                                       return (
@@ -553,12 +655,12 @@ const AdminDashboardPage: React.FC = () => {
                                               <button
                                                 type="button"
                                                 onClick={() => confirmDriverToggle(driverKey, Boolean(confirmedDriver))}
-                                                disabled={bookingLocked || !confirmed}
+                                                disabled={bookingLocked || !confirmed || confirmedDriver}
                                                 className={`bg-gray-900 flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold transition ${
                                                   confirmedDriver
                                                     ? 'bg-green-600/30 text-green-200'
                                                     : 'text-gray-300'
-                                                } ${bookingLocked || !confirmed ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                } ${bookingLocked || !confirmed || confirmedDriver ? 'opacity-50 cursor-not-allowed' : ''}`}
                                               >
                                                 <span
                                                   className={`w-3 h-3 rounded-full border border-white ${
@@ -667,98 +769,6 @@ const AdminDashboardPage: React.FC = () => {
                 )}
               </div>
             </section>
-            <section className="bg-green-900/50 border border-gray-800 rounded-2xl p-6 space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-semibold text-white">Job history</h2>
-                  <p className="text-sm text-gray-400">Completed bookings with client + driver confirmation.</p>
-                </div>
-                <div className="text-sm text-gray-400">
-                  <span className="font-semibold text-white">{jobsDoneEntries.length}</span> trips
-                </div>
-              </div>
-              <div className="flex flex-col gap-4">
-                {jobsDoneEntries.length === 0 ? (
-                  <p className="text-sm text-gray-500">No completed jobs logged yet.</p>
-                ) : (
-                  jobsDoneEntries.map((booking) => (
-                    <article
-                      key={`job-done-${booking.id}`}
-                      className="rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-5 space-y-3"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-semibold text-white">{booking.id}</p>
-                        {(() => {
-                          const isCompleted = historyToggle[booking.id] ?? false;
-                          return (
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => toggleHistoryStatus(booking.id)}
-                                className={`text-[11px] font-semibold uppercase tracking-[0.3em] rounded-full px-3 py-1 transition flex items-center gap-1 ${
-                                  isCompleted
-                                    ? 'border border-green-300 text-green-300 hover:bg-green-300 hover:text-black'
-                                    : 'border border-amber-300 bg-amber-300 text-black hover:brightness-110'
-                                }`}
-                              >
-                                <span
-                                  className={`flex h-3 w-3 items-center justify-center rounded-full text-[10px] ${
-                                    isCompleted ? 'bg-green-300 text-black' : 'bg-black text-amber-300'
-                                  }`}
-                                >
-                                  {isCompleted ? (
-                                    <svg viewBox="0 0 8 8" className="h-2 w-2" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                      <path d="M1 3.5L3.2 5.6 7 1.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                                    </svg>
-                                  ) : (
-                                    <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                      <path d="M2 6h8M6 2v8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                                    </svg>
-                                  )}
-                                </span>
-                                {isCompleted ? 'Completed' : 'Allocated'}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleReturnToLive(booking)}
-                                className="text-[11px] font-semibold uppercase tracking-[0.3em] rounded-full px-3 py-1 transition flex items-center gap-1 border border-red-400 bg-red-500 text-white hover:bg-red-400"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                      <p className="text-sm text-gray-300">
-                        Pickup: {booking.pickup} � Drop-off: {booking.dropOff}
-                      </p>
-                      <p className="text-sm text-gray-300">
-                        Time: {booking.time} � Date: {booking.date}
-                      </p>
-                      <p className="text-sm text-gray-300">
-                        Passenger: {booking.passenger} � Phone: {booking.phone}
-                      </p>
-                      <p className="text-sm text-gray-300">
-                        Price:{' '}
-                        <span className="font-semibold text-white">{booking.priceDetails}</span>
-                      </p>
-                      <p className="text-xs text-gray-400">Notes: {booking.notes}</p>
-                      <div className="flex flex-wrap gap-4 pt-2">
-                        {jobDoneStatusLabels.map((label) => (
-                          <span
-                            key={`${booking.id}-${label}`}
-                            className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-green-300"
-                          >
-                            <span className="w-2 h-2 rounded-full bg-green-400" />
-                            {label}
-                          </span>
-                        ))}
-                      </div>
-                    </article>
-                  ))
-                )}
-              </div>
-            </section>
 
           </main>
         </div>
@@ -819,6 +829,9 @@ const AdminDashboardPage: React.FC = () => {
 };
 
 export default AdminDashboardPage;
+
+
+
 
 
 

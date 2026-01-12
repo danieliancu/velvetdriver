@@ -187,6 +187,17 @@ const AdminLostPropertyPage: React.FC = () => {
                           <span className="font-semibold">Ref.no: <span className="text-amber-300">{r.refNo}</span></span>
                           <span>Source: <span className="text-amber-200">{r.source}</span></span>
                           <span>Date received: <span className="text-amber-200">{formatDateTime(r.createdAt)}</span></span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${
+                              r.status === 'open'
+                                ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
+                                : r.status === 'closed'
+                                ? 'bg-red-500/20 text-red-200 border border-red-400/40'
+                                : 'bg-gray-500/20 text-gray-200 border border-gray-400/40'
+                            }`}
+                          >
+                            {r.status}
+                          </span>
                         </div>
                         {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                       </button>

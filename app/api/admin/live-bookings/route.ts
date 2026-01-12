@@ -38,12 +38,17 @@ export async function GET() {
               cj.destination,
               cj.passenger_name,
               cj.passenger_phone,
+              cj.passenger_email,
+              cj.driver_name,
+              cj.client_confirmed,
+              cj.created_at,
+              cj.updated_at,
               cj.price,
               cj.booking_payload,
               cj.booked_by_staff_id,
               cj.service_type,
               cj.vehicle_type_id,
-              u.email AS client_name
+              u.email AS client_email
          , staff.full_name AS staff_name
          , pv.label AS vehicle_label
          FROM client_journeys cj
@@ -69,15 +74,19 @@ export async function GET() {
       const bookedByName = row.staff_name || null;
       const vehicleLabel =
         row.vehicle_label || payload?.vehicle || payload?.vehicleLabel || payload?.vehicleTypeLabel || 'Unknown';
+      const rawDriverName = String(row.driver_name ?? '').trim();
+      const driverId =
+        rawDriverName && rawDriverName.toLowerCase() !== 'pending assignment' ? rawDriverName : '';
       return {
         journeyId: Number(row.id),
         id: Number(row.id),
         code: `VD-${String(row.id).padStart(4, '0')}`,
+        journeyDate: row.journey_date ? String(row.journey_date) : null,
         pickup: row.pickup,
         dropOff: row.destination,
         passenger: row.passenger_name || payload?.passengerName || 'Guest Passenger',
         phone: row.passenger_phone || payload?.passengerPhone || '',
-        bookedBy: bookedByName || row.client_name || payload?.passengerName || 'Guest Booking',
+        bookedBy: bookedByName || row.client_email || payload?.passengerName || 'Guest Booking',
         bookedByStaffId,
         notes: buildNotes(payload),
         date,
@@ -85,6 +94,12 @@ export async function GET() {
         priceDetails: formatPriceDetails(priceNumber, payload?.extras),
         vehicle: vehicleLabel,
         vehicleTypeId: row.vehicle_type_id ? Number(row.vehicle_type_id) : null,
+        passengerEmail: row.passenger_email || payload?.passengerEmail || '',
+        clientEmail: row.client_email || '',
+        driverId,
+        clientConfirmed: Boolean(row.client_confirmed),
+        createdAt: row.created_at ? String(row.created_at) : null,
+        updatedAt: row.updated_at ? String(row.updated_at) : null,
       };
     });
 

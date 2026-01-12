@@ -3,15 +3,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { Role } from '@/types';
 import { useAlert } from '@/components/AlertProvider';
 import { Clock, User, Car } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import DashboardInput from '@/components/DashboardInput';
-
-const mockJobs = [
-    { id: 'j1', client: 'Alice Wonderland', time: '14:30', pickup: 'Heathrow T5', destination: 'The Ritz Hotel', pay: 75.00 },
-    { id: 'j2', client: 'Bob Builder', time: '18:00', pickup: 'Canary Wharf', destination: 'Gatwick North', pay: 90.00 },
-];
 
 const mockCompletedJobs = [
     { id: 'c1', client: 'Charlie Chaplin', time: '2023-10-28 10:00', pickup: 'The Savoy', destination: 'Heathrow T2', pay: 80.00 },
@@ -19,6 +15,16 @@ const mockCompletedJobs = [
     { id: 'c3', client: 'Peter Parker', time: '2023-10-22 09:00', pickup: 'Daily Bugle', destination: 'Stark Tower', pay: 55.00 },
 ];
 
+type DriverJob = {
+    id: number;
+    code: string;
+    pickup: string;
+    destination: string;
+    client: string;
+    time: string;
+    date: string;
+    pay: number;
+};
 const mockStatementData = [
     { date: '2025-09-01', ref: 'VD-1001', pickup: 'WD3 4PQ', dropoff: 'Heathrow T5', vehicle: 'Saloon', miles: 18, wait: 10, fare: 64.00 },
     { date: '2025-09-03', ref: 'VD-1002', pickup: 'HA4 0HJ', dropoff: 'LHR T3', vehicle: 'MPV', miles: 12, wait: 0, fare: 52.50 },
@@ -65,64 +71,119 @@ const actionButtonClass = (isSaving: boolean) =>
   }`;
 const uploadButtonClass = "cursor-pointer bg-amber-500 text-black px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-amber-400 transition-colors";
 
-const DriverJobs: React.FC = () => (
-    <div>
-        <h2 className="text-2xl font-semibold mb-4">Tomorrow's Jobs</h2>
-        {mockJobs.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {mockJobs.map(job => (
-                <div key={job.id} className="bg-gray-900/50 border border-gray-800 rounded-lg p-6 space-y-4">
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <h3 className="text-xl font-bold text-amber-400">{job.pickup}</h3>
-                            <p className="text-lg text-white">to {job.destination}</p>
-                        </div>
-                        <div className="text-right">
-                            <p className="text-2xl font-bold flex items-center gap-2"><Clock size={20} /> {job.time}</p>
-                        </div>
-                    </div>
-                    <div className="border-t border-gray-700 pt-4 space-y-2">
-                    <p className="flex items-center gap-2 text-gray-300"><User size={16} /> Client: {job.client}</p>
-                    <p className="text-gray-300">Est. Pay: £{job.pay.toFixed(2)}</p>
-                    </div>
-                    <div className="flex gap-4 pt-2">
-                        <button className="flex-1 px-4 py-2 bg-green-600/80 hover:bg-green-600 rounded-md transition-colors">Accept</button>
-                        <button className="flex-1 px-4 py-2 bg-red-600/80 hover:bg-red-600 rounded-md transition-colors">Decline</button>
-                    </div>
-                </div>
-            ))}
-        </div>
-        ) : (
-        <div className="text-center py-16 bg-gray-900/50 border border-gray-800 rounded-lg">
-            <p className="text-gray-400">No new jobs available at the moment.</p>
-        </div>
-        )}
+const DriverJobs: React.FC<{ onJobCountChange?: (count: number) => void }> = ({ onJobCountChange }) => {
+    const { user } = useAuth();
+    const [jobs, setJobs] = useState<DriverJob[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-        <h2 className="text-2xl font-semibold mt-12 mb-4">Completed Jobs</h2>
-        <div className="space-y-3">
-            {mockCompletedJobs.map(job => (
-                <div
-                  key={job.id}
-                  className="rounded-lg border border-gray-800 bg-gray-900/60 px-4 py-3 shadow-inner shadow-black/30"
-                >
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                    <p className="text-base font-semibold text-white">
-                      {job.pickup} <span className="text-amber-300">to</span> {job.destination}
-                    </p>
-                    <p className="text-sm text-gray-300 flex items-center gap-2">
-                      <Clock size={14} /> {job.time}
-                    </p>
-                  </div>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mt-2 text-sm text-gray-300">
-                    <span className="flex items-center gap-2"><User size={14} /> Client: {job.client}</span>
-                    <span className="font-semibold text-white">Pay: £{job.pay.toFixed(2)}</span>
-                  </div>
+    useEffect(() => {
+        if (!user?.email) return;
+        let mounted = true;
+        const loadJobs = async () => {
+            setLoading(true);
+            try {
+                const res = await fetch(`/api/driver/jobs?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data?.error || 'Failed to load jobs');
+                }
+                const data = await res.json();
+                if (!mounted) return;
+                const nextJobs: DriverJob[] = (data.jobs || []).map((job: any) => ({
+                    id: Number(job.id),
+                    code: job.code,
+                    pickup: job.pickup,
+                    destination: job.dropOff,
+                    client: job.passenger,
+                    time: job.time,
+                    date: job.date,
+                    pay: Number(job.price || 0),
+                }));
+                setJobs(nextJobs);
+                onJobCountChange?.(nextJobs.length);
+                setError(null);
+            } catch (err: any) {
+                console.error(err);
+                if (!mounted) return;
+                setError(err?.message || 'Failed to load jobs');
+            } finally {
+                if (mounted) setLoading(false);
+            }
+        };
+        loadJobs();
+        return () => {
+            mounted = false;
+        };
+    }, [user?.email, onJobCountChange]);
+
+    return (
+        <div>
+            <h2 className="text-2xl font-semibold mb-4">Next Jobs</h2>
+            {loading ? (
+                <div className="text-center py-16 bg-gray-900/50 border border-gray-800 rounded-lg">
+                    <p className="text-gray-400">Loading jobs...</p>
                 </div>
-            ))}
+            ) : error ? (
+                <div className="text-center py-16 bg-gray-900/50 border border-gray-800 rounded-lg">
+                    <p className="text-red-400">{error}</p>
+                </div>
+            ) : jobs.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {jobs.map((job) => (
+                        <div key={job.id} className="bg-gray-900/50 border border-gray-800 rounded-lg p-6 space-y-4">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <h3 className="text-xl font-bold text-amber-400">{job.pickup}</h3>
+                                    <p className="text-lg text-white">to {job.destination}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-2xl font-bold flex items-center gap-2">
+                                        <Clock size={20} /> {job.time}
+                                    </p>
+                                    <p className="text-xs text-gray-400">{job.date}</p>
+                                </div>
+                            </div>
+                            <div className="border-t border-gray-700 pt-4 space-y-2">
+                                <p className="flex items-center gap-2 text-gray-300">
+                                    <User size={16} /> Client: {job.client}
+                                </p>
+                                <p className="text-gray-300">Est. Pay: GBP {job.pay.toFixed(2)}</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div className="text-center py-16 bg-gray-900/50 border border-gray-800 rounded-lg">
+                    <p className="text-gray-400">No new jobs available at the moment.</p>
+                </div>
+            )}
+
+            <h2 className="text-2xl font-semibold mt-12 mb-4">Completed Jobs</h2>
+            <div className="space-y-3">
+                {mockCompletedJobs.map(job => (
+                    <div
+                      key={job.id}
+                      className="rounded-lg border border-gray-800 bg-gray-900/60 px-4 py-3 shadow-inner shadow-black/30"
+                    >
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <p className="text-base font-semibold text-white">
+                          {job.pickup} <span className="text-amber-300">to</span> {job.destination}
+                        </p>
+                        <p className="text-sm text-gray-300 flex items-center gap-2">
+                          <Clock size={14} /> {job.time}
+                        </p>
+                      </div>
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mt-2 text-sm text-gray-300">
+                        <span className="flex items-center gap-2"><User size={14} /> Client: {job.client}</span>
+                        <span className="font-semibold text-white">Pay: GBP {job.pay.toFixed(2)}</span>
+                      </div>
+                    </div>
+                ))}
+            </div>
         </div>
-    </div>
-);
-  
+    );
+};
 type StatusVariant = 'success' | 'warning' | 'neutral';
 const statusVariantStyles: Record<StatusVariant, string> = {
   success: 'bg-emerald-600',
@@ -211,7 +272,7 @@ const documentConfig = [
 ] as const;
 
 const DriverProfile = () => {
-  const { user } = useAuth();
+  const { user, login } = useAuth();
   const { showAlert } = useAlert();
   const [detailsEditable, setDetailsEditable] = useState(false);
   const [details, setDetails] = useState(emptyDriverDetails);
@@ -222,6 +283,7 @@ const DriverProfile = () => {
   const [docError, setDocError] = useState<Record<string, string | null>>({});
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [bankSaving, setBankSaving] = useState(false);
+  const [detailsSaving, setDetailsSaving] = useState(false);
 
   const toDateInput = (value: string | null | undefined) => {
     if (!value) return '';
@@ -320,8 +382,50 @@ const DriverProfile = () => {
     setBankDetails((prev) => ({ ...prev, [field]: event.target.value }));
   };
 
-  const toggleDetailsEdit = () => {
-    setDetailsEditable((prev) => !prev);
+  const toggleDetailsEdit = async () => {
+    if (!detailsEditable) {
+      setDetailsEditable(true);
+      return;
+    }
+    if (!user?.email) {
+      showAlert('Please sign in again.');
+      return;
+    }
+    setDetailsSaving(true);
+    try {
+      const res = await fetch('/api/driver/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: user.email,
+          nextEmail: details.email,
+          firstName: details.firstName,
+          lastName: details.lastName,
+          phone: details.phone,
+          drivingLicense: details.drivingLicense,
+          address: details.address,
+          pcoLicenceNo: details.pcoLicenceNo,
+          pcoExpiry: details.pcoExpiry || null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to update details');
+      }
+      setDetailsEditable(false);
+      const nextEmail = data?.email || details.email;
+      login(Role.DRIVER, {
+        ...user,
+        email: nextEmail,
+        phone: details.phone,
+        name: `${details.firstName} ${details.lastName}`.trim() || user.name,
+      });
+      showAlert('Details updated.');
+    } catch (err: any) {
+      showAlert(err?.message || 'Failed to update details');
+    } finally {
+      setDetailsSaving(false);
+    }
   };
 
   const toggleBankEdit = async () => {
@@ -438,9 +542,10 @@ const DriverProfile = () => {
             <button
               type="button"
               onClick={toggleDetailsEdit}
+              disabled={detailsSaving}
               className={actionButtonClass(detailsEditable)}
             >
-              {detailsEditable ? 'Save' : 'Edit'}
+              {detailsSaving ? 'Saving...' : detailsEditable ? 'Save' : 'Edit'}
             </button>
           </div>
         </form>
@@ -1556,6 +1661,7 @@ const CarsPage: React.FC = () => {
 
 const DriverDashboardPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState('Dashboard');
+  const [jobCount, setJobCount] = useState(0);
   const { user, logout } = useAuth();
   const router = useRouter();
   const { showAlert } = useAlert();
@@ -1570,7 +1676,7 @@ const DriverDashboardPage: React.FC = () => {
   const renderContent = () => {
     switch (activeTab) {
       case 'Jobs':
-        return <DriverJobs />;
+        return <DriverJobs onJobCountChange={setJobCount} />;
       case 'Dashboard':
         return <DriverProfile />;
       case 'Car(s)':
@@ -1578,7 +1684,7 @@ const DriverDashboardPage: React.FC = () => {
       case 'Monthly Statement':
         return <MonthlyStatement />;
       default:
-        return <DriverJobs />;
+        return <DriverJobs onJobCountChange={setJobCount} />;
     }
   };
   
@@ -1611,9 +1717,9 @@ const DriverDashboardPage: React.FC = () => {
                   }`}
                 >
                   {tab}
-                  {tab === 'Jobs' && mockJobs.length > 0 && (
+                  {tab === 'Jobs' && jobCount > 0 && (
                     <span className="absolute -top-0 -right-0 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white">
-                      {mockJobs.length}
+                      {jobCount}
                     </span>
                   )}
                 </button>
@@ -1629,3 +1735,5 @@ const DriverDashboardPage: React.FC = () => {
 };
 
 export default DriverDashboardPage;
+
+
