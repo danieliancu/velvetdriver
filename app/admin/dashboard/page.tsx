@@ -106,6 +106,7 @@ const AdminDashboardPage: React.FC = () => {
 
   const fallbackActive: LiveBooking[] = [
     {
+      journeyId: 0,
       id: 'BK-1024',
       pickup: 'Heathrow T5 Arrivals',
       dropOff: 'The Langham, 1C Portland Pl, London W1B 1JA',
