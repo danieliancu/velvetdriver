@@ -265,9 +265,9 @@ const emptyBankDetails = {
 };
 
 const documentConfig = [
-  { label: 'PCO Licence', docType: 'pco_license' },
-  { label: 'Driver Licence Front', docType: 'driving_license_front' },
-  { label: 'Driver Licence Back', docType: 'driving_license_back' },
+  { label: 'PCO Licence', docType: 'pco_license', helperText: '' },
+  { label: 'Driver Licence Front', docType: 'driving_license_front', helperText: '' },
+  { label: 'Driver Licence Back', docType: 'driving_license_back', helperText: '' },
   { label: 'Your photo', docType: 'profile_photo', helperText: '* Passport type photo to be used on your profile*' },
 ] as const;
 
@@ -374,11 +374,11 @@ const DriverProfile = () => {
     }
   };
 
-  const handleDetailChange = (field: keyof typeof initialDriverDetails) => (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDetailChange = (field: keyof typeof emptyDriverDetails) => (event: React.ChangeEvent<HTMLInputElement>) => {
     setDetails((prev) => ({ ...prev, [field]: event.target.value }));
   };
 
-  const handleBankChange = (field: keyof typeof initialBankDetails) => (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBankChange = (field: keyof typeof emptyBankDetails) => (event: React.ChangeEvent<HTMLInputElement>) => {
     setBankDetails((prev) => ({ ...prev, [field]: event.target.value }));
   };
 

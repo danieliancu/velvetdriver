@@ -512,7 +512,6 @@ const AdminDashboardPage: React.FC = () => {
                           : true
                       )
                       .map((driver) => ({
-                        id: driver.id,
                         ...driver,
                       }));
                     const bookingAllocated = Boolean(booking.driverId);
