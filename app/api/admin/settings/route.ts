@@ -153,12 +153,16 @@ export async function PUT(request: Request) {
         [nightSurcharge]
       );
 
+      const airportEntries = AIRPORTS.flatMap(
+        (airport) =>
+          [
+            [airport.pickupRuleCode, `${airport.label} pickup`, airports[airport.code]?.pickup ?? 0],
+            [airport.dropoffRuleCode, `${airport.label} drop-off`, airports[airport.code]?.dropoff ?? 0],
+          ] as Array<[string, string, number]>
+      );
       const surchargeEntries: Array<[string, string, number]> = [
         ['CONGESTION', 'Central London (Congestion)', surcharges.congestion],
-        ...AIRPORTS.flatMap((airport) => [
-          [airport.pickupRuleCode, `${airport.label} pickup`, airports[airport.code]?.pickup ?? 0],
-          [airport.dropoffRuleCode, `${airport.label} drop-off`, airports[airport.code]?.dropoff ?? 0],
-        ]),
+        ...airportEntries,
       ];
       for (const [code, label, amount] of surchargeEntries) {
         await conn.execute(
