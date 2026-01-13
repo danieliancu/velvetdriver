@@ -1376,6 +1376,14 @@ const BookingPageInner = () => {
                                         <span className="text-gray-400">Time:</span>
                                         <span className="font-semibold text-amber-100">{time}</span>
                                     </div>
+                                    <div className="flex justify-between items-start">
+                                        <span className="text-gray-400">Miles:</span>
+                                        <span className="font-semibold text-amber-100">{miles ? `${miles} mi` : 'Auto'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-start">
+                                        <span className="text-gray-400">Total fare:</span>
+                                        <span className="font-semibold text-amber-100">GBP{totalFare.toFixed(2)}</span>
+                                    </div>
                                 </div>
 
                                 <div className="flex flex-col sm:flex-row gap-4 pt-4">
