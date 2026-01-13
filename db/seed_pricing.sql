@@ -67,7 +67,19 @@ INSERT INTO `surcharge_rules` (`id`, `code`, `label`, `amount`)
 VALUES
 (1, 'AIRPORT_PICKUP', 'Airport pickup', 15.00),
 (2, 'AIRPORT_DROPOFF', 'Airport drop-off', 7.00),
-(3, 'CONGESTION', 'Central London (Congestion)', 15.00)
+(3, 'CONGESTION', 'Central London (Congestion)', 15.00),
+(4, 'AIRPORT_PICKUP_LUTON', 'Luton pickup', 15.00),
+(5, 'AIRPORT_DROPOFF_LUTON', 'Luton drop-off', 7.00),
+(6, 'AIRPORT_PICKUP_SOUTHEND', 'Southend pickup', 15.00),
+(7, 'AIRPORT_DROPOFF_SOUTHEND', 'Southend drop-off', 7.00),
+(8, 'AIRPORT_PICKUP_HEATHROW', 'Heathrow pickup', 15.00),
+(9, 'AIRPORT_DROPOFF_HEATHROW', 'Heathrow drop-off', 7.00),
+(10, 'AIRPORT_PICKUP_STANSTED', 'Stansted pickup', 15.00),
+(11, 'AIRPORT_DROPOFF_STANSTED', 'Stansted drop-off', 7.00),
+(12, 'AIRPORT_PICKUP_CITY', 'City pickup', 15.00),
+(13, 'AIRPORT_DROPOFF_CITY', 'City drop-off', 7.00),
+(14, 'AIRPORT_PICKUP_GATWICK', 'Gatwick pickup', 15.00),
+(15, 'AIRPORT_DROPOFF_GATWICK', 'Gatwick drop-off', 7.00)
 ON DUPLICATE KEY UPDATE
   `label` = VALUES(`label`),
   `amount` = VALUES(`amount`);

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { AIRPORTS, buildDefaultAirportSurcharges } from '@/lib/airports';
 import { getDbPool, type DbRow } from '@/lib/db';
 
 const pool = getDbPool();
@@ -43,8 +44,15 @@ const fallbackZoneRings = [
 export async function GET() {
   try {
     const [vehiclesRows] = await pool.query<PricingVehicleRow[]>('SELECT * FROM pricing_vehicles ORDER BY id');
+    const surchargeCodes = [
+      'AIRPORT_PICKUP',
+      'AIRPORT_DROPOFF',
+      'CONGESTION',
+      ...AIRPORTS.flatMap((airport) => [airport.pickupRuleCode, airport.dropoffRuleCode]),
+    ];
     const [surchargeRows] = await pool.query<SurchargeRuleRow[]>(
-      'SELECT code, amount FROM surcharge_rules WHERE code IN ("AIRPORT_PICKUP","AIRPORT_DROPOFF","CONGESTION")'
+      `SELECT code, amount FROM surcharge_rules WHERE code IN (${surchargeCodes.map(() => '?').join(',')})`,
+      surchargeCodes
     );
     const [settingsRows] = await pool.query<PricingSettingRow[]>(
       'SELECT night_surcharge FROM pricing_settings WHERE id = 1 LIMIT 1'
@@ -66,10 +74,18 @@ export async function GET() {
       innerZoneOverride: Number(v.inner_zone_override_rate),
     }));
 
+    const basePickup = Number(surchargeRows.find((s) => s.code === 'AIRPORT_PICKUP')?.amount ?? 15);
+    const baseDropoff = Number(surchargeRows.find((s) => s.code === 'AIRPORT_DROPOFF')?.amount ?? 7);
+    const airports = buildDefaultAirportSurcharges(basePickup, baseDropoff);
+    for (const airport of AIRPORTS) {
+      const pickupAmount = surchargeRows.find((s) => s.code === airport.pickupRuleCode)?.amount;
+      const dropoffAmount = surchargeRows.find((s) => s.code === airport.dropoffRuleCode)?.amount;
+      if (pickupAmount != null) airports[airport.code].pickup = Number(pickupAmount);
+      if (dropoffAmount != null) airports[airport.code].dropoff = Number(dropoffAmount);
+    }
     const surcharges = {
-      airportPickup: Number(surchargeRows.find((s) => s.code === 'AIRPORT_PICKUP')?.amount ?? 0),
-      airportDropoff: Number(surchargeRows.find((s) => s.code === 'AIRPORT_DROPOFF')?.amount ?? 0),
       congestion: Number(surchargeRows.find((s) => s.code === 'CONGESTION')?.amount ?? 0),
+      airports,
     };
 
     const nightSurcharge = Number(settingsRows[0]?.night_surcharge ?? 0);

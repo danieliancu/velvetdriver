@@ -10,7 +10,7 @@ const contactChannels = [
   },
   {
     title: 'Operations Desk',
-    detail: '+40 2081 759 186',
+    detail: '+44 2081 759 186',
     description: 'Contact an expert from our team',
     icon: Phone,
   },

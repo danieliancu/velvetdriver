@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
+import { AIRPORTS, buildDefaultAirportSurcharges, type AirportCode, type AirportSurcharge } from '@/lib/airports';
 import { getDbPool } from '@/lib/db';
 
 const pool = getDbPool();
@@ -34,7 +35,7 @@ type PricingPayload = {
     mileage: { tier1: number; tier2: number; tier3: number };
     innerZoneOverride: number;
   }>;
-  surcharges: { airportPickup: number; airportDropoff: number; congestion: number };
+  surcharges: { congestion: number; airports: Record<AirportCode, AirportSurcharge> };
   nightSurcharge: number;
 };
 
@@ -44,7 +45,7 @@ const fallbackPayload: PricingPayload = {
     { code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75 },
     { code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25 },
   ],
-  surcharges: { airportPickup: 15, airportDropoff: 7, congestion: 15 },
+  surcharges: { congestion: 15, airports: buildDefaultAirportSurcharges(15, 7) },
   nightSurcharge: 30,
 };
 
@@ -53,8 +54,15 @@ export async function GET() {
     const [vehicleRows] = await pool.query<PricingVehicleRow[]>(
       'SELECT code, label, as_directed_rate, tier1_rate, tier2_rate, tier3_rate, inner_zone_override_rate FROM pricing_vehicles ORDER BY id'
     );
+    const surchargeCodes = [
+      'AIRPORT_PICKUP',
+      'AIRPORT_DROPOFF',
+      'CONGESTION',
+      ...AIRPORTS.flatMap((airport) => [airport.pickupRuleCode, airport.dropoffRuleCode]),
+    ];
     const [surchargeRows] = await pool.query<SurchargeRow[]>(
-      'SELECT code, amount FROM surcharge_rules WHERE code IN ("AIRPORT_PICKUP","AIRPORT_DROPOFF","CONGESTION")'
+      `SELECT code, amount FROM surcharge_rules WHERE code IN (${surchargeCodes.map(() => '?').join(',')})`,
+      surchargeCodes
     );
     const [settingRows] = await pool.query<PricingSettingRow[]>(
       'SELECT night_surcharge FROM pricing_settings WHERE id = 1 LIMIT 1'
@@ -76,10 +84,24 @@ export async function GET() {
       innerZoneOverride: Number(v.inner_zone_override_rate),
     }));
 
+    const basePickup = Number(
+      surchargeRows.find((s) => s.code === 'AIRPORT_PICKUP')?.amount ??
+        fallbackPayload.surcharges.airports.heathrow.pickup
+    );
+    const baseDropoff = Number(
+      surchargeRows.find((s) => s.code === 'AIRPORT_DROPOFF')?.amount ??
+        fallbackPayload.surcharges.airports.heathrow.dropoff
+    );
+    const airports = buildDefaultAirportSurcharges(basePickup, baseDropoff);
+    for (const airport of AIRPORTS) {
+      const pickupAmount = surchargeRows.find((s) => s.code === airport.pickupRuleCode)?.amount;
+      const dropoffAmount = surchargeRows.find((s) => s.code === airport.dropoffRuleCode)?.amount;
+      if (pickupAmount != null) airports[airport.code].pickup = Number(pickupAmount);
+      if (dropoffAmount != null) airports[airport.code].dropoff = Number(dropoffAmount);
+    }
     const surcharges = {
-      airportPickup: Number(surchargeRows.find((s) => s.code === 'AIRPORT_PICKUP')?.amount ?? fallbackPayload.surcharges.airportPickup),
-      airportDropoff: Number(surchargeRows.find((s) => s.code === 'AIRPORT_DROPOFF')?.amount ?? fallbackPayload.surcharges.airportDropoff),
       congestion: Number(surchargeRows.find((s) => s.code === 'CONGESTION')?.amount ?? fallbackPayload.surcharges.congestion),
+      airports,
     };
 
     const nightSurcharge = Number(settingRows[0]?.night_surcharge ?? fallbackPayload.nightSurcharge);
@@ -96,6 +118,7 @@ export async function PUT(request: Request) {
     const body = (await request.json()) as PricingPayload;
     const vehicles = body.vehicles ?? [];
     const surcharges = body.surcharges ?? fallbackPayload.surcharges;
+    const airports = surcharges.airports ?? fallbackPayload.surcharges.airports;
     const nightSurcharge = body.nightSurcharge ?? fallbackPayload.nightSurcharge;
 
     const conn = await pool.getConnection();
@@ -131,9 +154,11 @@ export async function PUT(request: Request) {
       );
 
       const surchargeEntries: Array<[string, string, number]> = [
-        ['AIRPORT_PICKUP', 'Airport pickup', surcharges.airportPickup],
-        ['AIRPORT_DROPOFF', 'Airport drop-off', surcharges.airportDropoff],
         ['CONGESTION', 'Central London (Congestion)', surcharges.congestion],
+        ...AIRPORTS.flatMap((airport) => [
+          [airport.pickupRuleCode, `${airport.label} pickup`, airports[airport.code]?.pickup ?? 0],
+          [airport.dropoffRuleCode, `${airport.label} drop-off`, airports[airport.code]?.dropoff ?? 0],
+        ]),
       ];
       for (const [code, label, amount] of surchargeEntries) {
         await conn.execute(

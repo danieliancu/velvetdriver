@@ -11,6 +11,7 @@ import BookingTextArea from '@/components/BookingTextArea';
 import Modal from '@/components/Modal';
 import { useAlert } from '@/components/AlertProvider';
 import { useAuth } from '@/lib/auth-context';
+import { AIRPORTS, buildDefaultAirportSurcharges, detectAirportCodeFromText, type AirportCode, type AirportSurcharge } from '@/lib/airports';
 
 type PlaceResult = {
     formatted_address?: string;
@@ -68,7 +69,9 @@ const BookingPageInner = () => {
     const [dropOffLatLng, setDropOffLatLng] = useState<{ lat: number; lng: number } | null>(null);
     const [stopCoords, setStopCoords] = useState<Array<{ lat: number; lng: number } | null>>([null]);
     const [pickupIsAirport, setPickupIsAirport] = useState(false);
+    const [pickupAirportCode, setPickupAirportCode] = useState<AirportCode | null>(null);
     const [dropIsAirportFlags, setDropIsAirportFlags] = useState<boolean[]>([false]);
+    const [dropAirportCodes, setDropAirportCodes] = useState<Array<AirportCode | null>>([null]);
     const [legBreakdown, setLegBreakdown] = useState<Array<{
         miles: number;
         originLabel: string;
@@ -138,7 +141,7 @@ const BookingPageInner = () => {
     };
     type PricingData = {
         vehicles: PricingVehicle[];
-        surcharges: { airportPickup: number; airportDropoff: number; congestion: number };
+        surcharges: { congestion: number; airports: Record<AirportCode, AirportSurcharge> };
         nightSurcharge: number;
         zoneRings: ZoneRing[];
     };
@@ -156,10 +159,33 @@ const BookingPageInner = () => {
             { id: 2, code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75 },
             { id: 1, code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25 }
         ],
-        surcharges: { airportPickup: 15, airportDropoff: 7, congestion: 15 },
+        surcharges: { congestion: 15, airports: buildDefaultAirportSurcharges(15, 7) },
         nightSurcharge: 30,
         zoneRings: fallbackZoneRings,
     };
+    const normalizeAirportSurcharges = (
+        airports: Partial<Record<AirportCode, AirportSurcharge>> | undefined
+    ): Record<AirportCode, AirportSurcharge> => {
+        const normalized = buildDefaultAirportSurcharges(15, 7);
+        for (const airport of AIRPORTS) {
+            const existing = airports?.[airport.code];
+            if (existing) {
+                normalized[airport.code] = {
+                    pickup: Number(existing.pickup ?? normalized[airport.code].pickup),
+                    dropoff: Number(existing.dropoff ?? normalized[airport.code].dropoff),
+                };
+            }
+        }
+        return normalized;
+    };
+    const normalizePricingData = (data: PricingData): PricingData => ({
+        ...data,
+        surcharges: {
+            congestion: Number(data?.surcharges?.congestion ?? fallbackPricing.surcharges.congestion),
+            airports: normalizeAirportSurcharges(data?.surcharges?.airports),
+        },
+        zoneRings: data?.zoneRings ?? fallbackPricing.zoneRings,
+    });
     const [pricing, setPricing] = useState<PricingData | null>(null);
     const [pricingError, setPricingError] = useState<string | null>(null);
     const pricingData = pricing ?? fallbackPricing;
@@ -183,11 +209,12 @@ const BookingPageInner = () => {
                 const res = await fetch('/api/pricing', { cache: 'no-store' });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = (await res.json()) as PricingData;
-                if (data?.vehicles?.length) {
-                    setPricing(data);
+                const normalized = normalizePricingData(data);
+                if (normalized?.vehicles?.length) {
+                    setPricing(normalized);
                     if (!vehicleTypeId) {
-                        setVehicleTypeId(String(data.vehicles[0].id));
-                        setVehicle(data.vehicles[0].label);
+                        setVehicleTypeId(String(normalized.vehicles[0].id));
+                        setVehicle(normalized.vehicles[0].label);
                     }
                 } else {
                     setPricing(fallbackPricing);
@@ -258,6 +285,11 @@ const BookingPageInner = () => {
     const applyQuotePayload = (payload: any) => {
         setPickup(payload.pickup || '');
         setDropOffs(Array.isArray(payload.dropOffs) && payload.dropOffs.length ? payload.dropOffs : ['']);
+        const stopsCount = Array.isArray(payload.dropOffs) && payload.dropOffs.length ? payload.dropOffs.length : 1;
+        setDropIsAirportFlags(Array.from({ length: stopsCount }, () => false));
+        setDropAirportCodes(Array.from({ length: stopsCount }, () => null));
+        setPickupIsAirport(false);
+        setPickupAirportCode(null);
         setDate(payload.date || '');
         setTime(payload.time || '');
         const nextVehicle = payload.vehicle || 'Luxury MPV';
@@ -329,6 +361,18 @@ const BookingPageInner = () => {
         return googleLoadPromise.current;
     };
 
+    const airportLabelByCode = AIRPORTS.reduce<Record<AirportCode, string>>((acc, airport) => {
+        acc[airport.code] = airport.label;
+        return acc;
+    }, {} as Record<AirportCode, string>);
+
+    const resolveAirportMatch = (place: PlaceLike | null | undefined, fallbackText?: string) => {
+        const text = (place?.name || place?.formatted_address || fallbackText || '').toLowerCase();
+        const code = text ? detectAirportCodeFromText(text) : null;
+        const isAirport = Boolean(code) || place?.types?.includes('airport') || /airport|terminal/.test(text);
+        return { isAirport, code };
+    };
+
     const attachLegacyAutocomplete = () => {
         const maps = (window as any).google?.maps;
         if (!maps?.places || !pickupInputRef.current) return;
@@ -356,19 +400,6 @@ const BookingPageInner = () => {
                 );
             });
 
-        const isAirportPlace = (place: PlaceLike | null | undefined, fallbackText?: string) => {
-            if (!place) return false;
-            if (place.types?.includes('airport')) return true;
-            const text = (place.name || place.formatted_address || fallbackText || '').toLowerCase();
-            if (/airport|terminal/.test(text)) return true;
-            return (
-                text.includes('hartmann rd, london e16') ||
-                text.includes('eastwoodbury cres, southend') ||
-                text.includes('hounslow tw6') ||
-                text.includes('bassingbourn rd, stansted')
-            );
-        };
-
         const pickupAuto = new maps.places.Autocomplete(pickupInputRef.current, opts);
         pickupAuto.addListener('place_changed', () => {
             const place = pickupAuto.getPlace();
@@ -377,7 +408,9 @@ const BookingPageInner = () => {
                 if (full?.geometry?.location) {
                     setPickupLatLng({ lat: full.geometry.location.lat(), lng: full.geometry.location.lng() });
                 }
-                setPickupIsAirport(isAirportPlace(full, place?.formatted_address));
+                const match = resolveAirportMatch(full, place?.formatted_address);
+                setPickupIsAirport(match.isAirport);
+                setPickupAirportCode(match.code);
             });
         });
 
@@ -399,9 +432,13 @@ const BookingPageInner = () => {
                             setDropOffLatLng({ lat: full.geometry.location.lat(), lng: full.geometry.location.lng() });
                         }
                     }
+                    const match = resolveAirportMatch(full, place?.formatted_address);
                     const flags = [...dropIsAirportFlags];
-                    flags[index] = isAirportPlace(full, place?.formatted_address);
+                    flags[index] = match.isAirport;
                     setDropIsAirportFlags(flags);
+                    const codes = [...dropAirportCodes];
+                    codes[index] = match.code;
+                    setDropAirportCodes(codes);
                 });
             });
             dropoffAutocompleteRefs.current.push(dropAuto);
@@ -433,19 +470,6 @@ const BookingPageInner = () => {
                     }
                 );
             });
-
-        const isAirportPlace = (place: PlaceLike | null | undefined, fallbackText?: string) => {
-            if (!place) return false;
-            if (place.types?.includes('airport')) return true;
-            const text = (place.name || place.formatted_address || fallbackText || '').toLowerCase();
-            if (/airport|terminal/.test(text)) return true;
-            return (
-                text.includes('hartmann rd, london e16') ||
-                text.includes('eastwoodbury cres, southend') ||
-                text.includes('hounslow tw6') ||
-                text.includes('bassingbourn rd, stansted')
-            );
-        };
 
         const tryAttach = (input: HTMLInputElement | null, onSelect: (place: PlaceResult | null) => void) => {
             if (!input) return false;
@@ -483,7 +507,9 @@ const BookingPageInner = () => {
                 const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
                 setPickupLatLng({ lat, lng });
             }
-            setPickupIsAirport(isAirportPlace(place, place?.formatted_address));
+            const match = resolveAirportMatch(place, place?.formatted_address);
+            setPickupIsAirport(match.isAirport);
+            setPickupAirportCode(match.code);
         });
 
         let allDropsOk = true;
@@ -499,9 +525,13 @@ const BookingPageInner = () => {
                     setStopCoords(coords);
                     if (index === 0) setDropOffLatLng({ lat, lng });
                 }
+                const match = resolveAirportMatch(place, place?.formatted_address);
                 const flags = [...dropIsAirportFlags];
-                flags[index] = isAirportPlace(place, place?.formatted_address);
+                flags[index] = match.isAirport;
                 setDropIsAirportFlags(flags);
+                const codes = [...dropAirportCodes];
+                codes[index] = match.code;
+                setDropAirportCodes(codes);
             });
             if (!ok) allDropsOk = false;
         });
@@ -731,14 +761,23 @@ const BookingPageInner = () => {
         totalFare += pricingData.nightSurcharge;
         extras.push(`Night surcharge GBP${pricingData.nightSurcharge.toFixed(2)}`);
     }
-    if (pickupIsAirport) {
-        totalFare += pricingData.surcharges.airportPickup;
-        extras.push(`Airport/terminal pickup GBP${pricingData.surcharges.airportPickup.toFixed(2)}`);
+    if (pickupAirportCode) {
+        const pickupSurcharge = pricingData.surcharges.airports[pickupAirportCode]?.pickup ?? 0;
+        if (pickupSurcharge > 0) {
+            totalFare += pickupSurcharge;
+            const label = airportLabelByCode[pickupAirportCode] ?? 'Airport';
+            extras.push(`${label} pickup GBP${pickupSurcharge.toFixed(2)}`);
+        }
     }
-    if (dropIsAirportFlags.some(Boolean)) {
-        totalFare += pricingData.surcharges.airportDropoff;
-        extras.push(`Airport/terminal drop-off GBP${pricingData.surcharges.airportDropoff.toFixed(2)}`);
-    }
+    dropAirportCodes.forEach((code) => {
+        if (!code) return;
+        const dropoffSurcharge = pricingData.surcharges.airports[code]?.dropoff ?? 0;
+        if (dropoffSurcharge > 0) {
+            totalFare += dropoffSurcharge;
+            const label = airportLabelByCode[code] ?? 'Airport';
+            extras.push(`${label} drop-off GBP${dropoffSurcharge.toFixed(2)}`);
+        }
+    });
     totalFare = Math.round(totalFare * 100) / 100;
 
     const extrasAmount = serviceType === 'As Directed' ? totalFare - hourlyRate : 0;
@@ -769,6 +808,7 @@ const BookingPageInner = () => {
         setDropOffs([...dropOffs, '']);
         setStopCoords([...stopCoords, null]);
         setDropIsAirportFlags([...dropIsAirportFlags, false]);
+        setDropAirportCodes([...dropAirportCodes, null]);
     };
 
     const handleRemoveStop = (index: number) => {
@@ -779,6 +819,8 @@ const BookingPageInner = () => {
             setStopCoords(newCoords);
             const newFlags = dropIsAirportFlags.filter((_, i) => i !== index);
             setDropIsAirportFlags(newFlags);
+            const newCodes = dropAirportCodes.filter((_, i) => i !== index);
+            setDropAirportCodes(newCodes);
         }
     };
 
@@ -792,6 +834,9 @@ const BookingPageInner = () => {
         const newFlags = [...dropIsAirportFlags];
         newFlags[index] = false;
         setDropIsAirportFlags(newFlags);
+        const newCodes = [...dropAirportCodes];
+        newCodes[index] = null;
+        setDropAirportCodes(newCodes);
         if (index === 0) setDropOffLatLng(null);
     };
     useEffect(() => {

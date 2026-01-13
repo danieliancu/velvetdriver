@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { AIRPORTS, buildDefaultAirportSurcharges, type AirportCode, type AirportSurcharge } from '@/lib/airports';
 import AdminPageHeader from '@/components/AdminPageHeader';
 
 type PricingVehicle = {
@@ -12,7 +13,7 @@ type PricingVehicle = {
 };
 type PricingState = {
   vehicles: PricingVehicle[];
-  surcharges: { airportPickup: number; airportDropoff: number; congestion: number };
+  surcharges: { congestion: number; airports: Record<AirportCode, AirportSurcharge> };
   nightSurcharge: number;
 };
 
@@ -22,7 +23,7 @@ const defaultPricing: PricingState = {
     { code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75 },
     { code: 'mpv', label: 'Luxury MPV', asDirectedRate: 60, mileage: { tier1: 20, tier2: 4, tier3: 3.5 }, innerZoneOverride: 20 },
   ],
-  surcharges: { airportPickup: 15, airportDropoff: 7, congestion: 15 },
+  surcharges: { congestion: 15, airports: buildDefaultAirportSurcharges(15, 7) },
   nightSurcharge: 30,
 };
 
@@ -33,6 +34,30 @@ const AdminSettingsPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const normalizeAirportSurcharges = (
+    airports: Partial<Record<AirportCode, AirportSurcharge>> | undefined
+  ): Record<AirportCode, AirportSurcharge> => {
+    const normalized = buildDefaultAirportSurcharges(15, 7);
+    for (const airport of AIRPORTS) {
+      const existing = airports?.[airport.code];
+      if (existing) {
+        normalized[airport.code] = {
+          pickup: Number(existing.pickup ?? normalized[airport.code].pickup),
+          dropoff: Number(existing.dropoff ?? normalized[airport.code].dropoff),
+        };
+      }
+    }
+    return normalized;
+  };
+
+  const normalizePricing = (data: PricingState): PricingState => ({
+    ...data,
+    surcharges: {
+      congestion: Number(data?.surcharges?.congestion ?? defaultPricing.surcharges.congestion),
+      airports: normalizeAirportSurcharges(data?.surcharges?.airports),
+    },
+  });
+
   useEffect(() => {
     const fetchSettings = async () => {
       setError(null);
@@ -40,7 +65,7 @@ const AdminSettingsPage: React.FC = () => {
         const res = await fetch('/api/admin/settings', { cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as PricingState;
-        setSettings(data);
+        setSettings(normalizePricing(data));
       } catch (err) {
         console.error('Failed to load settings', err);
         setError('Failed to load settings from database. Using defaults.');
@@ -66,8 +91,25 @@ const AdminSettingsPage: React.FC = () => {
     );
   };
 
-  const updateSurcharge = (key: keyof PricingState['surcharges'], value: number) => {
-    setSettings((prev) => (prev ? { ...prev, surcharges: { ...prev.surcharges, [key]: value } } : prev));
+  const updateSurcharge = (value: number) => {
+    setSettings((prev) => (prev ? { ...prev, surcharges: { ...prev.surcharges, congestion: value } } : prev));
+  };
+
+  const updateAirportSurcharge = (code: AirportCode, key: keyof AirportSurcharge, value: number) => {
+    setSettings((prev) =>
+      prev
+        ? {
+            ...prev,
+            surcharges: {
+              ...prev.surcharges,
+              airports: {
+                ...prev.surcharges.airports,
+                [code]: { ...prev.surcharges.airports[code], [key]: value },
+              },
+            },
+          }
+        : prev
+    );
   };
 
   const handleSave = async () => {
@@ -290,30 +332,35 @@ const AdminSettingsPage: React.FC = () => {
                   <p className="text-xs text-gray-400">Control fees applied in fare calculation</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-gray-200">
-                  <label className="rounded-lg border border-white/10 bg-[#161010] p-3 flex items-center justify-between gap-2">
-                    <span>Pick-up aeroport</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        className="w-20 rounded-md border border-white/10 bg-[#1c1c1c] px-2 py-1 text-right text-white"
-                        value={settings.surcharges.airportPickup}
-                        onChange={(e) => updateSurcharge('airportPickup', Number(e.target.value) || 0)}
-                      />
-                      <span className="text-[11px] text-gray-500">£</span>
+                  {AIRPORTS.map((airport) => (
+                    <div key={airport.code} className="rounded-lg border border-white/10 bg-[#161010] p-3 space-y-2">
+                      <p className="text-sm font-semibold text-white">{airport.label}</p>
+                      <div className="flex items-center justify-between gap-2 text-xs text-gray-400">
+                        <span>Pickup</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            className="w-20 rounded-md border border-white/10 bg-[#1c1c1c] px-2 py-1 text-right text-white"
+                            value={settings.surcharges.airports[airport.code]?.pickup ?? 0}
+                            onChange={(e) => updateAirportSurcharge(airport.code, 'pickup', Number(e.target.value) || 0)}
+                          />
+                          <span className="text-[11px] text-gray-500">GBP</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-xs text-gray-400">
+                        <span>Drop-off</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            className="w-20 rounded-md border border-white/10 bg-[#1c1c1c] px-2 py-1 text-right text-white"
+                            value={settings.surcharges.airports[airport.code]?.dropoff ?? 0}
+                            onChange={(e) => updateAirportSurcharge(airport.code, 'dropoff', Number(e.target.value) || 0)}
+                          />
+                          <span className="text-[11px] text-gray-500">GBP</span>
+                        </div>
+                      </div>
                     </div>
-                  </label>
-                  <label className="rounded-lg border border-white/10 bg-[#161010] p-3 flex items-center justify-between gap-2">
-                    <span>Drop-off aeroport</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        className="w-20 rounded-md border border-white/10 bg-[#1c1c1c] px-2 py-1 text-right text-white"
-                        value={settings.surcharges.airportDropoff}
-                        onChange={(e) => updateSurcharge('airportDropoff', Number(e.target.value) || 0)}
-                      />
-                      <span className="text-[11px] text-gray-500">£</span>
-                    </div>
-                  </label>
+                  ))}
                   <label className="rounded-lg border border-white/10 bg-[#161010] p-3 flex items-center justify-between gap-2">
                     <span>Central London (Congestion)</span>
                     <div className="flex items-center gap-2">
@@ -321,10 +368,10 @@ const AdminSettingsPage: React.FC = () => {
                         type="number"
                         className="w-20 rounded-md border border-white/10 bg-[#1c1c1c] px-2 py-1 text-right text-white"
                         value={settings.surcharges.congestion}
-                        onChange={(e) => updateSurcharge('congestion', Number(e.target.value) || 0)}
+                        onChange={(e) => updateSurcharge(Number(e.target.value) || 0)}
                         disabled
                       />
-                      <span className="text-[11px] text-gray-500">£</span>
+                      <span className="text-[11px] text-gray-500">GBP</span>
                     </div>
                   </label>
                 </div>
