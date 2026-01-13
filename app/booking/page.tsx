@@ -761,6 +761,10 @@ const BookingPageInner = () => {
         totalFare += pricingData.nightSurcharge;
         extras.push(`Night surcharge GBP${pricingData.nightSurcharge.toFixed(2)}`);
     }
+    if (serviceType === 'Wait and Return') {
+        totalFare *= 2;
+        extras.push('Wait and Return x2');
+    }
     if (pickupAirportCode) {
         const pickupSurcharge = pricingData.surcharges.airports[pickupAirportCode]?.pickup ?? 0;
         if (pickupSurcharge > 0) {
