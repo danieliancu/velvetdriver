@@ -483,6 +483,7 @@ const AdminDashboardPage: React.FC = () => {
         <div className="max-w-6xl mx-auto w-full space-y-8">
           <AdminPageHeader active="live" liveBadgeCount={liveBadgeCount} />
 
+        {/*
           <div className="flex justify-end">
             <button
               type="button"
@@ -492,7 +493,8 @@ const AdminDashboardPage: React.FC = () => {
               Add manual booking
             </button>
           </div>
-
+          */}
+          
           <main className="w-full space-y-6">
             <section className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 space-y-6">
               <div className="flex flex-col gap-6">

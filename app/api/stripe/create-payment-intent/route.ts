@@ -5,7 +5,7 @@ const stripeSecret = process.env.STRIPE_SECRET_KEY;
 const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
 
 const stripe = stripeSecret
-  ? new Stripe(stripeSecret, { apiVersion: '2024-06-20' })
+  ? new Stripe(stripeSecret, { apiVersion: '2023-10-16' })
   : null;
 
 export async function POST(request: Request) {
