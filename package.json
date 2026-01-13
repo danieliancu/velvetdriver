@@ -9,18 +9,22 @@
     "start": "next start"
   },
   "dependencies": {
+    "@stripe/react-stripe-js": "^2.9.0",
+    "@stripe/stripe-js": "^3.1.0",
     "bcryptjs": "^2.4.3",
     "lucide-react": "^0.553.0",
     "mysql2": "^3.11.3",
     "next": "14.2.15",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "resend": "^6.7.0"
+    "resend": "^6.7.0",
+    "stripe": "^14.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@types/react": "19.2.7",
     "autoprefixer": "^10.4.22",
+    "baseline-browser-mapping": "^2.9.14",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.13",
     "typescript": "~5.8.2"

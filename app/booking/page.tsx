@@ -1,9 +1,11 @@
 ﻿
 'use client';
 
-import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PlusCircle, XCircle, Calendar, Clock } from 'lucide-react';
+import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
+import { loadStripe } from '@stripe/stripe-js';
 import PageShell from '@/components/PageShell';
 import BookingInput from '@/components/BookingInput';
 import BookingSelect from '@/components/BookingSelect';
@@ -102,6 +104,11 @@ const BookingPageInner = () => {
     const [bookingSubmitting, setBookingSubmitting] = useState(false);
     const [showVerificationModal, setShowVerificationModal] = useState(false);
     const [pendingBookingPayload, setPendingBookingPayload] = useState<any>(null);
+    const [checkoutActive, setCheckoutActive] = useState(false);
+    const [stripeClientSecret, setStripeClientSecret] = useState<string | null>(null);
+    const [stripePublishableKey, setStripePublishableKey] = useState<string | null>(null);
+    const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
+    const [paymentError, setPaymentError] = useState<string | null>(null);
 
     const passengersCount = Math.max(0, Number(passengers) || 0);
     const smallSuitcasesCount = Math.max(0, Number(smallSuitcases) || 0);
@@ -194,6 +201,11 @@ const BookingPageInner = () => {
         .map((z) => ({ ...z, radiusMiles: Number(z.radiusMiles) }))
         .filter((z) => z.radiusMiles > 0)
         .sort((a, b) => a.radiusMiles - b.radiusMiles);
+
+    const stripePromise = useMemo(
+        () => (stripePublishableKey ? loadStripe(stripePublishableKey) : null),
+        [stripePublishableKey]
+    );
 
     const getZoneForCoords = (coords: { lat: number; lng: number }) => {
         if (!zoneRings.length) return null;
@@ -952,23 +964,72 @@ const BookingPageInner = () => {
             totalFare,
             clientEmail: user?.email ?? null,
         });
+        setCheckoutActive(false);
+        setStripeClientSecret(null);
+        setStripePublishableKey(null);
+        setPaymentIntentId(null);
+        setPaymentError(null);
         setShowVerificationModal(true);
     };
 
-    const handleConfirmBooking = async () => {
+    const handleProceedToCheckout = async () => {
+        if (!pendingBookingPayload?.totalFare) {
+            showAlert('Unable to calculate fare for checkout.');
+            return;
+        }
+        setBookingSubmitting(true);
+        setPaymentError(null);
+        try {
+            const response = await fetch('/api/stripe/create-payment-intent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    amount: Number(pendingBookingPayload.totalFare),
+                    currency: 'gbp',
+                    passengerName: pendingBookingPayload.passengerName,
+                    passengerEmail: pendingBookingPayload.passengerEmail,
+                    pickup: pendingBookingPayload.pickup,
+                    dropOffs: pendingBookingPayload.dropOffs,
+                }),
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data?.error || 'Failed to start checkout');
+            }
+            const data = await response.json();
+            setStripeClientSecret(data?.clientSecret ?? null);
+            setStripePublishableKey(data?.publishableKey ?? null);
+            setPaymentIntentId(data?.paymentIntentId ?? null);
+            setCheckoutActive(true);
+        } catch (err: any) {
+            setPaymentError(err?.message || 'Failed to start checkout.');
+        } finally {
+            setBookingSubmitting(false);
+        }
+    };
+
+    const finalizeBooking = async (paymentIntent: { id: string; status: string }) => {
         setBookingSubmitting(true);
         try {
             const response = await fetch('/api/booking', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(pendingBookingPayload),
+                body: JSON.stringify({
+                    ...pendingBookingPayload,
+                    paymentIntentId: paymentIntent.id,
+                    paymentStatus: paymentIntent.status,
+                    paymentMethod: 'Card',
+                    paymentAmount: Number(pendingBookingPayload.totalFare),
+                    paymentCurrency: 'GBP',
+                }),
             });
             if (!response.ok) {
                 const data = await response.json().catch(() => ({}));
                 throw new Error(data?.error || 'Failed to submit booking');
             }
             setShowVerificationModal(false);
-            showAlert('Booking submitted! An operator will call you shortly to confirm.');
+            setCheckoutActive(false);
+            showAlert('Payment confirmed! Your booking is now complete.');
             router.push(user ? '/client/dashboard' : '/');
         } catch (err: any) {
             showAlert(err?.message || 'Failed to submit booking.');
@@ -980,6 +1041,11 @@ const BookingPageInner = () => {
     const handleGoBackAndVerify = () => {
         setShowVerificationModal(false);
         setPendingBookingPayload(null);
+        setCheckoutActive(false);
+        setStripeClientSecret(null);
+        setStripePublishableKey(null);
+        setPaymentIntentId(null);
+        setPaymentError(null);
     };
 
     return (
@@ -1280,56 +1346,150 @@ const BookingPageInner = () => {
                     </div>
                 </form>
 
-                {/* Verification Modal */}
+                {/* Verification & Checkout Modal */}
                 <Modal 
                     isOpen={showVerificationModal} 
                     onClose={handleGoBackAndVerify}
-                    title="Verify Your Details"
+                    title={checkoutActive ? 'Checkout' : 'Verify Your Details'}
                 >
                     <div className="space-y-6">
-                        <p className="text-amber-100 text-lg leading-relaxed">
-                            Before you confirm, please take a moment to verify your pickup address, date and time details. If we dispatch a car using incorrect information, you may be charged the full fare.
-                        </p>
-                        
-                        <div className="bg-black/30 border border-amber-900/40 rounded-lg p-4 space-y-3 text-sm text-gray-300">
-                            <div className="flex justify-between items-start">
-                                <span className="text-gray-400">Pickup:</span>
-                                <span className="font-semibold text-amber-100">{pickup}</span>
-                            </div>
-                            <div className="flex justify-between items-start">
-                                <span className="text-gray-400">Drop-off:</span>
-                                <span className="font-semibold text-amber-100">{dropOffs[0]}</span>
-                            </div>
-                            <div className="flex justify-between items-start">
-                                <span className="text-gray-400">Date:</span>
-                                <span className="font-semibold text-amber-100">{date}</span>
-                            </div>
-                            <div className="flex justify-between items-start">
-                                <span className="text-gray-400">Time:</span>
-                                <span className="font-semibold text-amber-100">{time}</span>
-                            </div>
-                        </div>
+                        {!checkoutActive && (
+                            <>
+                                <p className="text-amber-100 text-lg leading-relaxed">
+                                    Before you confirm, please take a moment to verify your pickup address, date and time details. If we dispatch a car using incorrect information, you may be charged the full fare.
+                                </p>
+                                
+                                <div className="bg-black/30 border border-amber-900/40 rounded-lg p-4 space-y-3 text-sm text-gray-300">
+                                    <div className="flex justify-between items-start">
+                                        <span className="text-gray-400">Pickup:</span>
+                                        <span className="font-semibold text-amber-100">{pickup}</span>
+                                    </div>
+                                    <div className="flex justify-between items-start">
+                                        <span className="text-gray-400">Drop-off:</span>
+                                        <span className="font-semibold text-amber-100">{dropOffs[0]}</span>
+                                    </div>
+                                    <div className="flex justify-between items-start">
+                                        <span className="text-gray-400">Date:</span>
+                                        <span className="font-semibold text-amber-100">{date}</span>
+                                    </div>
+                                    <div className="flex justify-between items-start">
+                                        <span className="text-gray-400">Time:</span>
+                                        <span className="font-semibold text-amber-100">{time}</span>
+                                    </div>
+                                </div>
 
-                        <div className="flex flex-col sm:flex-row gap-4 pt-4">
-                            <button
-                                type="button"
-                                onClick={handleGoBackAndVerify}
-                                className="w-full sm:w-auto px-6 py-3 font-semibold bg-transparent border-2 border-amber-600 text-amber-400 rounded-lg hover:bg-amber-900/50 transition-colors"
-                            >
-                                Go back and change
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleConfirmBooking}
-                                disabled={bookingSubmitting}
-                                className="w-full sm:w-auto px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)] disabled:opacity-60"
-                            >
-                                {bookingSubmitting ? 'Processing...' : 'Happy to proceed'}
-                            </button>
-                        </div>
+                                <div className="flex flex-col sm:flex-row gap-4 pt-4">
+                                    <button
+                                        type="button"
+                                        onClick={handleGoBackAndVerify}
+                                        className="w-full sm:w-auto px-6 py-3 font-semibold bg-transparent border-2 border-amber-600 text-amber-400 rounded-lg hover:bg-amber-900/50 transition-colors"
+                                    >
+                                        Go back and change
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleProceedToCheckout}
+                                        disabled={bookingSubmitting}
+                                        className="w-full sm:w-auto px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)] disabled:opacity-60"
+                                    >
+                                        {bookingSubmitting ? 'Preparing checkout...' : 'Happy to proceed to checkout'}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+
+                        {checkoutActive && (
+                            <>
+                                {paymentError && (
+                                    <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                                        {paymentError}
+                                    </div>
+                                )}
+                                {stripePromise && stripeClientSecret ? (
+                                    <Elements
+                                        stripe={stripePromise}
+                                        options={{
+                                            clientSecret: stripeClientSecret,
+                                            appearance: { theme: 'stripe' },
+                                        }}
+                                    >
+                                        <PaymentForm
+                                            amount={Number(pendingBookingPayload?.totalFare ?? 0)}
+                                            onSuccess={finalizeBooking}
+                                            onError={setPaymentError}
+                                            disabled={bookingSubmitting}
+                                        />
+                                    </Elements>
+                                ) : (
+                                    <p className="text-sm text-gray-300">Preparing secure payment form...</p>
+                                )}
+                            </>
+                        )}
                     </div>
                 </Modal>
         </PageShell>
+    );
+};
+
+type PaymentFormProps = {
+    amount: number;
+    disabled: boolean;
+    onSuccess: (paymentIntent: { id: string; status: string }) => void;
+    onError: (message: string) => void;
+};
+
+const PaymentForm = ({ amount, disabled, onSuccess, onError }: PaymentFormProps) => {
+    const stripe = useStripe();
+    const elements = useElements();
+    const [submitting, setSubmitting] = useState(false);
+
+    const handleSubmit = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!stripe || !elements) return;
+        setSubmitting(true);
+        onError('');
+        try {
+            const { error, paymentIntent } = await stripe.confirmPayment({
+                elements,
+                redirect: 'if_required',
+                confirmParams: {
+                    return_url: window.location.href,
+                },
+            });
+
+            if (error) {
+                onError(error.message || 'Payment failed.');
+                return;
+            }
+
+            if (!paymentIntent || paymentIntent.status !== 'succeeded') {
+                onError('Payment not completed. Please try again.');
+                return;
+            }
+
+            onSuccess({ id: paymentIntent.id, status: paymentIntent.status });
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="rounded-lg border border-white/10 bg-black/30 p-4">
+                <p className="text-sm text-gray-300">Amount due</p>
+                <p className="text-2xl font-semibold text-amber-200">GBP{amount.toFixed(2)}</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-black/30 p-4">
+                <PaymentElement />
+            </div>
+            <button
+                type="submit"
+                disabled={!stripe || !elements || submitting || disabled}
+                className="w-full px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 disabled:opacity-60"
+            >
+                {submitting ? 'Processing payment...' : 'Pay now'}
+            </button>
+        </form>
     );
 };
 
