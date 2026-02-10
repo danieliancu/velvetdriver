@@ -16,6 +16,7 @@ import { useAuth } from '@/lib/auth-context';
 import { AIRPORTS, buildDefaultAirportSurcharges, detectAirportCodeFromText, type AirportCode, type AirportSurcharge } from '@/lib/airports';
 
 type PlaceResult = {
+    name?: string;
     formatted_address?: string;
     geometry?: { location?: { lat: () => number; lng: () => number } };
     location?: { lat: number; lng: number };
