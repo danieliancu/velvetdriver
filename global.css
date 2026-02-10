@@ -45,8 +45,17 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   filter: invert(1) brightness(2);
 }
 
+input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(2);
+}
+
 input[type="date"]::-ms-clear,
 input[type="date"]::-ms-expand {
+  filter: invert(1) brightness(2);
+}
+
+input[type="time"]::-ms-clear,
+input[type="time"]::-ms-expand {
   filter: invert(1) brightness(2);
 }
 
@@ -58,7 +67,6 @@ input[type="date"]::-ms-expand {
 .add-car-date::-ms-expand {
   filter: invert(0) brightness(1);
 }
-
 
 
 

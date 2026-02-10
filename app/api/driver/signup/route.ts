@@ -49,6 +49,13 @@ function buildSignature(params: Record<string, string>, apiSecret: string) {
   return crypto.createHash('sha1').update(pairs + apiSecret).digest('hex');
 }
 
+function resolveResourceType(file: File) {
+  if (file.type === 'application/pdf') return 'image';
+  const name = file.name?.toLowerCase?.() ?? '';
+  if (name.endsWith('.pdf')) return 'image';
+  return 'auto';
+}
+
 async function uploadToCloudinary(file: File, driverId: number, docType: string) {
   const cloudName = getEnv('CLOUDINARY_CLOUD_NAME');
   const apiKey = getEnv('CLOUDINARY_API_KEY');
@@ -56,6 +63,7 @@ async function uploadToCloudinary(file: File, driverId: number, docType: string)
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const folder = `drivers/${driverId}`;
   const publicId = docType;
+  const resourceType = resolveResourceType(file);
   const signature = buildSignature({ folder, public_id: publicId, timestamp }, apiSecret);
   const form = new FormData();
   form.append('file', file);
@@ -64,7 +72,7 @@ async function uploadToCloudinary(file: File, driverId: number, docType: string)
   form.append('signature', signature);
   form.append('folder', folder);
   form.append('public_id', publicId);
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, {
     method: 'POST',
     body: form,
   });
@@ -82,6 +90,7 @@ async function uploadCarDoc(file: File, driverId: number, carId: number, docType
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const folder = `drivers/${driverId}/cars/${carId}`;
   const publicId = docType;
+  const resourceType = resolveResourceType(file);
   const signature = buildSignature({ folder, public_id: publicId, timestamp }, apiSecret);
   const form = new FormData();
   form.append('file', file);
@@ -90,7 +99,7 @@ async function uploadCarDoc(file: File, driverId: number, carId: number, docType
   form.append('signature', signature);
   form.append('folder', folder);
   form.append('public_id', publicId);
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, {
     method: 'POST',
     body: form,
   });

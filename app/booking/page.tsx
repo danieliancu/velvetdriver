@@ -3,7 +3,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { PlusCircle, XCircle, Calendar, Clock } from 'lucide-react';
+import { PlusCircle, XCircle } from 'lucide-react';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
 import PageShell from '@/components/PageShell';
@@ -1183,7 +1183,6 @@ const BookingPageInner = () => {
                                 inputMode="numeric"
                                 min={todayIso}
                                 placeholder="yyyy-mm-dd"
-                                icon={<Calendar size={20} className="text-gray-400" />}
                                 value={date}
                                 onChange={e => setDate(e.target.value)}
                                 required
@@ -1194,7 +1193,6 @@ const BookingPageInner = () => {
                                 type="time"
                                 inputMode="numeric"
                                 placeholder="--:--"
-                                icon={<Clock size={20} className="text-gray-400" />}
                                 value={time}
                                 onChange={e => setTime(e.target.value)}
                                 required

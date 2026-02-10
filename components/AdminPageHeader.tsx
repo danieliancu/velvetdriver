@@ -17,6 +17,7 @@ type NavItem = {
     | 'reviews'
     | 'lost-property'
     | 'marketing'
+    | 'fleet'
     | 'settings';
   label: string;
   to: string;
@@ -98,6 +99,11 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
       id: 'marketing',
       label: 'Marketing',
       to: '/admin/marketing'
+    },
+    {
+      id: 'fleet',
+      label: 'Fleet Types',
+      to: '/admin/fleet'
     },
     {
       id: 'settings',

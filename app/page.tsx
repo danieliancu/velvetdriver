@@ -63,7 +63,10 @@ export default function HomePage() {
       <div className="relative z-10 w-full max-w-6xl">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <FeatureCard icon={<Car size={28} />} title="Luxury Fleet">
-            Travel in style with our premium selection of high-end vehicles, ensuring comfort and elegance.
+            Travel in style with our premium selection of high-end vehicles.{' '}
+            <Link href="/fleet" className="text-amber-400 underline underline-offset-4">
+              See more
+            </Link>
           </FeatureCard>
           <FeatureCard icon={<FileText size={28} />} title="Our Blog">
             Latest stories on luxury travel, company news, and insider tips.{' '}
