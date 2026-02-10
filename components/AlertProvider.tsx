@@ -1,6 +1,7 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 type AlertContextType = {
   showAlert: (message: React.ReactNode) => void;
@@ -18,6 +19,12 @@ export const useAlert = () => {
 
 const AlertProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [message, setMessage] = useState<React.ReactNode | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
 
   const showAlert = useCallback((msg: React.ReactNode) => {
     setMessage(msg);
@@ -30,8 +37,9 @@ const AlertProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   return (
     <AlertContext.Provider value={{ showAlert }}>
       {children}
-      {message && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+      {message && mounted
+        ? createPortal(
+        <div className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/70 px-4 py-6">
           <div className="w-full max-w-md rounded-2xl border border-white/20 bg-black/90 p-6 text-left text-white shadow-2xl">
             <div className="mb-4 text-sm text-gray-200">{message}</div>
             <div className="flex justify-end">
@@ -44,8 +52,10 @@ const AlertProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
               </button>
             </div>
           </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )
+        : null}
     </AlertContext.Provider>
   );
 };

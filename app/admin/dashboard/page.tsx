@@ -778,7 +778,7 @@ const AdminDashboardPage: React.FC = () => {
     </div>
 
       {pendingClientConfirmId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-gray-900/90 p-6 shadow-2xl">
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-300 mb-3">Client confirmation</p>
             <p className="text-lg text-white mb-6">Confirm client approval for this booking?</p>
@@ -803,7 +803,7 @@ const AdminDashboardPage: React.FC = () => {
       )}
 
       {pendingDriverConfirmKey && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-gray-900/90 p-6 shadow-2xl">
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-300 mb-3">Allocate to driver</p>
           <p className="text-lg text-white mb-6">Do you want to confirm this booking?</p>
@@ -831,7 +831,6 @@ const AdminDashboardPage: React.FC = () => {
 };
 
 export default AdminDashboardPage;
-
 
 
 

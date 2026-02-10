@@ -1,7 +1,8 @@
 
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -12,11 +13,18 @@ interface ModalProps {
 }
 
 const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
-  if (!isOpen) return null;
+  const [mounted, setMounted] = useState(false);
 
-  return (
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
+
+  if (!isOpen || !mounted) return null;
+
+  return createPortal(
     <div 
-      className="fixed inset-0 bg-black flex items-center justify-center p-4 z-[9999]"
+      className="fixed inset-0 bg-black flex items-center justify-center p-4 z-[99999]"
       onClick={onClose}
     >
       <div 
@@ -32,7 +40,8 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
         <h2 className="text-2xl font-bold font-display text-amber-400 mb-6">{title}</h2>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 
