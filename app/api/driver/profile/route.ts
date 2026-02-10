@@ -70,6 +70,7 @@ const CAR_DOC_TYPES = new Set([
   'insurance',
   'phv_car_licence',
   'logbook_v5',
+  'logbook_v5_page2',
   'other',
 ]);
 

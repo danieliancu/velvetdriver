@@ -60,6 +60,7 @@ type DriverCarEntry = {
     insuranceExpiry: string;
     phvExpiry: string;
     logbookStatus: string;
+    logbookPage2Status: string;
     otherDocumentsStatus: string;
     otherDocuments: DocumentItem[];
     documents: CarDocumentItem[];
@@ -840,6 +841,7 @@ const CarsPage: React.FC = () => {
         insurance: { expiryDate: '', file: null as File | null, status: '' },
         phv_car_licence: { expiryDate: '', file: null as File | null, status: '' },
         logbook_v5: { expiryDate: '', file: null as File | null, status: '' },
+        logbook_v5_page2: { expiryDate: '', file: null as File | null, status: '' },
         other: { expiryDate: '', file: null as File | null, status: '' },
     });
 
@@ -857,6 +859,7 @@ const CarsPage: React.FC = () => {
         const insuranceDoc = documents.find((doc) => doc.docType === 'insurance');
         const phvDoc = documents.find((doc) => doc.docType === 'phv_car_licence');
         const logbookDoc = documents.find((doc) => doc.docType === 'logbook_v5');
+        const logbookPage2Doc = documents.find((doc) => doc.docType === 'logbook_v5_page2');
         const otherDocs = documents.filter((doc) => doc.docType === 'other');
         return {
             ...car,
@@ -865,6 +868,7 @@ const CarsPage: React.FC = () => {
             insuranceExpiry: normalizeDateInput(insuranceDoc?.expiryDate),
             phvExpiry: normalizeDateInput(phvDoc?.expiryDate),
             logbookStatus: docStatusText(logbookDoc),
+            logbookPage2Status: docStatusText(logbookPage2Doc),
             otherDocumentsStatus: otherDocs.length ? 'Uploaded' : 'Not uploaded',
             otherDocuments: otherDocs.map((doc) => ({
                 name: doc.fileName || doc.name,
@@ -899,6 +903,7 @@ const CarsPage: React.FC = () => {
                         insuranceExpiry: '',
                         phvExpiry: '',
                         logbookStatus: 'Not uploaded',
+                        logbookPage2Status: 'Not uploaded',
                         otherDocumentsStatus: 'Not uploaded',
                         otherDocuments: [],
                         documents,
@@ -1237,6 +1242,7 @@ const CarsPage: React.FC = () => {
                 { key: 'insurance', docType: 'insurance', expiryDate: newCarDocs.insurance.expiryDate, file: newCarDocs.insurance.file },
                 { key: 'phv_car_licence', docType: 'phv_car_licence', expiryDate: newCarDocs.phv_car_licence.expiryDate, file: newCarDocs.phv_car_licence.file },
                 { key: 'logbook_v5', docType: 'logbook_v5', expiryDate: '', file: newCarDocs.logbook_v5.file },
+                { key: 'logbook_v5_page2', docType: 'logbook_v5_page2', expiryDate: '', file: newCarDocs.logbook_v5_page2.file },
                 { key: 'other', docType: 'other', expiryDate: '', file: newCarDocs.other.file },
             ] as const;
             for (const entry of docEntries) {
@@ -1264,6 +1270,7 @@ const CarsPage: React.FC = () => {
                 insuranceExpiry: '',
                 phvExpiry: '',
                 logbookStatus: 'Not uploaded',
+                logbookPage2Status: 'Not uploaded',
                 otherDocumentsStatus: 'Not uploaded',
                 otherDocuments: [],
                 documents: uploadedDocs,
@@ -1280,6 +1287,7 @@ const CarsPage: React.FC = () => {
                 insurance: { expiryDate: '', file: null, status: '' },
                 phv_car_licence: { expiryDate: '', file: null, status: '' },
                 logbook_v5: { expiryDate: '', file: null, status: '' },
+                logbook_v5_page2: { expiryDate: '', file: null, status: '' },
                 other: { expiryDate: '', file: null, status: '' },
             });
             showAlert('Car added.');
@@ -1467,7 +1475,7 @@ const CarsPage: React.FC = () => {
                                       <p className="text-[11px] text-amber-200">Uploading...</p>
                                   ) : null}
                                   <div className="flex items-center justify-between py-2 gap-3 border-b border-amber-900/40">
-                                      <span className="text-white/90 text-sm">Logbook V5a</span>
+                                      <span className="text-white/90 text-sm">Logbook V5 Page 1</span>
                                       <div className="flex items-center gap-3">
                                           <StatusPill text={car.logbookStatus} />
                                           {editing && (
@@ -1489,6 +1497,31 @@ const CarsPage: React.FC = () => {
                                       <p className="text-[11px] text-red-300">{carDocError[`${car.id}-logbook_v5`]}</p>
                                   ) : null}
                                   {carDocUploading[`${car.id}-logbook_v5`] ? (
+                                      <p className="text-[11px] text-amber-200">Uploading...</p>
+                                  ) : null}
+                                  <div className="flex items-center justify-between py-2 gap-3 border-b border-amber-900/40">
+                                      <span className="text-white/90 text-sm">Logbook V5 Page 2</span>
+                                      <div className="flex items-center gap-3">
+                                          <StatusPill text={car.logbookPage2Status} />
+                                          {editing && (
+                                              <label htmlFor={`${car.id}-logbook-page2-upload`} className={uploadButtonClass}>
+                                                  Upload
+                                              </label>
+                                          )}
+                                          <input
+                                              id={`${car.id}-logbook-page2-upload`}
+                                              type="file"
+                                              className="hidden"
+                                              onChange={(event) =>
+                                                  handleCarDocUpload(car.id, 'logbook_v5_page2', event.target.files?.[0] ?? null)
+                                              }
+                                          />
+                                      </div>
+                                  </div>
+                                  {carDocError[`${car.id}-logbook_v5_page2`] ? (
+                                      <p className="text-[11px] text-red-300">{carDocError[`${car.id}-logbook_v5_page2`]}</p>
+                                  ) : null}
+                                  {carDocUploading[`${car.id}-logbook_v5_page2`] ? (
                                       <p className="text-[11px] text-amber-200">Uploading...</p>
                                   ) : null}
                                   <div className="flex flex-col gap-2 py-2 border-b border-amber-900/40">
@@ -1630,10 +1663,16 @@ const CarsPage: React.FC = () => {
                             statusText={newCarDocs.phv_car_licence.status}
                         />
                         <AddCarUploadItem
-                            label="Logbook V5"
+                            label="Logbook V5 Page 1"
                             showExpiry={false}
                             onFileChange={(file) => updateNewCarDoc('logbook_v5', { file, status: file ? 'Queued' : '' })}
                             statusText={newCarDocs.logbook_v5.status}
+                        />
+                        <AddCarUploadItem
+                            label="Logbook V5 Page 2"
+                            showExpiry={false}
+                            onFileChange={(file) => updateNewCarDoc('logbook_v5_page2', { file, status: file ? 'Queued' : '' })}
+                            statusText={newCarDocs.logbook_v5_page2.status}
                         />
                         <AddCarUploadItem
                             label="Other documents"

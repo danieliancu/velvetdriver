@@ -57,7 +57,8 @@ const DOC_LABELS: Record<string, string> = {
   mot: 'MOT',
   insurance: 'Insurance',
   phv_car_licence: 'PHV Car License',
-  logbook_v5: 'Logbook V5',
+  logbook_v5: 'Logbook V5 Page 1',
+  logbook_v5_page2: 'Logbook V5 Page 2',
   other: 'Other documents',
 };
 

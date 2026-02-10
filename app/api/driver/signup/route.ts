@@ -20,6 +20,7 @@ const CAR_DOC_TYPE_MAP: Record<string, string> = {
   insuranceDoc: 'insurance',
   phvDoc: 'phv_car_licence',
   logbookDoc: 'logbook_v5',
+  logbookDocPage2: 'logbook_v5_page2',
 };
 
 type CloudinaryUpload = {

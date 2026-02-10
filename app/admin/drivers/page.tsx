@@ -738,7 +738,8 @@ const AdminDriversPage: React.FC = () => {
                           { label: 'MOT', type: 'mot' },
                           { label: 'Insurance', type: 'insurance' },
                           { label: 'PHV Car Licence', type: 'phv_car_licence' },
-                          { label: 'Logbook V5', type: 'logbook_v5' },
+                          { label: 'Logbook V5 Page 1', type: 'logbook_v5' },
+                          { label: 'Logbook V5 Page 2', type: 'logbook_v5_page2' },
                           { label: 'Other', type: 'other' },
                         ].map((entry) => {
                           const doc = car.documents?.find((item) => item.docType === entry.type);

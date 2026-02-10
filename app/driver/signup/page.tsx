@@ -20,7 +20,8 @@ const fileFields = Object.freeze({
     { id: 'motDoc', label: 'MOT' },
     { id: 'insuranceDoc', label: 'Insurance' },
     { id: 'phvDoc', label: 'PHV Car licence' },
-    { id: 'logbookDoc', label: 'Log book V5' },
+    { id: 'logbookDoc', label: 'Logbook V5 Page 1' },
+    { id: 'logbookDocPage2', label: 'Logbook V5 Page 2' },
   ],
 } as const);
 
@@ -111,9 +112,19 @@ export default function DriverSignUpPage() {
             onChange={handleFieldChange('dvlaCode')}
           />
         </div>
-        <p className="text-xs text-gray-400">
-          Generate a code from the official DVLA website to share your driving licence information.
-        </p>
+        <div className="space-y-1 text-xs text-gray-400">
+          <Link
+            href="https://www.gov.uk/view-driving-licence"
+            className="text-amber-400 hover:text-amber-300 underline underline-offset-2"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            https://www.gov.uk/view-driving-licence
+          </Link>
+          <p className="text-[11px] text-gray-400">
+            Click "Generate a code" on the official DVLA site to create the required code.
+          </p>
+        </div>
       </div>
       <div>
         <p className="text-sm font-semibold text-amber-400">Upload documents</p>

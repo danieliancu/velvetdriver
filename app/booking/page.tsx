@@ -55,8 +55,10 @@ const BookingPageInner = () => {
     const { user } = useAuth();
     const passengerDetailsLocked = Boolean(user);
     const { showAlert } = useAlert();
-    const [pickup, setPickup] = useState('');
-    const [dropOffs, setDropOffs] = useState(['']);
+    const [pickupAddress, setPickupAddress] = useState('');
+    const [pickupDisplay, setPickupDisplay] = useState('');
+    const [dropOffAddresses, setDropOffAddresses] = useState(['']);
+    const [dropOffDisplays, setDropOffDisplays] = useState(['']);
     const [date, setDate] = useState('');
     const [time, setTime] = useState('');
     const [vehicle, setVehicle] = useState('Executive');
@@ -81,12 +83,14 @@ const BookingPageInner = () => {
         originZone: number | null;
         destinationZone: number | null;
         appliedZone: number | null;
+        zoneSegments: Array<{ zoneId: number | null; miles: number }>;
     }>>([]);
     const googleLoadPromise = useRef<Promise<void> | null>(null);
     const pickupInputRef = useRef<HTMLInputElement | null>(null);
     const dropoffInputRefs = useRef<Array<HTMLInputElement | null>>([]);
     const dropoffAutocompleteRefs = useRef<any[]>([]);
     const distanceServiceRef = useRef<any>(null);
+    const directionsServiceRef = useRef<any>(null);
     const placeAutocompleteCleanupRef = useRef<Array<() => void>>([]);
     const [passengerName, setPassengerName] = useState('');
     const [passengerEmail, setPassengerEmail] = useState('');
@@ -109,6 +113,8 @@ const BookingPageInner = () => {
     const [stripePublishableKey, setStripePublishableKey] = useState<string | null>(null);
     const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
     const [paymentError, setPaymentError] = useState<string | null>(null);
+    const draftLoadedRef = useRef(false);
+    const draftKey = 'velvetdriver.booking.draft';
 
     const passengersCount = Math.max(0, Number(passengers) || 0);
     const smallSuitcasesCount = Math.max(0, Number(smallSuitcases) || 0);
@@ -116,8 +122,8 @@ const BookingPageInner = () => {
     const waitingMinutes = Math.max(0, Number(waiting) || 0);
     const todayIso = new Date().toISOString().slice(0, 10);
     const requiredJourneyFieldsFilled =
-        pickup.trim().length > 0 &&
-        dropOffs.every((addr) => addr.trim().length > 0) &&
+        pickupAddress.trim().length > 0 &&
+        dropOffAddresses.every((addr) => addr.trim().length > 0) &&
         date.trim().length > 0 &&
         time.trim().length > 0;
 
@@ -269,6 +275,43 @@ const BookingPageInner = () => {
         return Math.max(...zones);
     };
 
+    const buildZoneSegmentsFromSteps = (steps: any[]) => {
+        if (!steps?.length) return null;
+        const totals = new Map<string, number>();
+        steps.forEach((step) => {
+            const stepMeters = Number(step?.distance?.value ?? 0);
+            if (!stepMeters) return;
+            const path = Array.isArray(step?.path) ? step.path : [];
+            if (path.length < 2) return;
+            let straightMiles = 0;
+            const rawSegments: Array<{ zoneId: number | null; miles: number }> = [];
+            for (let i = 0; i < path.length - 1; i += 1) {
+                const start = path[i];
+                const end = path[i + 1];
+                const startCoords = { lat: start.lat(), lng: start.lng() };
+                const endCoords = { lat: end.lat(), lng: end.lng() };
+                const segmentMiles = haversineMiles(startCoords, endCoords);
+                straightMiles += segmentMiles;
+                const mid = { lat: (startCoords.lat + endCoords.lat) / 2, lng: (startCoords.lng + endCoords.lng) / 2 };
+                const zoneId = getZoneForCoords(mid)?.id ?? null;
+                rawSegments.push({ zoneId, miles: segmentMiles });
+            }
+            if (straightMiles <= 0) return;
+            const stepMiles = stepMeters / 1609.34;
+            const scale = stepMiles / straightMiles;
+            rawSegments.forEach((segment) => {
+                const scaledMiles = segment.miles * scale;
+                if (scaledMiles <= 0) return;
+                const key = segment.zoneId == null ? 'none' : String(segment.zoneId);
+                totals.set(key, (totals.get(key) || 0) + scaledMiles);
+            });
+        });
+        return Array.from(totals.entries()).map(([key, miles]) => ({
+            zoneId: key === 'none' ? null : Number(key),
+            miles,
+        }));
+    };
+
     const withinLuxuryExecLuggage = () => {
         const largeOk = largeSuitcasesCount <= 2;
         const smallOk = smallSuitcasesCount <= 2;
@@ -279,6 +322,74 @@ const BookingPageInner = () => {
     const luxuryAllowed = passengersCount <= 4 && withinLuxuryExecLuggage();
     const executiveAllowed = passengersCount <= 4 && withinLuxuryExecLuggage();
     const luxuryMpvAllowed = passengersCount <= 7;
+
+    useEffect(() => {
+        if (draftLoadedRef.current) return;
+        draftLoadedRef.current = true;
+        try {
+            const raw = typeof window !== 'undefined' ? window.localStorage.getItem(draftKey) : null;
+            if (!raw) return;
+            const draft = JSON.parse(raw) as Partial<{
+                pickupAddress: string;
+                pickupDisplay: string;
+                dropOffAddresses: string[];
+                dropOffDisplays: string[];
+                date: string;
+                time: string;
+                vehicle: string;
+                vehicleTypeId: string;
+                serviceType: string;
+                passengers: string;
+                smallSuitcases: string;
+                largeSuitcases: string;
+                waiting: string;
+                miles: string;
+                pickupLatLng: { lat: number; lng: number } | null;
+                dropOffLatLng: { lat: number; lng: number } | null;
+                stopCoords: Array<{ lat: number; lng: number } | null>;
+                pickupIsAirport: boolean;
+                pickupAirportCode: AirportCode | null;
+                dropIsAirportFlags: boolean[];
+                dropAirportCodes: Array<AirportCode | null>;
+                passengerName: string;
+                passengerEmail: string;
+                passengerPhone: string;
+                specialEvents: string;
+                notes: string;
+                flightNumber: string;
+            }>;
+
+            if (draft.pickupAddress) setPickupAddress(draft.pickupAddress);
+            if (draft.pickupDisplay) setPickupDisplay(draft.pickupDisplay);
+            if (draft.dropOffAddresses?.length) setDropOffAddresses(draft.dropOffAddresses);
+            if (draft.dropOffDisplays?.length) setDropOffDisplays(draft.dropOffDisplays);
+            if (draft.date) setDate(draft.date);
+            if (draft.time) setTime(draft.time);
+            if (draft.vehicle) setVehicle(draft.vehicle);
+            if (draft.vehicleTypeId) setVehicleTypeId(draft.vehicleTypeId);
+            if (draft.serviceType) setServiceType(draft.serviceType);
+            if (draft.passengers) setPassengers(draft.passengers);
+            if (draft.smallSuitcases) setSmallSuitcases(draft.smallSuitcases);
+            if (draft.largeSuitcases) setLargeSuitcases(draft.largeSuitcases);
+            if (draft.waiting) setWaiting(draft.waiting);
+            if (draft.miles) setMiles(draft.miles);
+            if (draft.pickupLatLng) setPickupLatLng(draft.pickupLatLng);
+            if (draft.dropOffLatLng) setDropOffLatLng(draft.dropOffLatLng);
+            if (draft.stopCoords?.length) setStopCoords(draft.stopCoords);
+            if (typeof draft.pickupIsAirport === 'boolean') setPickupIsAirport(draft.pickupIsAirport);
+            if (draft.pickupAirportCode !== undefined) setPickupAirportCode(draft.pickupAirportCode ?? null);
+            if (draft.dropIsAirportFlags?.length) setDropIsAirportFlags(draft.dropIsAirportFlags);
+            if (draft.dropAirportCodes?.length) setDropAirportCodes(draft.dropAirportCodes);
+            if (draft.passengerName) setPassengerName(draft.passengerName);
+            if (draft.passengerEmail) setPassengerEmail(draft.passengerEmail);
+            if (draft.passengerPhone) setPassengerPhone(draft.passengerPhone);
+            if (draft.specialEvents) setSpecialEvents(draft.specialEvents);
+            if (draft.notes) setNotes(draft.notes);
+            if (draft.flightNumber) setFlightNumber(draft.flightNumber);
+        } catch {
+            // ignore malformed drafts
+        }
+    }, [draftKey]);
 
     useEffect(() => {
         if (user && !prefilledClientData) {
@@ -294,10 +405,81 @@ const BookingPageInner = () => {
         }
     }, [user, prefilledClientData]);
 
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const draft = {
+            pickupAddress,
+            pickupDisplay,
+            dropOffAddresses,
+            dropOffDisplays,
+            date,
+            time,
+            vehicle,
+            vehicleTypeId,
+            serviceType,
+            passengers,
+            smallSuitcases,
+            largeSuitcases,
+            waiting,
+            miles,
+            pickupLatLng,
+            dropOffLatLng,
+            stopCoords,
+            pickupIsAirport,
+            pickupAirportCode,
+            dropIsAirportFlags,
+            dropAirportCodes,
+            passengerName,
+            passengerEmail,
+            passengerPhone,
+            specialEvents,
+            notes,
+            flightNumber,
+        };
+        try {
+            window.localStorage.setItem(draftKey, JSON.stringify(draft));
+        } catch {
+            // ignore storage errors
+        }
+    }, [
+        pickupAddress,
+        pickupDisplay,
+        dropOffAddresses,
+        dropOffDisplays,
+        date,
+        time,
+        vehicle,
+        vehicleTypeId,
+        serviceType,
+        passengers,
+        smallSuitcases,
+        largeSuitcases,
+        waiting,
+        miles,
+        pickupLatLng,
+        dropOffLatLng,
+        stopCoords,
+        pickupIsAirport,
+        pickupAirportCode,
+        dropIsAirportFlags,
+        dropAirportCodes,
+        passengerName,
+        passengerEmail,
+        passengerPhone,
+        specialEvents,
+        notes,
+        flightNumber,
+        draftKey,
+    ]);
+
     const applyQuotePayload = (payload: any) => {
-        setPickup(payload.pickup || '');
-        setDropOffs(Array.isArray(payload.dropOffs) && payload.dropOffs.length ? payload.dropOffs : ['']);
-        const stopsCount = Array.isArray(payload.dropOffs) && payload.dropOffs.length ? payload.dropOffs.length : 1;
+        const nextPickup = payload.pickup || '';
+        const nextDrops = Array.isArray(payload.dropOffs) && payload.dropOffs.length ? payload.dropOffs : [''];
+        setPickupAddress(nextPickup);
+        setPickupDisplay(nextPickup);
+        setDropOffAddresses(nextDrops);
+        setDropOffDisplays(nextDrops);
+        const stopsCount = nextDrops.length ? nextDrops.length : 1;
         setDropIsAirportFlags(Array.from({ length: stopsCount }, () => false));
         setDropAirportCodes(Array.from({ length: stopsCount }, () => null));
         setPickupIsAirport(false);
@@ -381,7 +563,9 @@ const BookingPageInner = () => {
     const resolveAirportMatch = (place: PlaceLike | null | undefined, fallbackText?: string) => {
         const text = (place?.name || place?.formatted_address || fallbackText || '').toLowerCase();
         const code = text ? detectAirportCodeFromText(text) : null;
-        const isAirport = Boolean(code) || place?.types?.includes('airport') || /airport|terminal/.test(text);
+        const placeTypes = place?.types || [];
+        const isAirportType = placeTypes.includes('airport') || placeTypes.includes('airport_terminal');
+        const isAirport = Boolean(code) || isAirportType;
         return { isAirport, code };
     };
 
@@ -389,6 +573,7 @@ const BookingPageInner = () => {
         const maps = (window as any).google?.maps;
         if (!maps?.places || !pickupInputRef.current) return;
         distanceServiceRef.current = new maps.DistanceMatrixService();
+        directionsServiceRef.current = new maps.DirectionsService();
         const opts = {
             fields: ['place_id', 'types', 'name', 'formatted_address', 'geometry'],
             types: ['geocode', 'establishment'],
@@ -416,11 +601,17 @@ const BookingPageInner = () => {
         pickupAuto.addListener('place_changed', () => {
             const place = pickupAuto.getPlace();
             ensurePlaceDetails(place).then((full) => {
-                if (full?.formatted_address) setPickup(full.formatted_address);
+                const match = resolveAirportMatch(full, place?.formatted_address);
+                const pickupLabel = match.isAirport
+                    ? full?.name || full?.formatted_address
+                    : full?.formatted_address || full?.name;
+                if (pickupLabel) {
+                    setPickupDisplay(pickupLabel);
+                    setPickupAddress(full?.formatted_address || full?.name || pickupLabel);
+                }
                 if (full?.geometry?.location) {
                     setPickupLatLng({ lat: full.geometry.location.lat(), lng: full.geometry.location.lng() });
                 }
-                const match = resolveAirportMatch(full, place?.formatted_address);
                 setPickupIsAirport(match.isAirport);
                 setPickupAirportCode(match.code);
             });
@@ -435,7 +626,13 @@ const BookingPageInner = () => {
             dropAuto.addListener('place_changed', () => {
                 const place = dropAuto.getPlace();
                 ensurePlaceDetails(place).then((full) => {
-                    if (full?.formatted_address) handleDropOffChange(index, full.formatted_address);
+                    const match = resolveAirportMatch(full, place?.formatted_address);
+                    const dropoffLabel = match.isAirport
+                        ? full?.name || full?.formatted_address
+                        : full?.formatted_address || full?.name;
+                    if (dropoffLabel) {
+                        handleDropOffChange(index, dropoffLabel, full?.formatted_address || full?.name || dropoffLabel);
+                    }
                     if (full?.geometry?.location) {
                         const coords = [...stopCoords];
                         coords[index] = { lat: full.geometry.location.lat(), lng: full.geometry.location.lng() };
@@ -444,7 +641,6 @@ const BookingPageInner = () => {
                             setDropOffLatLng({ lat: full.geometry.location.lat(), lng: full.geometry.location.lng() });
                         }
                     }
-                    const match = resolveAirportMatch(full, place?.formatted_address);
                     const flags = [...dropIsAirportFlags];
                     flags[index] = match.isAirport;
                     setDropIsAirportFlags(flags);
@@ -512,14 +708,20 @@ const BookingPageInner = () => {
         };
 
         const pickupOk = tryAttach(pickupInputRef.current, (place) => {
-            if (place?.formatted_address) setPickup(place.formatted_address);
+            const match = resolveAirportMatch(place, place?.formatted_address);
+            const pickupLabel = match.isAirport
+                ? place?.name || place?.formatted_address
+                : place?.formatted_address || place?.name;
+            if (pickupLabel) {
+                setPickupDisplay(pickupLabel);
+                setPickupAddress(place?.formatted_address || place?.name || pickupLabel);
+            }
             const loc = place?.location ?? place?.geometry?.location;
             if (loc) {
                 const lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat;
                 const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
                 setPickupLatLng({ lat, lng });
             }
-            const match = resolveAirportMatch(place, place?.formatted_address);
             setPickupIsAirport(match.isAirport);
             setPickupAirportCode(match.code);
         });
@@ -527,7 +729,13 @@ const BookingPageInner = () => {
         let allDropsOk = true;
         dropoffInputRefs.current.forEach((input, index) => {
             const ok = tryAttach(input, (place) => {
-                if (place?.formatted_address) handleDropOffChange(index, place.formatted_address);
+                const match = resolveAirportMatch(place, place?.formatted_address);
+                const dropoffLabel = match.isAirport
+                    ? place?.name || place?.formatted_address
+                    : place?.formatted_address || place?.name;
+                if (dropoffLabel) {
+                    handleDropOffChange(index, dropoffLabel, place?.formatted_address || place?.name || dropoffLabel);
+                }
                 const loc = place?.location ?? place?.geometry?.location;
                 if (loc) {
                     const lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat;
@@ -537,7 +745,6 @@ const BookingPageInner = () => {
                     setStopCoords(coords);
                     if (index === 0) setDropOffLatLng({ lat, lng });
                 }
-                const match = resolveAirportMatch(place, place?.formatted_address);
                 const flags = [...dropIsAirportFlags];
                 flags[index] = match.isAirport;
                 setDropIsAirportFlags(flags);
@@ -574,12 +781,12 @@ const BookingPageInner = () => {
         return () => {
             placeAutocompleteCleanupRef.current.forEach((fn) => fn());
         };
-    }, [dropOffs.length]);
+    }, [dropOffDisplays.length]);
 
     useEffect(() => {
         const maps = (window as any).google?.maps;
-        if (!maps || !distanceServiceRef.current) return;
-        const waypoints = [pickup.trim(), ...dropOffs.map((d) => d.trim())].filter(Boolean);
+        if (!maps || !directionsServiceRef.current) return;
+        const waypoints = [pickupAddress.trim(), ...dropOffAddresses.map((d) => d.trim())].filter(Boolean);
         const coordChain = [pickupLatLng, ...stopCoords];
         if (waypoints.length < 2) {
             setMiles('');
@@ -587,68 +794,65 @@ const BookingPageInner = () => {
             return;
         }
 
-        const getLegDistance = (origin: any, destination: any) =>
-            new Promise<number | null>((resolve) => {
-                distanceServiceRef.current.getDistanceMatrix(
-                    {
-                        origins: [origin],
-                        destinations: [destination],
-                        travelMode: maps.TravelMode.DRIVING,
-                    },
-                    (response: any, status: string) => {
-                        if (status !== 'OK') return resolve(null);
-                        const meters = response?.rows?.[0]?.elements?.[0]?.distance?.value;
-                        resolve(typeof meters === 'number' ? meters : null);
-                    }
-                );
-            });
-
         let isCancelled = false;
         (async () => {
-            let totalMeters = 0;
-            const legs: Array<{
-                miles: number;
-                originLabel: string;
-                destinationLabel: string;
-                originZone: number | null;
-                destinationZone: number | null;
-                appliedZone: number | null;
-            }> = [];
-            for (let i = 0; i < waypoints.length - 1; i += 1) {
-                const originCandidate = coordChain[i];
-                const destCandidate = coordChain[i + 1];
-                const origin = originCandidate ?? waypoints[i];
-                const destination = destCandidate ?? waypoints[i + 1];
-                const meters = await getLegDistance(origin, destination);
-                if (meters == null) continue;
-                totalMeters += meters;
-                const milesValueLeg = meters / 1609.34;
-                const originZone = originCandidate ? getZoneForCoords(originCandidate) : null;
-                const destinationZone = destCandidate ? getZoneForCoords(destCandidate) : null;
-                const appliedZone = pickAppliedZone(originZone?.id ?? null, destinationZone?.id ?? null);
-                legs.push({
-                    miles: milesValueLeg,
-                    originLabel: waypoints[i],
-                    destinationLabel: waypoints[i + 1],
-                    originZone: originZone?.id ?? null,
-                    destinationZone: destinationZone?.id ?? null,
-                    appliedZone,
-                });
-            }
-            if (!isCancelled && totalMeters > 0) {
-                setLegBreakdown(legs);
-                const milesValue = (totalMeters / 1609.34).toFixed(1);
-                setMiles(milesValue);
-            } else if (!isCancelled) {
-                setMiles('');
-                setLegBreakdown([]);
-            }
+            directionsServiceRef.current.route(
+                {
+                    origin: waypoints[0],
+                    destination: waypoints[waypoints.length - 1],
+                    waypoints: waypoints.slice(1, -1).map((location) => ({ location })),
+                    travelMode: maps.TravelMode.DRIVING,
+                },
+                (result: any, status: string) => {
+                    if (isCancelled) return;
+                    if (status !== 'OK' || !result?.routes?.length) {
+                        setMiles('');
+                        setLegBreakdown([]);
+                        return;
+                    }
+                    const route = result.routes[0];
+                    const legsRaw = Array.isArray(route?.legs) ? route.legs : [];
+                    if (!legsRaw.length) {
+                        setMiles('');
+                        setLegBreakdown([]);
+                        return;
+                    }
+                    let totalMeters = 0;
+                    const legs = legsRaw.map((leg: any, index: number) => {
+                        const meters = Number(leg?.distance?.value ?? 0);
+                        totalMeters += meters;
+                        const milesValueLeg = meters / 1609.34;
+                        const startCoords = leg?.start_location
+                            ? { lat: leg.start_location.lat(), lng: leg.start_location.lng() }
+                            : coordChain[index] ?? null;
+                        const endCoords = leg?.end_location
+                            ? { lat: leg.end_location.lat(), lng: leg.end_location.lng() }
+                            : coordChain[index + 1] ?? null;
+                        const originZone = startCoords ? getZoneForCoords(startCoords) : null;
+                        const destinationZone = endCoords ? getZoneForCoords(endCoords) : null;
+                        const appliedZone = pickAppliedZone(originZone?.id ?? null, destinationZone?.id ?? null);
+                        const zoneSegments =
+                            buildZoneSegmentsFromSteps(leg?.steps) ?? [{ zoneId: appliedZone, miles: milesValueLeg }];
+                        return {
+                            miles: milesValueLeg,
+                            originLabel: waypoints[index],
+                            destinationLabel: waypoints[index + 1],
+                            originZone: originZone?.id ?? null,
+                            destinationZone: destinationZone?.id ?? null,
+                            appliedZone,
+                            zoneSegments,
+                        };
+                    });
+                    setLegBreakdown(legs);
+                    setMiles(totalMeters ? (totalMeters / 1609.34).toFixed(1) : '');
+                }
+            );
         })();
 
         return () => {
             isCancelled = true;
         };
-    }, [pickup, dropOffs, pickupLatLng, dropOffLatLng, stopCoords]);
+    }, [pickupAddress, dropOffAddresses, pickupLatLng, dropOffLatLng, stopCoords]);
 
     useEffect(() => {
         if (vehicle === 'Luxury' && !luxuryAllowed) {
@@ -677,7 +881,7 @@ const BookingPageInner = () => {
     };
 
     const milesValue = Number(miles) || 0;
-    const airportDetected = pickupIsAirport || dropIsAirportFlags.some(Boolean);
+    const airportDetected = Boolean(pickupAirportCode || dropAirportCodes.some(Boolean));
 
     const getMileageRate = (veh: string, dist: number) => {
         const vp = vehiclePricing(veh);
@@ -686,15 +890,15 @@ const BookingPageInner = () => {
         return vp.mileage.tier3;
     };
 
-    const extras: string[] = [];
+    const extras: Array<{ label: string; amount?: number }> = [];
 
     const resolvedVehicleTypeId =
         vehicleTypeId ||
         String(pricingData.vehicles.find((v) => v.label === vehicle)?.id ?? '');
 
     const buildQuotePayload = () => ({
-        pickup,
-        dropOffs,
+        pickup: pickupAddress,
+        dropOffs: dropOffAddresses,
         date,
         time,
         vehicle,
@@ -727,7 +931,7 @@ const BookingPageInner = () => {
         setSavingQuote(true);
         try {
             const payload = { ...buildQuotePayload(), totalFare };
-            const label = `${payload.pickup || 'Journey'} -> ${payload.dropOffs?.[0] || 'Destination'}`;
+            const label = `${pickupDisplay || payload.pickup || 'Journey'} -> ${dropOffDisplays[0] || payload.dropOffs?.[0] || 'Destination'}`;
             const res = await fetch('/api/client/saved-quotes', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -753,8 +957,16 @@ const BookingPageInner = () => {
     const zoneMileageFare =
         serviceType === 'As Directed'
             ? 0
-            : legBreakdown.length && legBreakdown.every((leg) => leg.appliedZone !== null)
-                ? legBreakdown.reduce((sum, leg) => sum + leg.miles * getZoneMileageRate(vehicle, leg.appliedZone), 0)
+            : legBreakdown.length
+                ? legBreakdown.reduce(
+                    (sum, leg) =>
+                        sum +
+                        leg.zoneSegments.reduce(
+                            (innerSum, segment) => innerSum + segment.miles * getZoneMileageRate(vehicle, segment.zoneId),
+                            0
+                        ),
+                    0
+                )
                 : null;
 
     const mileageFare =
@@ -765,24 +977,26 @@ const BookingPageInner = () => {
     totalFare = mileageFare;
 
     if (serviceType !== 'As Directed') {
-        if (waitingCost > 0) extras.push(`Waiting time GBP${waitingCost.toFixed(2)}`);
+        if (waitingCost > 0) extras.push({ label: 'Waiting time', amount: waitingCost });
         totalFare += waitingCost;
     }
 
     if (isNightTime()) {
         totalFare += pricingData.nightSurcharge;
-        extras.push(`Night surcharge GBP${pricingData.nightSurcharge.toFixed(2)}`);
+        extras.push({ label: 'Night surcharge', amount: pricingData.nightSurcharge });
     }
     if (serviceType === 'Wait and Return') {
+        const before = totalFare;
         totalFare *= 2;
-        extras.push('Wait and Return x2');
+        const delta = totalFare - before;
+        extras.push({ label: 'Wait and Return x2', amount: delta });
     }
     if (pickupAirportCode) {
         const pickupSurcharge = pricingData.surcharges.airports[pickupAirportCode]?.pickup ?? 0;
         if (pickupSurcharge > 0) {
             totalFare += pickupSurcharge;
             const label = airportLabelByCode[pickupAirportCode] ?? 'Airport';
-            extras.push(`${label} pickup GBP${pickupSurcharge.toFixed(2)}`);
+            extras.push({ label: `${label} pickup`, amount: pickupSurcharge });
         }
     }
     dropAirportCodes.forEach((code) => {
@@ -791,7 +1005,7 @@ const BookingPageInner = () => {
         if (dropoffSurcharge > 0) {
             totalFare += dropoffSurcharge;
             const label = airportLabelByCode[code] ?? 'Airport';
-            extras.push(`${label} drop-off GBP${dropoffSurcharge.toFixed(2)}`);
+            extras.push({ label: `${label} drop-off`, amount: dropoffSurcharge });
         }
     });
     totalFare = Math.round(totalFare * 100) / 100;
@@ -805,33 +1019,58 @@ const BookingPageInner = () => {
 
     const extrasText =
         extras.length
-            ? `Extras applied: ${extras.join('; ')}`
+            ? `Extras applied: ${extras
+                .map((item) => (item.amount != null ? `${item.label} GBP${item.amount.toFixed(2)}` : item.label))
+                .join('; ')}`
             : serviceType === 'As Directed'
                 ? 'Includes hourly rate. No extras applied.'
                 : 'Includes mileage (tiered by vehicle). No extras applied.';
+    const baseFareLabel = serviceType === 'As Directed'
+        ? 'Hourly rate'
+        : zoneMileageFare != null
+            ? 'Zone mileage fare'
+            : 'Mileage fare';
+    const baseFareValue = mileageFare;
 
     const zoneIds = legBreakdown
-        .flatMap((leg) => [leg.originZone, leg.destinationZone, leg.appliedZone])
+        .flatMap((leg) => leg.zoneSegments.map((segment) => segment.zoneId))
         .filter((z): z is number => z != null);
     const zonesCovered = Array.from(new Set(zoneIds)).sort((a, b) => a - b);
-    const zoneText = serviceType === 'As Directed'
+    const zoneText = '';
+    const zoneMilesText = serviceType === 'As Directed'
         ? ''
-        : zonesCovered.length
-            ? `Zones detected: ${zonesCovered.map((z) => `Zone ${z}`).join(', ')}`
+        : legBreakdown.length
+            ? (() => {
+                const totals = new Map<number, number>();
+                legBreakdown.forEach((leg) => {
+                    leg.zoneSegments.forEach((segment) => {
+                        if (segment.zoneId == null) return;
+                        totals.set(segment.zoneId, (totals.get(segment.zoneId) || 0) + segment.miles);
+                    });
+                });
+                const entries = Array.from(totals.entries()).sort((a, b) => a[0] - b[0]);
+                if (!entries.length) return '';
+                return entries
+                    .map(([zoneId, miles]) => `Zone ${zoneId}: ${miles.toFixed(1)} mi`)
+                    .join(', ');
+            })()
             : '';
 
     const handleAddStop = () => {
-        setDropOffs([...dropOffs, '']);
+        setDropOffAddresses([...dropOffAddresses, '']);
+        setDropOffDisplays([...dropOffDisplays, '']);
         setStopCoords([...stopCoords, null]);
         setDropIsAirportFlags([...dropIsAirportFlags, false]);
         setDropAirportCodes([...dropAirportCodes, null]);
     };
 
     const handleRemoveStop = (index: number) => {
-        if (dropOffs.length > 1) {
-            const newDropOffs = dropOffs.filter((_, i) => i !== index);
+        if (dropOffDisplays.length > 1) {
+            const newDropOffs = dropOffAddresses.filter((_, i) => i !== index);
+            const newDropOffDisplays = dropOffDisplays.filter((_, i) => i !== index);
             const newCoords = stopCoords.filter((_, i) => i !== index);
-            setDropOffs(newDropOffs);
+            setDropOffAddresses(newDropOffs);
+            setDropOffDisplays(newDropOffDisplays);
             setStopCoords(newCoords);
             const newFlags = dropIsAirportFlags.filter((_, i) => i !== index);
             setDropIsAirportFlags(newFlags);
@@ -840,10 +1079,13 @@ const BookingPageInner = () => {
         }
     };
 
-    const handleDropOffChange = (index: number, value: string) => {
-        const newDropOffs = [...dropOffs];
-        newDropOffs[index] = value;
-        setDropOffs(newDropOffs);
+    const handleDropOffChange = (index: number, value: string, address?: string) => {
+        const newDropOffDisplays = [...dropOffDisplays];
+        newDropOffDisplays[index] = value;
+        setDropOffDisplays(newDropOffDisplays);
+        const newDropOffs = [...dropOffAddresses];
+        newDropOffs[index] = address ?? value;
+        setDropOffAddresses(newDropOffs);
         const newCoords = [...stopCoords];
         newCoords[index] = null;
         setStopCoords(newCoords);
@@ -952,6 +1194,13 @@ const BookingPageInner = () => {
         if (!requiredJourneyFieldsFilled) {
             showAlert('Please complete pickup, drop-off, date, and time.');
             return;
+        }
+        if (typeof window !== 'undefined') {
+            try {
+                window.localStorage.removeItem(draftKey);
+            } catch {
+                // ignore storage errors
+            }
         }
         // Show verification modal instead of immediately submitting
         const payload = buildQuotePayload();
@@ -1094,24 +1343,25 @@ const BookingPageInner = () => {
                                     label="Pickup"
                                     id="pickup"
                                     placeholder="Address or postcode"
-                                    value={pickup}
+                                    value={pickupDisplay}
                                     onChange={e => {
-                                        setPickup(e.target.value);
+                                        setPickupDisplay(e.target.value);
+                                        setPickupAddress(e.target.value);
                                         setPickupLatLng(null);
                                     }}
                                     required
                                 />
                             </div>
                             <div className="flex flex-col gap-1 w-full space-y-3">
-                                {dropOffs.map((stop, index) => (
+                                {dropOffDisplays.map((stop, index) => (
                                     <div key={index} className="flex items-center gap-2">
                                         <div className="flex-grow">
                                             <BookingInput 
                                                 label={index === 0 ? "Drop-off" : `Stop ${index + 1}`}
                                                 id={`dropoff-${index}`} 
                                                 ref={(el) => { dropoffInputRefs.current[index] = el; }}
-                                                value={stop}
-                                                onChange={(e) => handleDropOffChange(index, e.target.value)}
+                                        value={stop}
+                                        onChange={(e) => handleDropOffChange(index, e.target.value)}
                                                 placeholder="Address or postcode"
                                                 required
                                             />
@@ -1250,6 +1500,7 @@ const BookingPageInner = () => {
                         <p className="text-4xl font-bold text-amber-400 my-1">{fareDisplay}</p>
                         <p className="text-xs text-gray-400">{extrasText}</p>
                         {zoneText ? <p className="text-xs text-gray-500 mt-1">{zoneText}</p> : null}
+                        {zoneMilesText ? <p className="text-xs text-gray-500">{zoneMilesText}</p> : null}
                     </div>
 
 
@@ -1360,11 +1611,11 @@ const BookingPageInner = () => {
                                 <div className="bg-black/30 border border-amber-900/40 rounded-lg p-4 space-y-3 text-sm text-gray-300">
                                     <div className="flex justify-between items-start">
                                         <span className="text-gray-400">Pickup:</span>
-                                        <span className="font-semibold text-amber-100">{pickup}</span>
+                                        <span className="font-semibold text-amber-100">{pickupDisplay || pickupAddress}</span>
                                     </div>
                                     <div className="flex justify-between items-start">
                                         <span className="text-gray-400">Drop-off:</span>
-                                        <span className="font-semibold text-amber-100">{dropOffs[0]}</span>
+                                        <span className="font-semibold text-amber-100">{dropOffDisplays[0] || dropOffAddresses[0]}</span>
                                     </div>
                                     <div className="flex justify-between items-start">
                                         <span className="text-gray-400">Date:</span>
@@ -1379,9 +1630,28 @@ const BookingPageInner = () => {
                                         <span className="font-semibold text-amber-100">{miles ? `${miles} mi` : 'Auto'}</span>
                                     </div>
                                     <div className="flex justify-between items-start">
+                                        <span className="text-gray-400">{baseFareLabel}:</span>
+                                        <span className="font-semibold text-amber-100">GBP{baseFareValue.toFixed(2)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-start">
                                         <span className="text-gray-400">Total fare:</span>
                                         <span className="font-semibold text-amber-100">GBP{totalFare.toFixed(2)}</span>
                                     </div>
+                                    {extras.length ? (
+                                        <div className="pt-3 border-t border-amber-900/30 space-y-2">
+                                            <p className="text-xs uppercase tracking-wider text-amber-300/80">Extras applied</p>
+                                            <div className="space-y-1">
+                                                {extras.map((item, idx) => (
+                                                    <div key={`${item.label}-${idx}`} className="flex justify-between items-start">
+                                                        <span className="text-gray-400">{item.label}:</span>
+                                                        <span className="font-semibold text-amber-100">
+                                                            {item.amount != null ? `GBP${item.amount.toFixed(2)}` : '—'}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : null}
                                 </div>
 
                                 <div className="flex flex-col sm:flex-row gap-4 pt-4">
