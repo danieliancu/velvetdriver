@@ -116,6 +116,15 @@ const BookingPageInner = () => {
     const [paymentError, setPaymentError] = useState<string | null>(null);
     const [paymentOption, setPaymentOption] = useState<'pay_now' | 'pay_driver' | 'invoice'>('pay_now');
     const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
+    const [discountCodeInput, setDiscountCodeInput] = useState('');
+    const [discountData, setDiscountData] = useState<{
+        code: string;
+        name: string;
+        type: 'fixed' | 'percent';
+        amount: number;
+    } | null>(null);
+    const [discountError, setDiscountError] = useState<string | null>(null);
+    const [discountLoading, setDiscountLoading] = useState(false);
     const draftLoadedRef = useRef(false);
     const draftKey = 'velvetdriver.booking.draft';
 
@@ -992,7 +1001,7 @@ const BookingPageInner = () => {
         const before = totalFare;
         totalFare *= 2;
         const delta = totalFare - before;
-        extras.push({ label: 'Wait and Return x2', amount: delta });
+        extras.push({ label: 'Wait and Return', amount: delta });
     }
     if (pickupAirportCode) {
         const pickupSurcharge = pricingData.surcharges.airports[pickupAirportCode]?.pickup ?? 0;
@@ -1012,6 +1021,7 @@ const BookingPageInner = () => {
         }
     });
     totalFare = Math.round(totalFare * 100) / 100;
+    const baseTotalFare = totalFare;
 
     const extrasAmount = serviceType === 'As Directed' ? totalFare - hourlyRate : 0;
     const fareDisplay = serviceType === 'As Directed'
@@ -1020,44 +1030,37 @@ const BookingPageInner = () => {
             : `GBP${hourlyRate.toFixed(2)}/h`
         : `GBP${totalFare.toFixed(2)}`;
 
+    const extrasForDisplay = extras.filter(
+        (item) => !item.label.toLowerCase().includes('zone')
+    );
     const extrasText =
-        extras.length
-            ? `Extras applied: ${extras
+        extrasForDisplay.length
+            ? `Extras applied: ${extrasForDisplay
                 .map((item) => (item.amount != null ? `${item.label} GBP${item.amount.toFixed(2)}` : item.label))
                 .join('; ')}`
-            : serviceType === 'As Directed'
-                ? 'Includes hourly rate. No extras applied.'
-                : 'Includes mileage (tiered by vehicle). No extras applied.';
+            : 'No surcharges applied.';
     const baseFareLabel = serviceType === 'As Directed'
         ? 'Hourly rate'
         : zoneMileageFare != null
             ? 'Zone mileage fare'
             : 'Mileage fare';
     const baseFareValue = mileageFare;
+    const discountAmount = useMemo(() => {
+        if (!discountData) return 0;
+        const raw = discountData.type === 'percent'
+            ? (baseTotalFare * discountData.amount) / 100
+            : discountData.amount;
+        const capped = Math.min(raw, baseTotalFare);
+        return Math.round(capped * 100) / 100;
+    }, [discountData, baseTotalFare]);
+    const totalFareFinal = Math.max(0, Math.round((baseTotalFare - discountAmount) * 100) / 100);
 
     const zoneIds = legBreakdown
         .flatMap((leg) => leg.zoneSegments.map((segment) => segment.zoneId))
         .filter((z): z is number => z != null);
     const zonesCovered = Array.from(new Set(zoneIds)).sort((a, b) => a - b);
     const zoneText = '';
-    const zoneMilesText = serviceType === 'As Directed'
-        ? ''
-        : legBreakdown.length
-            ? (() => {
-                const totals = new Map<number, number>();
-                legBreakdown.forEach((leg) => {
-                    leg.zoneSegments.forEach((segment) => {
-                        if (segment.zoneId == null) return;
-                        totals.set(segment.zoneId, (totals.get(segment.zoneId) || 0) + segment.miles);
-                    });
-                });
-                const entries = Array.from(totals.entries()).sort((a, b) => a[0] - b[0]);
-                if (!entries.length) return '';
-                return entries
-                    .map(([zoneId, miles]) => `Zone ${zoneId}: ${miles.toFixed(1)} mi`)
-                    .join(', ');
-            })()
-            : '';
+    const zoneMilesText = '';
 
     const handleAddStop = () => {
         setDropOffAddresses([...dropOffAddresses, '']);
@@ -1198,6 +1201,25 @@ const BookingPageInner = () => {
             showAlert('Please complete pickup, drop-off, date, and time.');
             return;
         }
+        const journeyDateTime = new Date(`${date}T${time}`);
+        if (Number.isNaN(journeyDateTime.getTime())) {
+            showAlert('Please provide a valid date and time.');
+            return;
+        }
+        const now = new Date();
+        const hoursDiff = (journeyDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+        if (hoursDiff < 24) {
+            showAlert(
+                <span>
+                    Online bookings require at least 24 hours notice. For urgent requests, please call{' '}
+                    <a href="tel:+442081759186" className="text-amber-300 underline underline-offset-2">
+                        +44 2081 759 186
+                    </a>
+                    .
+                </span>
+            );
+            return;
+        }
         if (typeof window !== 'undefined') {
             try {
                 window.localStorage.removeItem(draftKey);
@@ -1213,7 +1235,17 @@ const BookingPageInner = () => {
             flightNumber,
             flightDetails,
             extras,
-            totalFare,
+            totalFare: totalFareFinal,
+            originalTotalFare: baseTotalFare,
+            discount: discountData
+                ? {
+                    code: discountData.code,
+                    name: discountData.name,
+                    type: discountData.type,
+                    amount: discountData.amount,
+                    appliedAmount: discountAmount,
+                }
+                : null,
             clientEmail: user?.email ?? null,
         });
         setCheckoutActive(false);
@@ -1245,7 +1277,7 @@ const BookingPageInner = () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    amount: Number(pendingBookingPayload.totalFare),
+                    amount: Number(totalFareFinal),
                     currency: 'gbp',
                     passengerName: pendingBookingPayload.passengerName,
                     passengerEmail: pendingBookingPayload.passengerEmail,
@@ -1276,10 +1308,21 @@ const BookingPageInner = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     ...pendingBookingPayload,
+                    totalFare: totalFareFinal,
+                    originalTotalFare: baseTotalFare,
+                    discount: discountData
+                        ? {
+                            code: discountData.code,
+                            name: discountData.name,
+                            type: discountData.type,
+                            amount: discountData.amount,
+                            appliedAmount: discountAmount,
+                        }
+                        : null,
                     paymentIntentId: paymentIntent.id,
                     paymentStatus: paymentIntent.status,
                     paymentMethod: 'Card',
-                    paymentAmount: Number(pendingBookingPayload.totalFare),
+                    paymentAmount: Number(totalFareFinal),
                     paymentCurrency: 'GBP',
                 }),
             });
@@ -1306,10 +1349,21 @@ const BookingPageInner = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     ...pendingBookingPayload,
+                    totalFare: totalFareFinal,
+                    originalTotalFare: baseTotalFare,
+                    discount: discountData
+                        ? {
+                            code: discountData.code,
+                            name: discountData.name,
+                            type: discountData.type,
+                            amount: discountData.amount,
+                            appliedAmount: discountAmount,
+                        }
+                        : null,
                     paymentIntentId: null,
                     paymentStatus: 'pending',
                     paymentMethod: method,
-                    paymentAmount: Number(pendingBookingPayload.totalFare),
+                    paymentAmount: Number(totalFareFinal),
                     paymentCurrency: 'GBP',
                 }),
             });
@@ -1342,7 +1396,44 @@ const BookingPageInner = () => {
         if (!checkoutActive) return;
         if (paymentOption !== 'pay_now') return;
         createPaymentIntent();
-    }, [checkoutActive, paymentOption, stripeClientSecret, pendingBookingPayload?.totalFare]);
+    }, [checkoutActive, paymentOption, stripeClientSecret, totalFareFinal]);
+
+    useEffect(() => {
+        if (!checkoutActive || paymentOption !== 'pay_now') return;
+        setStripeClientSecret(null);
+        setStripePublishableKey(null);
+        setPaymentIntentId(null);
+    }, [discountAmount, checkoutActive, paymentOption]);
+
+    const applyDiscountCode = async () => {
+        const code = discountCodeInput.trim().toUpperCase();
+        if (!code) {
+            setDiscountError('Enter a discount code.');
+            setDiscountData(null);
+            return;
+        }
+        setDiscountLoading(true);
+        setDiscountError(null);
+        try {
+            const res = await fetch(`/api/discount-codes/validate?code=${encodeURIComponent(code)}`, { cache: 'no-store' });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data?.error || 'Invalid discount code.');
+            }
+            const data = await res.json();
+            setDiscountData({
+                code: data.code,
+                name: data.name,
+                type: data.type,
+                amount: Number(data.amount),
+            });
+        } catch (err: any) {
+            setDiscountData(null);
+            setDiscountError(err?.message || 'Invalid discount code.');
+        } finally {
+            setDiscountLoading(false);
+        }
+    };
 
     return (
         <PageShell mainClassName="flex items-center justify-center py-24">
@@ -1680,15 +1771,21 @@ const BookingPageInner = () => {
                                         <span className="text-gray-400">{baseFareLabel}:</span>
                                         <span className="font-semibold text-amber-100">GBP{baseFareValue.toFixed(2)}</span>
                                     </div>
+                                    {discountAmount > 0 && (
+                                        <div className="flex justify-between items-start">
+                                            <span className="text-gray-400">Discount:</span>
+                                            <span className="font-semibold text-amber-100">-GBP{discountAmount.toFixed(2)}</span>
+                                        </div>
+                                    )}
                                     <div className="flex justify-between items-start">
                                         <span className="text-gray-400">Total fare:</span>
-                                        <span className="font-semibold text-amber-100">GBP{totalFare.toFixed(2)}</span>
+                                        <span className="font-semibold text-amber-100">GBP{totalFareFinal.toFixed(2)}</span>
                                     </div>
-                                    {extras.length ? (
+                                    {extrasForDisplay.length ? (
                                         <div className="pt-3 border-t border-amber-900/30 space-y-2">
                                             <p className="text-xs uppercase tracking-wider text-amber-300/80">Extras applied</p>
                                             <div className="space-y-1">
-                                                {extras.map((item, idx) => (
+                                                {extrasForDisplay.map((item, idx) => (
                                                     <div key={`${item.label}-${idx}`} className="flex justify-between items-start">
                                                         <span className="text-gray-400">{item.label}:</span>
                                                         <span className="font-semibold text-amber-100">
@@ -1728,6 +1825,32 @@ const BookingPageInner = () => {
                                         {paymentError}
                                     </div>
                                 )}
+                                <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
+                                    <p className="text-sm text-gray-300">Discount code</p>
+                                    <div className="flex flex-col sm:flex-row gap-2">
+                                        <input
+                                            type="text"
+                                            value={discountCodeInput}
+                                            onChange={(e) => setDiscountCodeInput(e.target.value)}
+                                            placeholder="Enter code"
+                                            className="flex-1 rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={applyDiscountCode}
+                                            disabled={discountLoading}
+                                            className="px-4 py-2 text-sm font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition disabled:opacity-60"
+                                        >
+                                            {discountLoading ? 'Applying...' : 'Apply'}
+                                        </button>
+                                    </div>
+                                    {discountError ? <p className="text-xs text-red-300">{discountError}</p> : null}
+                                    {discountData ? (
+                                        <p className="text-xs text-amber-200">
+                                            Applied {discountData.code} ({discountData.type === 'percent' ? `${discountData.amount}%` : `GBP${discountData.amount.toFixed(2)}`})
+                                        </p>
+                                    ) : null}
+                                </div>
                                 {user && (
                                     <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
                                         <p className="text-sm text-gray-300">Choose payment method</p>
@@ -1769,7 +1892,7 @@ const BookingPageInner = () => {
                                             }}
                                         >
                                             <PaymentForm
-                                                amount={Number(pendingBookingPayload?.totalFare ?? 0)}
+                                                amount={Number(totalFareFinal ?? 0)}
                                                 clientSecret={stripeClientSecret}
                                                 onSuccess={finalizeBooking}
                                                 onError={setPaymentError}

@@ -1,49 +1,101 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import AdminPageHeader from '@/components/AdminPageHeader';
 
 type MarketingRule = {
-  id: string;
+  id: number;
+  code: string;
   name: string;
-  from: string;
-  to: string;
+  from: string | null;
+  to: string | null;
   amount: number;
-  unit: '£' | '%';
+  unit: 'fixed' | 'percent';
+  isActive: boolean;
 };
 
-const seedRules: MarketingRule[] = [
-  { id: 'mk-1', name: 'Autumn loyalty push', from: '2025-09-01', to: '2025-11-30', amount: 15, unit: '%' },
-  { id: 'mk-2', name: 'Airport flat bonus', from: '2025-10-15', to: '2025-12-31', amount: 12, unit: '£' },
-  { id: 'mk-3', name: 'VIP reactivation', from: '2025-11-01', to: '2026-01-15', amount: 20, unit: '%' }
-] as const;
-
 const AdminMarketingPage = () => {
-  const [rules, setRules] = useState<MarketingRule[]>(seedRules);
+  const [rules, setRules] = useState<MarketingRule[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState<number | ''>('');
-  const [unit, setUnit] = useState<MarketingRule['unit']>('%');
+  const [unit, setUnit] = useState<MarketingRule['unit']>('percent');
+  const [isActive, setIsActive] = useState(true);
 
-  const isValid = useMemo(() => !!name.trim() && !!from && !!to && amount !== '', [name, from, to, amount]);
+  const isValid = useMemo(
+    () => !!code.trim() && !!name.trim() && amount !== '',
+    [code, name, amount]
+  );
 
-  const handleSave = () => {
+  const loadRules = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/discount-codes', { cache: 'no-store' });
+      if (!res.ok) throw new Error('Failed to load discount codes');
+      const data = await res.json();
+      setRules(Array.isArray(data.codes) ? data.codes : []);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load discount codes');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRules();
+  }, []);
+
+  const handleSave = async () => {
     if (!isValid || amount === '') return;
-    const newRule: MarketingRule = {
-      id: `mk-${rules.length + 1}`,
-      name: name.trim(),
-      from,
-      to,
-      amount: Number(amount),
-      unit
-    };
-    setRules((prev) => [newRule, ...prev]);
+    try {
+      const res = await fetch('/api/admin/discount-codes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: code.trim(),
+          name: name.trim(),
+          amount: Number(amount),
+          type: unit,
+          startsAt: from || null,
+          endsAt: to || null,
+          isActive,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to save discount code');
+      }
+      await loadRules();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save discount code');
+      return;
+    }
+    setCode('');
     setName('');
     setFrom('');
     setTo('');
     setAmount('');
-    setUnit('%');
+    setUnit('percent');
+    setIsActive(true);
+  };
+
+  const toggleActive = async (id: number, next: boolean) => {
+    try {
+      const res = await fetch('/api/admin/discount-codes', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, isActive: next }),
+      });
+      if (!res.ok) throw new Error('Failed to update status');
+      setRules((prev) => prev.map((rule) => (rule.id === id ? { ...rule, isActive: next } : rule)));
+    } catch (err: any) {
+      setError(err?.message || 'Failed to update status');
+    }
   };
 
   return (
@@ -56,13 +108,22 @@ const AdminMarketingPage = () => {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-semibold text-white">Marketing</h2>
-                <p className="text-sm text-gray-400">Configure loyalty incentives.</p>
+                <p className="text-sm text-gray-400">Configure discount codes.</p>
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-4">
               <div className="sm:col-span-1">
-                <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Loyalty Name</label>
+                <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Code</label>
+                <input
+                  className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  placeholder="SAVE10"
+                />
+              </div>
+              <div className="sm:col-span-1">
+                <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Name</label>
                 <input
                   className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                   value={name}
@@ -90,7 +151,7 @@ const AdminMarketingPage = () => {
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-4">
               <div className="sm:col-span-1">
                 <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Amount</label>
                 <input
@@ -103,15 +164,29 @@ const AdminMarketingPage = () => {
                 />
               </div>
               <div className="sm:col-span-1">
-                <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Unit</label>
+                <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Type</label>
                 <select
                   className="w-full rounded-lg bg-black/40 border border-amber-900/50 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                   value={unit}
                   onChange={(e) => setUnit(e.target.value as MarketingRule['unit'])}
                 >
-                  <option value="£">£</option>
-                  <option value="%">%</option>
+                  <option value="fixed">Fixed (£)</option>
+                  <option value="percent">Percent (%)</option>
                 </select>
+              </div>
+              <div className="sm:col-span-1">
+                <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Active</label>
+                <button
+                  type="button"
+                  onClick={() => setIsActive((prev) => !prev)}
+                  className={`w-full rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                    isActive
+                      ? 'border-emerald-400 bg-emerald-500/15 text-emerald-200'
+                      : 'border-white/10 bg-black/30 text-gray-400'
+                  }`}
+                >
+                  {isActive ? 'Active' : 'Inactive'}
+                </button>
               </div>
               <div className="sm:col-span-1 flex items-end">
                 <button
@@ -125,24 +200,48 @@ const AdminMarketingPage = () => {
               </div>
             </div>
 
+            {error ? (
+              <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200">
+                {error}
+              </div>
+            ) : null}
+
             <div className="space-y-3">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-amber-300">Existing</h3>
               <div className="space-y-2">
-                {rules.slice(0, 3).map((rule) => (
-                  <div
-                    key={rule.id}
-                    className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-900/40 bg-gradient-to-r from-[#1A0B0B] via-[#0F0909] to-black px-4 py-3 text-sm text-white"
-                  >
-                    <span className="font-semibold text-amber-200">{rule.name}</span>
-                    <span className="text-gray-400">From {rule.from}</span>
-                    <span className="text-gray-400">To {rule.to}</span>
-                    <span className="ml-auto font-semibold text-amber-300">
-                      {rule.unit === '£' ? '£' : ''}
-                      {rule.amount}
-                      {rule.unit === '%' ? '%' : ''}
-                    </span>
-                  </div>
-                ))}
+                {loading ? (
+                  <p className="text-sm text-gray-400">Loading...</p>
+                ) : rules.length ? (
+                  rules.map((rule) => (
+                    <div
+                      key={rule.id}
+                      className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-900/40 bg-gradient-to-r from-[#1A0B0B] via-[#0F0909] to-black px-4 py-3 text-sm text-white"
+                    >
+                      <span className="font-semibold text-amber-200">{rule.code}</span>
+                      <span className="text-white/80">{rule.name}</span>
+                      {rule.from ? <span className="text-gray-400">From {rule.from}</span> : null}
+                      {rule.to ? <span className="text-gray-400">To {rule.to}</span> : null}
+                      <span className="ml-auto font-semibold text-amber-300">
+                        {rule.unit === 'fixed' ? '£' : ''}
+                        {rule.amount}
+                        {rule.unit === 'percent' ? '%' : ''}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleActive(rule.id, !rule.isActive)}
+                        className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-wide ${
+                          rule.isActive
+                            ? 'border-emerald-400 text-emerald-200'
+                            : 'border-white/10 text-gray-400'
+                        }`}
+                      >
+                        {rule.isActive ? 'Active' : 'Inactive'}
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-gray-400">No discount codes yet.</p>
+                )}
               </div>
             </div>
           </section>

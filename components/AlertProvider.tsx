@@ -3,7 +3,7 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
 
 type AlertContextType = {
-  showAlert: (message: string) => void;
+  showAlert: (message: React.ReactNode) => void;
 };
 
 const AlertContext = createContext<AlertContextType | null>(null);
@@ -17,9 +17,9 @@ export const useAlert = () => {
 };
 
 const AlertProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<React.ReactNode | null>(null);
 
-  const showAlert = useCallback((msg: string) => {
+  const showAlert = useCallback((msg: React.ReactNode) => {
     setMessage(msg);
   }, []);
 
@@ -33,7 +33,7 @@ const AlertProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       {message && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
           <div className="w-full max-w-md rounded-2xl border border-white/20 bg-black/90 p-6 text-left text-white shadow-2xl">
-            <p className="mb-4 text-sm text-gray-200">{message}</p>
+            <div className="mb-4 text-sm text-gray-200">{message}</div>
             <div className="flex justify-end">
               <button
                 type="button"
