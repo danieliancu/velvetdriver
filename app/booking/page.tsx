@@ -4,7 +4,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PlusCircle, XCircle } from 'lucide-react';
-import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
+import { Elements, PaymentElement, PaymentRequestButtonElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
 import PageShell from '@/components/PageShell';
 import BookingInput from '@/components/BookingInput';
@@ -114,6 +114,8 @@ const BookingPageInner = () => {
     const [stripePublishableKey, setStripePublishableKey] = useState<string | null>(null);
     const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
     const [paymentError, setPaymentError] = useState<string | null>(null);
+    const [paymentOption, setPaymentOption] = useState<'pay_now' | 'pay_driver' | 'invoice'>('pay_now');
+    const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
     const draftLoadedRef = useRef(false);
     const draftKey = 'velvetdriver.booking.draft';
 
@@ -1227,7 +1229,16 @@ const BookingPageInner = () => {
             showAlert('Unable to calculate fare for checkout.');
             return;
         }
-        setBookingSubmitting(true);
+        setCheckoutActive(true);
+        setStripeClientSecret(null);
+        setStripePublishableKey(null);
+        setPaymentIntentId(null);
+        setPaymentError(null);
+    };
+
+    const createPaymentIntent = async () => {
+        if (!pendingBookingPayload?.totalFare || paymentIntentLoading || stripeClientSecret) return;
+        setPaymentIntentLoading(true);
         setPaymentError(null);
         try {
             const response = await fetch('/api/stripe/create-payment-intent', {
@@ -1250,11 +1261,10 @@ const BookingPageInner = () => {
             setStripeClientSecret(data?.clientSecret ?? null);
             setStripePublishableKey(data?.publishableKey ?? null);
             setPaymentIntentId(data?.paymentIntentId ?? null);
-            setCheckoutActive(true);
         } catch (err: any) {
             setPaymentError(err?.message || 'Failed to start checkout.');
         } finally {
-            setBookingSubmitting(false);
+            setPaymentIntentLoading(false);
         }
     };
 
@@ -1288,6 +1298,36 @@ const BookingPageInner = () => {
         }
     };
 
+    const finalizeBookingManual = async (method: 'Pay to driver' | 'Pay by invoice') => {
+        setBookingSubmitting(true);
+        try {
+            const response = await fetch('/api/booking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...pendingBookingPayload,
+                    paymentIntentId: null,
+                    paymentStatus: 'pending',
+                    paymentMethod: method,
+                    paymentAmount: Number(pendingBookingPayload.totalFare),
+                    paymentCurrency: 'GBP',
+                }),
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data?.error || 'Failed to submit booking');
+            }
+            setShowVerificationModal(false);
+            setCheckoutActive(false);
+            showAlert('Booking request sent. Payment will be arranged separately.');
+            router.push(user ? '/client/dashboard' : '/');
+        } catch (err: any) {
+            showAlert(err?.message || 'Failed to submit booking.');
+        } finally {
+            setBookingSubmitting(false);
+        }
+    };
+
     const handleGoBackAndVerify = () => {
         setShowVerificationModal(false);
         setPendingBookingPayload(null);
@@ -1297,6 +1337,12 @@ const BookingPageInner = () => {
         setPaymentIntentId(null);
         setPaymentError(null);
     };
+
+    useEffect(() => {
+        if (!checkoutActive) return;
+        if (paymentOption !== 'pay_now') return;
+        createPaymentIntent();
+    }, [checkoutActive, paymentOption, stripeClientSecret, pendingBookingPayload?.totalFare]);
 
     return (
         <PageShell mainClassName="flex items-center justify-center py-24">
@@ -1682,23 +1728,75 @@ const BookingPageInner = () => {
                                         {paymentError}
                                     </div>
                                 )}
-                                {stripePromise && stripeClientSecret ? (
-                                    <Elements
-                                        stripe={stripePromise}
-                                        options={{
-                                            clientSecret: stripeClientSecret,
-                                            appearance: { theme: 'stripe' },
-                                        }}
-                                    >
-                                        <PaymentForm
-                                            amount={Number(pendingBookingPayload?.totalFare ?? 0)}
-                                            onSuccess={finalizeBooking}
-                                            onError={setPaymentError}
-                                            disabled={bookingSubmitting}
-                                        />
-                                    </Elements>
+                                {user && (
+                                    <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
+                                        <p className="text-sm text-gray-300">Choose payment method</p>
+                                        <div className="flex flex-col sm:flex-row gap-3">
+                                            {[
+                                                { key: 'pay_now', label: 'Pay now' },
+                                                { key: 'pay_driver', label: 'Pay to driver' },
+                                                { key: 'invoice', label: 'Pay by invoice' },
+                                            ].map((option) => (
+                                                <label
+                                                    key={option.key}
+                                                    className={`flex-1 cursor-pointer rounded-lg border px-4 py-3 text-sm font-semibold transition ${
+                                                        paymentOption === option.key
+                                                            ? 'border-amber-400 bg-amber-500/10 text-amber-200'
+                                                            : 'border-white/10 bg-black/20 text-gray-300 hover:border-amber-500/50'
+                                                    }`}
+                                                >
+                                                    <input
+                                                        type="radio"
+                                                        name="paymentOption"
+                                                        className="mr-2"
+                                                        value={option.key}
+                                                        checked={paymentOption === option.key}
+                                                        onChange={() => setPaymentOption(option.key as typeof paymentOption)}
+                                                    />
+                                                    {option.label}
+                                                </label>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                {paymentOption === 'pay_now' ? (
+                                    stripePromise && stripeClientSecret ? (
+                                        <Elements
+                                            stripe={stripePromise}
+                                            options={{
+                                                clientSecret: stripeClientSecret,
+                                                appearance: { theme: 'stripe' },
+                                            }}
+                                        >
+                                            <PaymentForm
+                                                amount={Number(pendingBookingPayload?.totalFare ?? 0)}
+                                                clientSecret={stripeClientSecret}
+                                                onSuccess={finalizeBooking}
+                                                onError={setPaymentError}
+                                                disabled={bookingSubmitting}
+                                            />
+                                        </Elements>
+                                    ) : (
+                                        <p className="text-sm text-gray-300">Preparing secure payment form...</p>
+                                    )
                                 ) : (
-                                    <p className="text-sm text-gray-300">Preparing secure payment form...</p>
+                                    <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
+                                        <p className="text-sm text-gray-300">
+                                            {paymentOption === 'pay_driver'
+                                                ? 'You will pay the chauffeur directly on the day of the journey.'
+                                                : 'An invoice will be issued to your account after the booking is confirmed.'}
+                                        </p>
+                                        <button
+                                            type="button"
+                                            disabled={bookingSubmitting}
+                                            onClick={() =>
+                                                finalizeBookingManual(paymentOption === 'pay_driver' ? 'Pay to driver' : 'Pay by invoice')
+                                            }
+                                            className="w-full px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 disabled:opacity-60"
+                                        >
+                                            {bookingSubmitting ? 'Submitting...' : 'Confirm booking request'}
+                                        </button>
+                                    </div>
                                 )}
                             </>
                         )}
@@ -1710,15 +1808,17 @@ const BookingPageInner = () => {
 
 type PaymentFormProps = {
     amount: number;
+    clientSecret: string;
     disabled: boolean;
     onSuccess: (paymentIntent: { id: string; status: string }) => void;
     onError: (message: string) => void;
 };
 
-const PaymentForm = ({ amount, disabled, onSuccess, onError }: PaymentFormProps) => {
+const PaymentForm = ({ amount, clientSecret, disabled, onSuccess, onError }: PaymentFormProps) => {
     const stripe = useStripe();
     const elements = useElements();
     const [submitting, setSubmitting] = useState(false);
+    const [paymentRequest, setPaymentRequest] = useState<any>(null);
 
     const handleSubmit = async (event: FormEvent) => {
         event.preventDefault();
@@ -1750,12 +1850,71 @@ const PaymentForm = ({ amount, disabled, onSuccess, onError }: PaymentFormProps)
         }
     };
 
+    useEffect(() => {
+        if (!stripe || !clientSecret) return;
+        const pr = stripe.paymentRequest({
+            country: 'GB',
+            currency: 'gbp',
+            total: {
+                label: 'Velvet Drivers',
+                amount: Math.round(amount * 100),
+            },
+            requestPayerName: true,
+            requestPayerEmail: true,
+        });
+        pr.canMakePayment().then((result) => {
+            if (result) setPaymentRequest(pr);
+        });
+        pr.on('paymentmethod', async (event: any) => {
+            try {
+                const { error: confirmError, paymentIntent } = await stripe.confirmCardPayment(
+                    clientSecret,
+                    { payment_method: event.paymentMethod.id },
+                    { handleActions: false }
+                );
+                if (confirmError || !paymentIntent) {
+                    event.complete('fail');
+                    onError(confirmError?.message || 'Payment failed.');
+                    return;
+                }
+                event.complete('success');
+                if (paymentIntent.status === 'requires_action') {
+                    const { error: actionError, paymentIntent: finalIntent } = await stripe.confirmCardPayment(clientSecret);
+                    if (actionError || !finalIntent) {
+                        onError(actionError?.message || 'Payment failed.');
+                        return;
+                    }
+                    if (finalIntent.status === 'succeeded') {
+                        onSuccess({ id: finalIntent.id, status: finalIntent.status });
+                        return;
+                    }
+                }
+                if (paymentIntent.status === 'succeeded') {
+                    onSuccess({ id: paymentIntent.id, status: paymentIntent.status });
+                    return;
+                }
+                onError('Payment not completed. Please try again.');
+            } catch (err: any) {
+                onError(err?.message || 'Payment failed.');
+            }
+        });
+        return () => {
+            pr.off('paymentmethod');
+        };
+    }, [stripe, clientSecret, amount, onError, onSuccess]);
+
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
             <div className="rounded-lg border border-white/10 bg-black/30 p-4">
                 <p className="text-sm text-gray-300">Amount due</p>
                 <p className="text-2xl font-semibold text-amber-200">GBP{amount.toFixed(2)}</p>
             </div>
+            {paymentRequest && (
+                <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-2">
+                    <p className="text-xs uppercase tracking-wider text-amber-300/80">Express checkout</p>
+                    <PaymentRequestButtonElement options={{ paymentRequest }} />
+                </div>
+            )}
             <div className="rounded-lg border border-white/10 bg-black/30 p-4">
                 <PaymentElement />
             </div>
