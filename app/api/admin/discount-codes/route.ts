@@ -99,3 +99,72 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'Failed to update discount code' }, { status: 500 });
   }
 }
+
+export async function PUT(request: Request) {
+  try {
+    const body = await request.json();
+    const id = Number(body.id);
+    const code = String(body.code ?? '').trim().toUpperCase();
+    const name = String(body.name ?? '').trim();
+    const amount = Number(body.amount ?? 0);
+    const type = String(body.type ?? '').trim();
+    const startsAt = body.startsAt ? String(body.startsAt) : null;
+    const endsAt = body.endsAt ? String(body.endsAt) : null;
+    const isActive = body.isActive === false ? 0 : 1;
+
+    if (!id || !code || !name || !amount || !['fixed', 'percent'].includes(type)) {
+      return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
+    }
+
+    const [result] = await pool.execute<mysql.ResultSetHeader>(
+      `UPDATE discount_codes
+          SET code = ?,
+              name = ?,
+              amount = ?,
+              discount_type = ?,
+              starts_at = ?,
+              ends_at = ?,
+              is_active = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        LIMIT 1`,
+      [code, name, amount, type, startsAt, endsAt, isActive, id]
+    );
+
+    if (!result.affectedRows) {
+      return NextResponse.json({ error: 'Discount code not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (err: any) {
+    if (err?.code === 'ER_DUP_ENTRY') {
+      return NextResponse.json({ error: 'Code already exists' }, { status: 409 });
+    }
+    console.error('Discount codes edit error', err);
+    return NextResponse.json({ error: 'Failed to edit discount code' }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const body = await request.json();
+    const id = Number(body.id);
+    if (!id) {
+      return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
+    }
+
+    const [result] = await pool.execute<mysql.ResultSetHeader>(
+      `DELETE FROM discount_codes WHERE id = ? LIMIT 1`,
+      [id]
+    );
+
+    if (!result.affectedRows) {
+      return NextResponse.json({ error: 'Discount code not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error('Discount codes delete error', err);
+    return NextResponse.json({ error: 'Failed to delete discount code' }, { status: 500 });
+  }
+}

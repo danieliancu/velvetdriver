@@ -87,6 +87,17 @@ const buildBookingSummary = (booking: LiveBooking) => {
   return `Time: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${pickupLine}\n\nTO\n\n${dropOffLine}\n\nPrice:  ${booking.priceDetails}\n\nNotes: ${booking.notes}`;
 };
 
+const getJourneyTimestamp = (booking: LiveBooking) => {
+  if (booking.journeyDate) {
+    const parsed = new Date(booking.journeyDate);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+  }
+
+  // Fallback for legacy payloads without journeyDate.
+  const fallback = new Date(`${booking.date}T${booking.time}`);
+  return Number.isNaN(fallback.getTime()) ? null : fallback.getTime();
+};
+
 const AdminDashboardPage: React.FC = () => {
   const [liveBookings, setLiveBookings] = useState<LiveBooking[]>([]);
   const [liveLoading, setLiveLoading] = useState(true);
@@ -291,9 +302,28 @@ const AdminDashboardPage: React.FC = () => {
     }
   };
 
-  const hasAllocation = (booking: LiveBooking) => Boolean(booking.driverId);
+  const partitionedBookings = React.useMemo(() => {
+    const now = Date.now();
+    const live: LiveBooking[] = [];
+    const history: LiveBooking[] = [];
 
-  const activeBookings = liveBookings.filter((booking) => !hasAllocation(booking));
+    for (const booking of liveBookings) {
+      const allocatedToDriver = Boolean(booking.driverId);
+      const journeyTime = getJourneyTimestamp(booking);
+      const shouldBeVisibleInHistory = allocatedToDriver && journeyTime !== null && journeyTime <= now;
+
+      if (shouldBeVisibleInHistory) {
+        history.push(booking);
+      } else if (!allocatedToDriver) {
+        live.push(booking);
+      }
+    }
+
+    return { live, history };
+  }, [liveBookings]);
+
+  const activeBookings = partitionedBookings.live;
+  const jobHistoryBookings = partitionedBookings.history;
 
   const pendingClientConfirmations = activeBookings.filter(
     (booking) => !clientConfirmed[booking.id]
@@ -503,7 +533,7 @@ const AdminDashboardPage: React.FC = () => {
                 ) : liveError ? (
                   <p className="text-sm text-red-400">{liveError}</p>
                 ) : activeBookings.length === 0 ? (
-                  <p className="text-sm text-gray-400">All live bookings are completed.</p>
+                  <p className="text-sm text-gray-400">No live bookings right now.</p>
                 ) : (
                   activeBookings.map((booking) => {
                     const confirmed = clientConfirmed[booking.id];
@@ -772,6 +802,47 @@ const AdminDashboardPage: React.FC = () => {
               </div>
             </section>
 
+            <section className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold text-white">Job History</h3>
+                <span className="text-xs text-gray-400">{jobHistoryBookings.length} item(s)</span>
+              </div>
+              {jobHistoryBookings.length === 0 ? (
+                <p className="text-sm text-gray-400">No jobs have started yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {jobHistoryBookings.map((booking) => (
+                    <article
+                      key={`history-${booking.id}`}
+                      className="rounded-xl border border-white/10 bg-black/40 p-4"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-white">{booking.id}</p>
+                        <p className="text-xs text-gray-400">
+                          {booking.date} {booking.time}
+                        </p>
+                      </div>
+                      <p className="mt-2 text-sm text-gray-300">
+                        Pickup: <span className="text-white">{booking.pickup}</span>
+                      </p>
+                      <p className="text-sm text-gray-300">
+                        Drop-off: <span className="text-white">{booking.dropOff}</span>
+                      </p>
+                      <p className="text-sm text-gray-300">
+                        Passenger: <span className="text-white">{booking.passenger}</span>
+                      </p>
+                      <p className="text-sm text-gray-300">
+                        Driver: <span className="text-white">{booking.driverId || 'Pending assignment'}</span>
+                      </p>
+                      <p className="text-sm text-gray-300">
+                        Price: <span className="text-white">{booking.priceDetails}</span>
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+
           </main>
         </div>
       </div>
@@ -831,9 +902,5 @@ const AdminDashboardPage: React.FC = () => {
 };
 
 export default AdminDashboardPage;
-
-
-
-
 
 

@@ -25,6 +25,8 @@ const AdminMarketingPage = () => {
   const [amount, setAmount] = useState<number | ''>('');
   const [unit, setUnit] = useState<MarketingRule['unit']>('percent');
   const [isActive, setIsActive] = useState(true);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [actionBusyId, setActionBusyId] = useState<number | null>(null);
 
   const isValid = useMemo(
     () => !!code.trim() && !!name.trim() && amount !== '',
@@ -38,7 +40,19 @@ const AdminMarketingPage = () => {
       const res = await fetch('/api/admin/discount-codes', { cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to load discount codes');
       const data = await res.json();
-      setRules(Array.isArray(data.codes) ? data.codes : []);
+      const mapped = Array.isArray(data.codes)
+        ? data.codes.map((entry: any) => ({
+            id: Number(entry.id),
+            code: String(entry.code || ''),
+            name: String(entry.name || ''),
+            from: entry.startsAt ? String(entry.startsAt).slice(0, 10) : null,
+            to: entry.endsAt ? String(entry.endsAt).slice(0, 10) : null,
+            amount: Number(entry.amount || 0),
+            unit: entry.type === 'fixed' ? 'fixed' : 'percent',
+            isActive: Boolean(entry.isActive),
+          }))
+        : [];
+      setRules(mapped);
     } catch (err: any) {
       setError(err?.message || 'Failed to load discount codes');
     } finally {
@@ -53,10 +67,12 @@ const AdminMarketingPage = () => {
   const handleSave = async () => {
     if (!isValid || amount === '') return;
     try {
+      const method = editingId ? 'PUT' : 'POST';
       const res = await fetch('/api/admin/discount-codes', {
-        method: 'POST',
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: editingId,
           code: code.trim(),
           name: name.trim(),
           amount: Number(amount),
@@ -82,6 +98,7 @@ const AdminMarketingPage = () => {
     setAmount('');
     setUnit('percent');
     setIsActive(true);
+    setEditingId(null);
   };
 
   const toggleActive = async (id: number, next: boolean) => {
@@ -95,6 +112,47 @@ const AdminMarketingPage = () => {
       setRules((prev) => prev.map((rule) => (rule.id === id ? { ...rule, isActive: next } : rule)));
     } catch (err: any) {
       setError(err?.message || 'Failed to update status');
+    }
+  };
+
+  const handleEdit = (rule: MarketingRule) => {
+    setEditingId(rule.id);
+    setCode(rule.code);
+    setName(rule.name);
+    setFrom(rule.from || '');
+    setTo(rule.to || '');
+    setAmount(rule.amount);
+    setUnit(rule.unit);
+    setIsActive(rule.isActive);
+  };
+
+  const handleDelete = async (id: number) => {
+    setActionBusyId(id);
+    try {
+      const res = await fetch('/api/admin/discount-codes', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to delete discount code');
+      }
+      setRules((prev) => prev.filter((rule) => rule.id !== id));
+      if (editingId === id) {
+        setEditingId(null);
+        setCode('');
+        setName('');
+        setFrom('');
+        setTo('');
+        setAmount('');
+        setUnit('percent');
+        setIsActive(true);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete discount code');
+    } finally {
+      setActionBusyId(null);
     }
   };
 
@@ -195,7 +253,7 @@ const AdminMarketingPage = () => {
                   disabled={!isValid}
                   className="w-full rounded-lg border border-amber-400 bg-amber-400 px-3 py-2 text-sm font-semibold text-black shadow-[0_0_15px_rgba(251,191,36,0.35)] hover:shadow-[0_0_25px_rgba(251,191,36,0.55)] transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Save
+                  {editingId ? 'Update' : 'Save'}
                 </button>
               </div>
             </div>
@@ -236,6 +294,21 @@ const AdminMarketingPage = () => {
                         }`}
                       >
                         {rule.isActive ? 'Active' : 'Inactive'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleEdit(rule)}
+                        className="rounded-full border border-amber-400/70 px-3 py-1 text-[11px] uppercase tracking-wide text-amber-200 hover:bg-amber-500/10"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(rule.id)}
+                        disabled={actionBusyId === rule.id}
+                        className="rounded-full border border-red-500/70 px-3 py-1 text-[11px] uppercase tracking-wide text-red-200 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {actionBusyId === rule.id ? 'Deleting...' : 'Delete'}
                       </button>
                     </div>
                   ))

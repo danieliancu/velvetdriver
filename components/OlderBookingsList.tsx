@@ -152,10 +152,16 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
     };
   }, []);
 
-  const allocatedBookings = useMemo(
-    () => bookings.filter((booking) => booking.driverId),
-    [bookings]
-  );
+  const allocatedBookings = useMemo(() => {
+    const now = Date.now();
+    return bookings.filter((booking) => {
+      if (!booking.driverId) return false;
+      const source = booking.journeyDate || `${booking.date}T${booking.time}`;
+      const journeyTime = new Date(source);
+      if (Number.isNaN(journeyTime.getTime())) return false;
+      return journeyTime.getTime() <= now;
+    });
+  }, [bookings]);
 
   const filteredBookings = useMemo(() => {
     if (!query.trim()) {
@@ -247,7 +253,7 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
         </div>
       ) : groupedBookings.length === 0 ? (
         <div className="rounded-2xl border border-white/10 bg-black/40 p-8 text-center text-gray-400">
-          No allocated bookings yet.
+          No jobs in history yet.
         </div>
       ) : (
         <div className="space-y-6">
