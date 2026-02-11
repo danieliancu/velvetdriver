@@ -9,11 +9,15 @@ type DriverDirectoryEntry = {
   phone: string;
   email: string;
   license: string;
-  plateNo: string;
-  make: string;
-  model: string;
-  carLabel: string;
-  vehicleTypeId: number | null;
+  cars: Array<{
+    id: number;
+    status: string;
+    plateNo: string;
+    make: string;
+    model: string;
+    vehicleTypeId: number | null;
+    vehicleTypeLabel: string;
+  }>;
 };
 
 type LiveBooking = {
@@ -65,6 +69,8 @@ type LiveBookingResponse = {
   clientConfirmed?: boolean;
 };
 
+type VehicleTier = 'executive' | 'luxury' | 'luxury_mpv' | null;
+
 const formatPhoneForWhatsApp = (phone: string) => phone.replace(/\D/g, '');
 
 const buildGoogleMapsLink = (location: string) => {
@@ -87,6 +93,21 @@ const buildBookingSummary = (booking: LiveBooking) => {
   return `Time: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${pickupLine}\n\nTO\n\n${dropOffLine}\n\nPrice:  ${booking.priceDetails}\n\nNotes: ${booking.notes}`;
 };
 
+const formatCarLabel = (car: {
+  make: string;
+  model: string;
+  plateNo: string;
+}) => {
+  const makeModel = [car.make, car.model].filter((item) => item && item !== '-').join(' ').trim();
+  if (makeModel && car.plateNo && car.plateNo !== '-') return `${makeModel} - ${car.plateNo}`;
+  return makeModel || car.plateNo || 'Unknown car';
+};
+
+const appendSelectedCarInstruction = (message: string, selectedCarLabel?: string) => {
+  if (!selectedCarLabel) return message;
+  return `${message}\n\nPlease use the car ${selectedCarLabel}`;
+};
+
 const getJourneyTimestamp = (booking: LiveBooking) => {
   if (booking.journeyDate) {
     const parsed = new Date(booking.journeyDate);
@@ -97,6 +118,62 @@ const getJourneyTimestamp = (booking: LiveBooking) => {
   const fallback = new Date(`${booking.date}T${booking.time}`);
   return Number.isNaN(fallback.getTime()) ? null : fallback.getTime();
 };
+
+const formatBookingCreatedAt = (createdAt?: string | null) => {
+  if (!createdAt) return '';
+  const parsed = new Date(createdAt);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+};
+
+const resolveVehicleTier = (label?: string | null): VehicleTier => {
+  if (!label) return null;
+  const normalized = label.toLowerCase().trim();
+  if (normalized.includes('luxury mpv')) return 'luxury_mpv';
+  if (normalized.includes('luxury')) return 'luxury';
+  if (normalized.includes('executive')) return 'executive';
+  return null;
+};
+
+const canServeVehicleType = (
+  driverVehicleTypeId: number | null,
+  bookingVehicleTypeId: number | null,
+  vehicleLabelById: Record<number, string>
+) => {
+  if (!bookingVehicleTypeId) return true;
+  if (!driverVehicleTypeId) return false;
+
+  const bookingTier = resolveVehicleTier(vehicleLabelById[bookingVehicleTypeId]);
+  const driverTier = resolveVehicleTier(vehicleLabelById[driverVehicleTypeId]);
+
+  if (!bookingTier || !driverTier) {
+    return driverVehicleTypeId === bookingVehicleTypeId;
+  }
+
+  if (driverTier === 'luxury_mpv') {
+    return bookingTier === 'luxury_mpv' || bookingTier === 'luxury' || bookingTier === 'executive';
+  }
+  if (driverTier === 'luxury') {
+    return bookingTier === 'luxury' || bookingTier === 'executive';
+  }
+  return bookingTier === 'executive';
+};
+
+const getEligibleCarsForBooking = (
+  driver: DriverDirectoryEntry,
+  bookingVehicleTypeId: number | null,
+  vehicleLabelById: Record<number, string>
+) =>
+  driver.cars.filter((car) =>
+    canServeVehicleType(car.vehicleTypeId ?? null, bookingVehicleTypeId, vehicleLabelById)
+  );
 
 const AdminDashboardPage: React.FC = () => {
   const [liveBookings, setLiveBookings] = useState<LiveBooking[]>([]);
@@ -109,11 +186,13 @@ const AdminDashboardPage: React.FC = () => {
   const [pendingDriverConfirmKey, setPendingDriverConfirmKey] = useState<string | null>(null);
   const [pendingClientConfirmId, setPendingClientConfirmId] = useState<string | null>(null);
   const [commissionInputs, setCommissionInputs] = useState<Record<string, string>>({});
+  const [selectedCarByDriverKey, setSelectedCarByDriverKey] = useState<Record<string, number>>({});
   const [availableDrivers, setAvailableDrivers] = useState<DriverDirectoryEntry[]>([]);
   // Manual booking modal removed; navigate to booking page instead.
   const [staffOptions, setStaffOptions] = useState<Array<{ id: number; name: string }>>([]);
   const [bookedBySelection, setBookedBySelection] = useState<Record<string, string>>({});
   const [bookedBySaving, setBookedBySaving] = useState<Record<string, boolean>>({});
+  const [vehicleLabelById, setVehicleLabelById] = useState<Record<number, string>>({});
 
   const fallbackActive: LiveBooking[] = [
     {
@@ -143,30 +222,34 @@ const AdminDashboardPage: React.FC = () => {
         if (!res.ok) return;
         const data = await res.json();
         if (!isMounted) return;
+        const pricingVehicleMap = (data.pricingVehicles || []).reduce(
+          (acc: Record<number, string>, vehicle: { id?: number; label?: string }) => {
+            if (!vehicle?.id) return acc;
+            acc[Number(vehicle.id)] = String(vehicle.label || '');
+            return acc;
+          },
+          {}
+        );
+        setVehicleLabelById(pricingVehicleMap);
         const mapped = (data.drivers || []).map((driver: any) => {
-          const activeCar = Array.isArray(driver.carDetails)
-            ? driver.carDetails.find((car: any) => car.status === 'active')
-            : null;
-          const fallbackCar = !activeCar && Array.isArray(driver.carDetails) ? driver.carDetails[0] : null;
-          const selectedCar = activeCar || fallbackCar;
-          const make = selectedCar?.make || '-';
-          const model = selectedCar?.model || '-';
-          const plateNo = selectedCar?.vrm || '-';
-          const carLabel =
-            make !== '-' || model !== '-'
-              ? `${[make, model].filter((value) => value && value !== '-').join(' ')} · ${plateNo}`
-              : plateNo;
+          const cars = Array.isArray(driver.carDetails)
+            ? driver.carDetails.map((car: any) => ({
+                id: Number(car.id),
+                status: String(car.status || 'inactive').toLowerCase(),
+                plateNo: car.vrm || '-',
+                make: car.make || '-',
+                model: car.model || '-',
+                vehicleTypeId: car.vehicleTypeId ?? null,
+                vehicleTypeLabel: car.vehicleTypeLabel || '-',
+              }))
+            : [];
           return {
             id: String(driver.id),
             name: driver.name,
             phone: driver.phone || '-',
             email: driver.email || '-',
             license: driver.license || '-',
-            plateNo,
-            make,
-            model,
-            carLabel,
-            vehicleTypeId: selectedCar?.vehicleTypeId ?? null,
+            cars,
           } as DriverDirectoryEntry;
         });
         setAvailableDrivers(mapped);
@@ -319,6 +402,19 @@ const AdminDashboardPage: React.FC = () => {
       }
     }
 
+    live.sort((a, b) => {
+      const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
+      const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : NaN;
+
+      if (!Number.isNaN(aCreated) && !Number.isNaN(bCreated)) {
+        return bCreated - aCreated;
+      }
+      if (!Number.isNaN(aCreated)) return -1;
+      if (!Number.isNaN(bCreated)) return 1;
+
+      return b.journeyId - a.journeyId;
+    });
+
     return { live, history };
   }, [liveBookings]);
 
@@ -393,8 +489,23 @@ const AdminDashboardPage: React.FC = () => {
     setDriversExpanded((prev) => ({ ...prev, [bookingId]: !prev[bookingId] }));
   };
 
-  const handlePasteInfo = (driverKey: string, booking: LiveBooking) => {
-    setDriverMessages((prev) => ({ ...prev, [driverKey]: buildBookingSummary(booking) }));
+  const getSelectedCarLabel = (driverKey: string, eligibleCars: DriverDirectoryEntry['cars']) => {
+    const selectedCarId = selectedCarByDriverKey[driverKey];
+    if (!selectedCarId) return '';
+    const selectedCar = eligibleCars.find((car) => car.id === selectedCarId);
+    return selectedCar ? formatCarLabel(selectedCar) : '';
+  };
+
+  const handlePasteInfo = (
+    driverKey: string,
+    booking: LiveBooking,
+    selectedCarLabel?: string
+  ) => {
+    const baseMessage = buildBookingSummary(booking);
+    setDriverMessages((prev) => ({
+      ...prev,
+      [driverKey]: appendSelectedCarInstruction(baseMessage, selectedCarLabel),
+    }));
   };
 
   const openWhatsAppChat = (driverKey: string, text: string) => {
@@ -413,9 +524,10 @@ const AdminDashboardPage: React.FC = () => {
     }
   };
 
-  const handleSend = (driverKey: string, fallbackMessage?: string) => {
+  const handleSend = (driverKey: string, fallbackMessage?: string, selectedCarLabel?: string) => {
     const draft = (driverMessages[driverKey] ?? '').trim();
-    const message = draft || fallbackMessage?.trim() || '';
+    const baseMessage = draft || fallbackMessage?.trim() || '';
+    const message = appendSelectedCarInstruction(baseMessage, selectedCarLabel);
     if (!message) return;
     openWhatsAppChat(driverKey, message);
     setDriverMessages((prev) => ({ ...prev, [driverKey]: '' }));
@@ -537,15 +649,17 @@ const AdminDashboardPage: React.FC = () => {
                 ) : (
                   activeBookings.map((booking) => {
                     const confirmed = clientConfirmed[booking.id];
+                    const bookingCreatedAt = formatBookingCreatedAt(booking.createdAt);
                     const bookingDrivers = availableDrivers
-                      .filter((driver) =>
-                        booking.vehicleTypeId
-                          ? driver.vehicleTypeId === booking.vehicleTypeId
-                          : true
-                      )
-                      .map((driver) => ({
-                        ...driver,
-                      }));
+                      .map((driver) => {
+                        const eligibleCars = getEligibleCarsForBooking(
+                          driver,
+                          booking.vehicleTypeId ?? null,
+                          vehicleLabelById
+                        );
+                        return { ...driver, eligibleCars };
+                      })
+                      .filter((driver) => driver.eligibleCars.length > 0);
                     const bookingAllocated = Boolean(booking.driverId);
 
                     return (
@@ -555,7 +669,14 @@ const AdminDashboardPage: React.FC = () => {
                       >
                         <div className="flex flex-col gap-6 lg:flex-column md:basis-1/2 md:min-w-[300px]">
                           <div className="flex-1 space-y-3">
-                            <p className="text-sm font-semibold tracking-wide text-white">{booking.id}</p>
+                            <p className="text-sm tracking-wide text-white flex items-center gap-3">
+                              <span className="inline-flex h-6 items-center font-semibold">{booking.id}</span>
+                              {bookingCreatedAt ? (
+                                <span className="inline-flex h-6 items-center rounded-full border border-white/25 px-3.5 text-xs font-normal text-gray-300">
+                                  {bookingCreatedAt}
+                                </span>
+                              ) : null}
+                            </p>
                             <p className="text-sm text-gray-300">
                               Pickup: <span className="font-semibold text-white">{booking.pickup}</span>
                             </p>
@@ -669,6 +790,7 @@ const AdminDashboardPage: React.FC = () => {
                                       const messageValue = driverMessages[driverKey] ?? '';
                                       const bookingLocked = bookingAllocated && !confirmedDriver;
                                       const commissionValue = commissionInputs[driverKey] ?? '20';
+                                      const selectedCarLabel = getSelectedCarLabel(driverKey, driver.eligibleCars);
 
                                       return (
                                         <div
@@ -679,9 +801,42 @@ const AdminDashboardPage: React.FC = () => {
                                             <div>
                                               <p className="text-sm font-semibold text-white">{driver.name}</p>
                                               <p className="text-[11px] text-gray-400">Phone: {driver.phone}</p>
-                                              <p className="text-[11px] text-gray-400">Plate no: {driver.plateNo}</p>
-                                              <p className="text-[11px] text-gray-400">Make: {driver.make}</p>
-                                              <p className="text-[11px] text-gray-400">Model: {driver.model}</p>
+                                              <div className="mt-2 space-y-1">
+                                                <p className="text-[11px] uppercase tracking-[0.2em] text-gray-400">
+                                                  Cars (eligible)
+                                                </p>
+                                                {driver.eligibleCars.map((car) => {
+                                                  const optionId = `${driverKey}-car-${car.id}`;
+                                                  const checked = selectedCarByDriverKey[driverKey] === car.id;
+                                                  return (
+                                                    <label
+                                                      key={optionId}
+                                                      htmlFor={optionId}
+                                                      className="flex items-center gap-2 text-[11px] text-gray-300"
+                                                    >
+                                                      <input
+                                                        id={optionId}
+                                                        type="radio"
+                                                        name={`${driverKey}-car`}
+                                                        checked={checked}
+                                                        onChange={() =>
+                                                          setSelectedCarByDriverKey((prev) => ({
+                                                            ...prev,
+                                                            [driverKey]: car.id,
+                                                          }))
+                                                        }
+                                                        className="h-3.5 w-3.5 accent-amber-400"
+                                                      />
+                                                      <span>
+                                                        {formatCarLabel(car)}
+                                                        <span className="ml-2 text-gray-500">
+                                                          ({car.vehicleTypeLabel} | {car.status})
+                                                        </span>
+                                                      </span>
+                                                    </label>
+                                                  );
+                                                })}
+                                              </div>
                                             </div>
                                             <div className="flex flex-wrap items-center gap-3">
                                               <button
@@ -763,14 +918,22 @@ const AdminDashboardPage: React.FC = () => {
                                               <div className="flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-300">
                                                 <button
                                                   type="button"
-                                                  onClick={() => handlePasteInfo(driverKey, booking)}
+                                                  onClick={() =>
+                                                    handlePasteInfo(driverKey, booking, selectedCarLabel || undefined)
+                                                  }
                                                   className="rounded-full border border-white/20 px-3 py-1 text-xs text-white transition hover:border-amber-400"
                                                 >
                                                   Paste booking info
                                                 </button>
                                                 <button
                                                   type="button"
-                                                  onClick={() => handleSend(driverKey, buildBookingSummary(booking))}
+                                                  onClick={() =>
+                                                    handleSend(
+                                                      driverKey,
+                                                      buildBookingSummary(booking),
+                                                      selectedCarLabel || undefined
+                                                    )
+                                                  }
                                                   disabled={!messageValue.trim()}
                                                   className="rounded-full border border-white/20 px-3 py-1 text-xs text-white transition hover:border-amber-400 disabled:opacity-50 disabled:cursor-not-allowed"
                                                 >
@@ -902,5 +1065,4 @@ const AdminDashboardPage: React.FC = () => {
 };
 
 export default AdminDashboardPage;
-
 
