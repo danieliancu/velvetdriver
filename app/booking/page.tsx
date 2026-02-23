@@ -290,14 +290,14 @@ const BookingPageInner = () => {
     const getZoneMileageRate = (veh: string, zoneId: number | null) => {
         const vp = vehiclePricing(veh);
         if (!zoneId) return vp.mileage.tier2;
-        if (zoneId <= 4) return vp.innerZoneOverride;
+        if (zoneId <= 3) return vp.innerZoneOverride;
         return vp.mileage.tier2;
     };
 
     const pickAppliedZone = (originZone: number | null, destinationZone: number | null) => {
         const zones = [originZone, destinationZone].filter((z): z is number => z != null);
         if (!zones.length) return null;
-        const touchesInner = zones.some((z) => z <= 4);
+        const touchesInner = zones.some((z) => z <= 3);
         if (touchesInner) {
             return Math.min(...zones);
         }
@@ -1053,7 +1053,7 @@ const BookingPageInner = () => {
                 (sum, leg) =>
                     sum +
                     leg.zoneSegments.reduce(
-                        (innerSum, segment) => innerSum + (segment.zoneId != null && segment.zoneId <= 4 ? segment.miles : 0),
+                        (innerSum, segment) => innerSum + (segment.zoneId != null && segment.zoneId <= 3 ? segment.miles : 0),
                         0
                     ),
                 0
@@ -1128,7 +1128,7 @@ const BookingPageInner = () => {
         serviceType === 'As Directed'
             ? `Mileage: hourly rate GBP${hourlyRate.toFixed(2)}/h`
             : hasZoneOverride
-                ? `Mileage: Zone 1-4 ${zoneInnerMiles.toFixed(1)} mi x GBP${zoneOverrideRate.toFixed(2)} = GBP${zoneInnerCost.toFixed(2)}; Outside zones ${zoneOuterMiles.toFixed(1)} mi x GBP${standardMileageRate.toFixed(2)} = GBP${zoneOuterCost.toFixed(2)}`
+                ? `Mileage: Zone 1-3 ${zoneInnerMiles.toFixed(1)} mi x GBP${zoneOverrideRate.toFixed(2)} = GBP${zoneInnerCost.toFixed(2)}; Outside zones ${zoneOuterMiles.toFixed(1)} mi x GBP${standardMileageRate.toFixed(2)} = GBP${zoneOuterCost.toFixed(2)}`
                 : `Mileage: ${chargeableMiles.toFixed(1)} mi x GBP${standardMileageRate.toFixed(2)} = GBP${standardMileageFare.toFixed(2)}`;
     const surchargeBreakdownText = extrasForDisplay.length
         ? `Extras: ${extrasForDisplay

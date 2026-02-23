@@ -320,8 +320,8 @@ const AdminSettingsPage: React.FC = () => {
 
               <div className="rounded-xl border border-white/10 bg-black/50 p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-lg font-semibold text-white">Zone 1-4 override</h3>
-                  <p className="text-xs text-gray-400">Rate per mile applied to any leg touching Zones 1-4</p>
+                  <h3 className="text-lg font-semibold text-white">Zone 1-3 override</h3>
+                  <p className="text-xs text-gray-400">Rate per mile applied to any leg touching Zones 1-3</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-gray-200">
                   {[exec, lux, mpv].map((veh) => (
