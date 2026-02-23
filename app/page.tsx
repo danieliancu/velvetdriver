@@ -27,7 +27,7 @@ export default function HomePage() {
       decorations={
         <div className="absolute top-1/2 left-1/2 w-[50vw] h-[50vh] bg-red-900/50 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2 animate-pulse"></div>
       }
-      mainClassName="flex flex-col items-center justify-center gap-20 pt-32 pb-16"
+      mainClassName="flex flex-col items-center justify-center gap-20 pt-12 pb-16"
     >
       <div className="relative z-10 text-center">
         <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold font-display tracking-tight text-shadow-lg">

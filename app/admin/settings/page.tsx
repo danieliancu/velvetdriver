@@ -329,7 +329,7 @@ const AdminSettingsPage: React.FC = () => {
               <div className="rounded-xl border border-white/10 bg-black/50 p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-lg font-semibold text-white">Google Maps surcharges</h3>
-                  <p className="text-xs text-gray-400">Control fees applied in fare calculation</p>
+                  <p className="text-xs text-gray-400">Airport fees applied in fare calculation</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-gray-200">
                   {AIRPORTS.map((airport) => (
@@ -361,7 +361,16 @@ const AdminSettingsPage: React.FC = () => {
                       </div>
                     </div>
                   ))}
-                  <label className="rounded-lg border border-white/10 bg-[#161010] p-3 flex items-center justify-between gap-2">
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-black/50 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-lg font-semibold text-white">Congestion surcharges</h3>
+                  <p className="text-xs text-gray-400">Central London surcharge</p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 text-sm text-gray-200">
+                  <label className="rounded-lg border border-white/10 bg-[#161010] p-3 flex items-center justify-between gap-2 max-w-md">
                     <span>Central London (Congestion)</span>
                     <div className="flex items-center gap-2">
                       <input

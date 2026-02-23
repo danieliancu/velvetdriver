@@ -13,13 +13,20 @@ import BookingTextArea from '@/components/BookingTextArea';
 import Modal from '@/components/Modal';
 import { useAlert } from '@/components/AlertProvider';
 import { useAuth } from '@/lib/auth-context';
-import { AIRPORTS, buildDefaultAirportSurcharges, detectAirportCodeFromText, type AirportCode, type AirportSurcharge } from '@/lib/airports';
+import {
+    AIRPORTS,
+    buildDefaultAirportSurcharges,
+    detectAirportCodeFromCoords,
+    detectAirportCodeFromText,
+    type AirportCode,
+    type AirportSurcharge
+} from '@/lib/airports';
 
 type PlaceResult = {
     name?: string;
     formatted_address?: string;
     geometry?: { location?: { lat: () => number; lng: () => number } };
-    location?: { lat: number; lng: number };
+    location?: { lat: number; lng: number } | { lat: () => number; lng: () => number };
 };
 
 type FlightDetails = {
@@ -47,6 +54,7 @@ type PlaceLike = {
     name?: string;
     formatted_address?: string;
     geometry?: { location?: { lat: () => number; lng: () => number } };
+    location?: { lat: number; lng: number } | { lat: () => number; lng: () => number };
 };
 
 const BookingPageInner = () => {
@@ -581,10 +589,16 @@ const BookingPageInner = () => {
 
     const resolveAirportMatch = (place: PlaceLike | null | undefined, fallbackText?: string) => {
         const text = (place?.name || place?.formatted_address || fallbackText || '').toLowerCase();
-        const code = text ? detectAirportCodeFromText(text) : null;
         const placeTypes = place?.types || [];
         const isAirportType = placeTypes.includes('airport') || placeTypes.includes('airport_terminal');
-        const isAirport = Boolean(code) || isAirportType;
+        const loc = place?.location ?? place?.geometry?.location;
+        const lat = loc ? (typeof loc.lat === 'function' ? loc.lat() : loc.lat) : null;
+        const lng = loc ? (typeof loc.lng === 'function' ? loc.lng() : loc.lng) : null;
+        const codeFromCoords =
+            lat != null && lng != null ? detectAirportCodeFromCoords({ lat, lng }) : null;
+        const codeFromText = text ? detectAirportCodeFromText(text) : null;
+        const code = codeFromCoords ?? codeFromText;
+        const isAirport = isAirportType || Boolean(code);
         return { isAirport, code };
     };
 
@@ -973,20 +987,35 @@ const BookingPageInner = () => {
     const waitingCost = serviceType === 'As Directed' ? 0 : waitingMinutes * (waitingRatePerHour / 60);
     const hourlyRate = selectedVehicle.asDirectedRate;
 
-    const zoneMileageFare =
-        serviceType === 'As Directed'
+    const segmentedMilesTotal = legBreakdown.length
+        ? legBreakdown.reduce(
+            (sum, leg) => sum + leg.zoneSegments.reduce((innerSum, segment) => innerSum + segment.miles, 0),
+            0
+        )
+        : 0;
+    const chargeableMiles = milesValue > 0 ? milesValue : segmentedMilesTotal;
+    const standardMileageRate = getMileageRate(vehicle, chargeableMiles);
+    const standardMileageFare = chargeableMiles * standardMileageRate;
+
+    const zoneInnerMiles =
+        serviceType === 'As Directed' || !legBreakdown.length
             ? 0
-            : legBreakdown.length
-                ? legBreakdown.reduce(
-                    (sum, leg) =>
-                        sum +
-                        leg.zoneSegments.reduce(
-                            (innerSum, segment) => innerSum + segment.miles * getZoneMileageRate(vehicle, segment.zoneId),
-                            0
-                        ),
-                    0
-                )
-                : null;
+            : legBreakdown.reduce(
+                (sum, leg) =>
+                    sum +
+                    leg.zoneSegments.reduce(
+                        (innerSum, segment) => innerSum + (segment.zoneId != null && segment.zoneId <= 4 ? segment.miles : 0),
+                        0
+                    ),
+                0
+            );
+    const zoneOuterMiles = Math.max(0, segmentedMilesTotal - zoneInnerMiles);
+    const hasZoneOverride = serviceType !== 'As Directed' && zoneInnerMiles > 0;
+    const zoneOverrideRate = selectedVehicle.innerZoneOverride;
+    const zoneMileageFare = hasZoneOverride
+        ? (zoneInnerMiles * zoneOverrideRate) + (zoneOuterMiles * standardMileageRate)
+        : null;
+    const zoneOverrideDelta = hasZoneOverride ? zoneMileageFare! - standardMileageFare : 0;
 
     const mileageFare =
         serviceType === 'As Directed'
@@ -997,6 +1026,12 @@ const BookingPageInner = () => {
 
     if (serviceType !== 'As Directed') {
         if (waitingCost > 0) extras.push({ label: 'Waiting time', amount: waitingCost });
+        if (hasZoneOverride) {
+            extras.push({
+                label: `Zone 1-4 override (${zoneInnerMiles.toFixed(1)} mi @ GBP${zoneOverrideRate.toFixed(2)}/mi)`,
+                amount: Math.round(zoneOverrideDelta * 100) / 100,
+            });
+        }
         totalFare += waitingCost;
     }
 
@@ -1037,9 +1072,7 @@ const BookingPageInner = () => {
             : `GBP${hourlyRate.toFixed(2)}/h`
         : `GBP${totalFare.toFixed(2)}`;
 
-    const extrasForDisplay = extras.filter(
-        (item) => !item.label.toLowerCase().includes('zone')
-    );
+    const extrasForDisplay = extras;
     const extrasText =
         extrasForDisplay.length
             ? `Extras applied: ${extrasForDisplay
@@ -1048,7 +1081,7 @@ const BookingPageInner = () => {
             : 'No surcharges applied.';
     const baseFareLabel = serviceType === 'As Directed'
         ? 'Hourly rate'
-        : zoneMileageFare != null
+        : hasZoneOverride
             ? 'Zone mileage fare'
             : 'Mileage fare';
     const baseFareValue = mileageFare;
@@ -1441,7 +1474,7 @@ const BookingPageInner = () => {
     };
 
     return (
-        <PageShell mainClassName="flex items-center justify-center py-24">
+        <PageShell mainClassName="flex items-center justify-center">
             <form onSubmit={handleSubmitBooking} className="relative z-10 w-full max-w-3xl bg-[#1c1010]/80 border border-amber-900/50 rounded-2xl shadow-2xl shadow-red-950/50 backdrop-blur-lg p-8 space-y-8">
                     {pricingError ? (
                         <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
