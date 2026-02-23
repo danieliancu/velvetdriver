@@ -138,6 +138,13 @@ const BookingPageInner = () => {
         dropOffAddresses.every((addr) => addr.trim().length > 0) &&
         date.trim().length > 0 &&
         time.trim().length > 0;
+    const bookingLeadTimeHours = useMemo(() => {
+        if (!date.trim() || !time.trim()) return null;
+        const journeyDateTime = new Date(`${date}T${time}`);
+        if (Number.isNaN(journeyDateTime.getTime())) return null;
+        return (journeyDateTime.getTime() - Date.now()) / (1000 * 60 * 60);
+    }, [date, time]);
+    const showLeadTimeNotice = bookingLeadTimeHours !== null && bookingLeadTimeHours < 24;
 
     const LONDON_CENTER = { lat: 51.509865, lng: -0.118092 }; // Charing Cross
 
@@ -1206,9 +1213,7 @@ const BookingPageInner = () => {
             showAlert('Please provide a valid date and time.');
             return;
         }
-        const now = new Date();
-        const hoursDiff = (journeyDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-        if (hoursDiff < 24) {
+        if (showLeadTimeNotice) {
             showAlert(
                 <span>
                     Online bookings require at least 24 hours notice. For urgent requests, please call{' '}
@@ -1585,6 +1590,21 @@ const BookingPageInner = () => {
                                 onChange={e => setTime(e.target.value)}
                                 required
                             />
+                            {showLeadTimeNotice && (
+                                <div
+                                    role="alert"
+                                    aria-live="polite"
+                                    className="w-full bg-amber-300 text-black rounded-[10px] flex flex-col justify-center items-center text-center p-[10px] text-sm leading-relaxed"
+                                >
+                                    <p>
+                                        Online bookings require at least 24 hours notice. For urgent requests, please call{' '}
+                                        <a href="tel:+442081759186" className="font-semibold underline underline-offset-2 text-black">
+                                            +44 2081 759 186
+                                        </a>
+                                        .
+                                    </p>
+                                </div>
+                            )}
                              <BookingSelect
                                 label="Vehicle"
                                 id="vehicle"
@@ -1747,37 +1767,37 @@ const BookingPageInner = () => {
                                 </p>
                                 
                                 <div className="bg-black/30 border border-amber-900/40 rounded-lg p-4 space-y-3 text-sm text-gray-300">
-                                    <div className="flex justify-between items-start">
+                                    <div className="flex flex-col items-start gap-1">
                                         <span className="text-gray-400">Pickup:</span>
                                         <span className="font-semibold text-amber-100">{pickupDisplay || pickupAddress}</span>
                                     </div>
-                                    <div className="flex justify-between items-start">
+                                    <div className="flex flex-col items-start gap-1">
                                         <span className="text-gray-400">Drop-off:</span>
                                         <span className="font-semibold text-amber-100">{dropOffDisplays[0] || dropOffAddresses[0]}</span>
                                     </div>
-                                    <div className="flex justify-between items-start">
+                                    <div className="flex flex-col items-start gap-1">
                                         <span className="text-gray-400">Date:</span>
                                         <span className="font-semibold text-amber-100">{date}</span>
                                     </div>
-                                    <div className="flex justify-between items-start">
+                                    <div className="flex flex-col items-start gap-1">
                                         <span className="text-gray-400">Time:</span>
                                         <span className="font-semibold text-amber-100">{time}</span>
                                     </div>
-                                    <div className="flex justify-between items-start">
+                                    <div className="flex flex-col items-start gap-1">
                                         <span className="text-gray-400">Miles:</span>
                                         <span className="font-semibold text-amber-100">{miles ? `${miles} mi` : 'Auto'}</span>
                                     </div>
-                                    <div className="flex justify-between items-start">
+                                    <div className="flex flex-col items-start gap-1">
                                         <span className="text-gray-400">{baseFareLabel}:</span>
                                         <span className="font-semibold text-amber-100">GBP{baseFareValue.toFixed(2)}</span>
                                     </div>
                                     {discountAmount > 0 && (
-                                        <div className="flex justify-between items-start">
+                                        <div className="flex flex-col items-start gap-1">
                                             <span className="text-gray-400">Discount:</span>
                                             <span className="font-semibold text-amber-100">-GBP{discountAmount.toFixed(2)}</span>
                                         </div>
                                     )}
-                                    <div className="flex justify-between items-start">
+                                    <div className="flex flex-col items-start gap-1">
                                         <span className="text-gray-400">Total fare:</span>
                                         <span className="font-semibold text-amber-100">GBP{totalFareFinal.toFixed(2)}</span>
                                     </div>
@@ -1786,7 +1806,7 @@ const BookingPageInner = () => {
                                             <p className="text-xs uppercase tracking-wider text-amber-300/80">Extras applied</p>
                                             <div className="space-y-1">
                                                 {extrasForDisplay.map((item, idx) => (
-                                                    <div key={`${item.label}-${idx}`} className="flex justify-between items-start">
+                                                    <div key={`${item.label}-${idx}`} className="flex flex-col items-start gap-1">
                                                         <span className="text-gray-400">{item.label}:</span>
                                                         <span className="font-semibold text-amber-100">
                                                             {item.amount != null ? `GBP${item.amount.toFixed(2)}` : '—'}
@@ -2059,4 +2079,3 @@ const BookingPage = () => (
 );
 
 export default BookingPage;
-
