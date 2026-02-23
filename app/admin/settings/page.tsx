@@ -33,6 +33,7 @@ const AdminSettingsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [routesHealthWarning, setRoutesHealthWarning] = useState<string | null>(null);
 
   const normalizeAirportSurcharges = (
     airports: Partial<Record<AirportCode, AirportSurcharge>> | undefined
@@ -75,6 +76,25 @@ const AdminSettingsPage: React.FC = () => {
       }
     };
     fetchSettings();
+  }, []);
+
+  useEffect(() => {
+    const checkRoutesHealth = async () => {
+      try {
+        const res = await fetch('/api/routes/health', { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.ok === false) {
+          setRoutesHealthWarning(
+            data?.error || 'Google Routes API is unavailable. Congestion auto-detection may be disabled.'
+          );
+          return;
+        }
+        setRoutesHealthWarning(null);
+      } catch {
+        setRoutesHealthWarning('Google Routes API is unavailable. Congestion auto-detection may be disabled.');
+      }
+    };
+    checkRoutesHealth();
   }, []);
 
   const updateVehicleField = (
@@ -363,6 +383,11 @@ const AdminSettingsPage: React.FC = () => {
                   ))}
                 </div>
               </div>
+              {routesHealthWarning && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                  {routesHealthWarning}
+                </div>
+              )}
 
               <div className="rounded-xl border border-white/10 bg-black/50 p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">

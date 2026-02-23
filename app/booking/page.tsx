@@ -85,6 +85,8 @@ const BookingPageInner = () => {
     const [pickupAirportCode, setPickupAirportCode] = useState<AirportCode | null>(null);
     const [dropIsAirportFlags, setDropIsAirportFlags] = useState<boolean[]>([false]);
     const [dropAirportCodes, setDropAirportCodes] = useState<Array<AirportCode | null>>([null]);
+    const [congestionDetected, setCongestionDetected] = useState(false);
+    const [routesApiWarning, setRoutesApiWarning] = useState<string | null>(null);
     const [legBreakdown, setLegBreakdown] = useState<Array<{
         miles: number;
         originLabel: string;
@@ -595,7 +597,9 @@ const BookingPageInner = () => {
         const lat = loc ? (typeof loc.lat === 'function' ? loc.lat() : loc.lat) : null;
         const lng = loc ? (typeof loc.lng === 'function' ? loc.lng() : loc.lng) : null;
         const codeFromCoords =
-            lat != null && lng != null ? detectAirportCodeFromCoords({ lat, lng }) : null;
+            isAirportType && lat != null && lng != null
+                ? detectAirportCodeFromCoords({ lat, lng })
+                : null;
         const codeFromText = text ? detectAirportCodeFromText(text) : null;
         const code = codeFromCoords ?? codeFromText;
         const isAirport = isAirportType || Boolean(code);
@@ -888,6 +892,46 @@ const BookingPageInner = () => {
     }, [pickupAddress, dropOffAddresses, pickupLatLng, dropOffLatLng, stopCoords]);
 
     useEffect(() => {
+        const stops = [pickupAddress.trim(), ...dropOffAddresses.map((d) => d.trim())].filter(Boolean);
+        if (stops.length < 2 || serviceType === 'As Directed') {
+            setCongestionDetected(false);
+            setRoutesApiWarning(null);
+            return;
+        }
+
+        const controller = new AbortController();
+        const timer = setTimeout(async () => {
+            try {
+                const response = await fetch('/api/routes/compute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        origin: stops[0],
+                        destination: stops[stops.length - 1],
+                        intermediates: stops.slice(1, -1),
+                    }),
+                    signal: controller.signal,
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data?.ok === false) {
+                    throw new Error(data?.error || 'Google Routes unavailable');
+                }
+                setCongestionDetected(Boolean(data?.hasTolls));
+                setRoutesApiWarning(null);
+            } catch (err: any) {
+                if (controller.signal.aborted) return;
+                setCongestionDetected(false);
+                setRoutesApiWarning(err?.message || 'Unable to validate congestion zones via Google Routes.');
+            }
+        }, 500);
+
+        return () => {
+            controller.abort();
+            clearTimeout(timer);
+        };
+    }, [pickupAddress, dropOffAddresses, serviceType]);
+
+    useEffect(() => {
         if (vehicle === 'Luxury' && !luxuryAllowed) {
             const fallback = pricingData.vehicles.find((v) => v.label === 'Luxury MPV') ?? pricingData.vehicles[0];
             if (fallback) {
@@ -950,6 +994,7 @@ const BookingPageInner = () => {
         flightNumber,
         flightDetails,
         airportDetected,
+        congestionDetected,
     });
 
     const handleSaveQuote = async () => {
@@ -1044,6 +1089,13 @@ const BookingPageInner = () => {
         totalFare *= 2;
         const delta = totalFare - before;
         extras.push({ label: 'Wait and Return', amount: delta });
+    }
+    if (congestionDetected) {
+        const congestionSurcharge = pricingData.surcharges.congestion ?? 0;
+        if (congestionSurcharge > 0) {
+            totalFare += congestionSurcharge;
+            extras.push({ label: 'Central London (Congestion)', amount: congestionSurcharge });
+        }
     }
     if (pickupAirportCode) {
         const pickupSurcharge = pricingData.surcharges.airports[pickupAirportCode]?.pickup ?? 0;
@@ -1481,6 +1533,11 @@ const BookingPageInner = () => {
                             {pricingError}
                         </div>
                     ) : null}
+                    {routesApiWarning ? (
+                        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                            {routesApiWarning}
+                        </div>
+                    ) : null}
                     {(savedQuoteLoading || savedQuoteMessage) && (
                         <div className="rounded-xl border border-blue-500/30 bg-blue-900/30 px-4 py-3 text-sm text-blue-100">
                             {savedQuoteLoading ? 'Loading saved quote...' : savedQuoteMessage}
@@ -1524,6 +1581,8 @@ const BookingPageInner = () => {
                                         setPickupDisplay(e.target.value);
                                         setPickupAddress(e.target.value);
                                         setPickupLatLng(null);
+                                        setPickupIsAirport(false);
+                                        setPickupAirportCode(null);
                                     }}
                                     required
                                 />
