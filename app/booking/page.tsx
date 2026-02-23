@@ -590,17 +590,21 @@ const BookingPageInner = () => {
     }, {} as Record<AirportCode, string>);
 
     const resolveAirportMatch = (place: PlaceLike | null | undefined, fallbackText?: string) => {
-        const text = (place?.name || place?.formatted_address || fallbackText || '').toLowerCase();
+        const text = [place?.name, place?.formatted_address, fallbackText]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
         const placeTypes = place?.types || [];
         const isAirportType = placeTypes.includes('airport') || placeTypes.includes('airport_terminal');
+        const isAirportHint = /\b(airport|terminal|air\s*terminal)\b/.test(text);
         const loc = place?.location ?? place?.geometry?.location;
         const lat = loc ? (typeof loc.lat === 'function' ? loc.lat() : loc.lat) : null;
         const lng = loc ? (typeof loc.lng === 'function' ? loc.lng() : loc.lng) : null;
-        const codeFromCoords =
-            isAirportType && lat != null && lng != null
-                ? detectAirportCodeFromCoords({ lat, lng })
-                : null;
         const codeFromText = text ? detectAirportCodeFromText(text) : null;
+        const codeFromCoords =
+            lat != null && lng != null && (isAirportType || Boolean(codeFromText) || isAirportHint)
+                ? detectAirportCodeFromCoords({ lat, lng }, isAirportHint ? 4 : 8)
+                : null;
         const code = codeFromCoords ?? codeFromText;
         const isAirport = isAirportType || Boolean(code);
         return { isAirport, code };
@@ -1060,7 +1064,8 @@ const BookingPageInner = () => {
     const zoneMileageFare = hasZoneOverride
         ? (zoneInnerMiles * zoneOverrideRate) + (zoneOuterMiles * standardMileageRate)
         : null;
-    const zoneOverrideDelta = hasZoneOverride ? zoneMileageFare! - standardMileageFare : 0;
+    const zoneInnerCost = zoneInnerMiles * zoneOverrideRate;
+    const zoneOuterCost = zoneOuterMiles * standardMileageRate;
 
     const mileageFare =
         serviceType === 'As Directed'
@@ -1071,12 +1076,6 @@ const BookingPageInner = () => {
 
     if (serviceType !== 'As Directed') {
         if (waitingCost > 0) extras.push({ label: 'Waiting time', amount: waitingCost });
-        if (hasZoneOverride) {
-            extras.push({
-                label: `Zone 1-4 override (${zoneInnerMiles.toFixed(1)} mi @ GBP${zoneOverrideRate.toFixed(2)}/mi)`,
-                amount: Math.round(zoneOverrideDelta * 100) / 100,
-            });
-        }
         totalFare += waitingCost;
     }
 
@@ -1125,12 +1124,18 @@ const BookingPageInner = () => {
         : `GBP${totalFare.toFixed(2)}`;
 
     const extrasForDisplay = extras;
-    const extrasText =
-        extrasForDisplay.length
-            ? `Extras applied: ${extrasForDisplay
-                .map((item) => (item.amount != null ? `${item.label} GBP${item.amount.toFixed(2)}` : item.label))
-                .join('; ')}`
-            : 'No surcharges applied.';
+    const mileageBreakdownText =
+        serviceType === 'As Directed'
+            ? `Mileage: hourly rate GBP${hourlyRate.toFixed(2)}/h`
+            : hasZoneOverride
+                ? `Mileage: Zone 1-4 ${zoneInnerMiles.toFixed(1)} mi x GBP${zoneOverrideRate.toFixed(2)} = GBP${zoneInnerCost.toFixed(2)}; Outside zones ${zoneOuterMiles.toFixed(1)} mi x GBP${standardMileageRate.toFixed(2)} = GBP${zoneOuterCost.toFixed(2)}`
+                : `Mileage: ${chargeableMiles.toFixed(1)} mi x GBP${standardMileageRate.toFixed(2)} = GBP${standardMileageFare.toFixed(2)}`;
+    const surchargeBreakdownText = extrasForDisplay.length
+        ? `Extras: ${extrasForDisplay
+            .map((item) => (item.amount != null ? `${item.label} GBP${item.amount.toFixed(2)}` : item.label))
+            .join('; ')}`
+        : 'Extras: none';
+    const extrasText = `Extras applied: ${mileageBreakdownText}; ${surchargeBreakdownText}`;
     const baseFareLabel = serviceType === 'As Directed'
         ? 'Hourly rate'
         : hasZoneOverride
@@ -1635,7 +1640,7 @@ const BookingPageInner = () => {
                                             {!flightLoading && flightDetails && (
                                                 <div className="space-y-1">
                                                     <p className="text-amber-300 font-semibold">{flightDetails.number} {flightDetails.status ? `· ${flightDetails.status}` : ''}</p>
-                                                    <p className="text-gray-200">Route: {flightDetails.dep || '—'} ? {flightDetails.arr || '—'}</p>
+                                                    <p className="text-gray-200">Route: {flightDetails.dep || '-'} -&gt; {flightDetails.arr || '-'}</p>
                                                     {flightDetails.depTimeUtc && (
                                                         <p className="text-gray-200 text-xs">Dep (UTC): {flightDetails.depTimeUtc}</p>
                                                     )}
