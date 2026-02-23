@@ -19,6 +19,7 @@ type PricingVehicleRow = DbRow<{
   tier2_rate: number;
   tier3_rate: number;
   inner_zone_override_rate: number;
+  min_price: number;
 }>;
 
 type PricingVehicle = {
@@ -28,11 +29,12 @@ type PricingVehicle = {
   asDirectedRate: number;
   mileage: { tier1: number; tier2: number; tier3: number };
   innerZoneOverride: number;
+  minPrice: number;
 };
 
 type SurchargeRuleRow = DbRow<{ code: string; amount: number }>;
 
-type PricingSettingRow = DbRow<{ night_surcharge: number }>;
+type PricingSettingRow = DbRow<{ night_surcharge: number; min_price_active: number }>;
 
 type PricingPayload = {
   vehicles: PricingVehicle[];
@@ -41,6 +43,7 @@ type PricingPayload = {
     airports: ReturnType<typeof buildDefaultAirportSurcharges>;
   };
   nightSurcharge: number;
+  minimumPriceActive: boolean;
   zoneRings: Array<{ id: number; name: string; radiusMiles: number }>;
 };
 
@@ -53,12 +56,13 @@ const fallbackZoneRings = [
 
 const fallbackPayload: PricingPayload = {
   vehicles: [
-    { id: 3, code: 'mpv', label: 'Luxury MPV', asDirectedRate: 60, mileage: { tier1: 20, tier2: 4, tier3: 3.5 }, innerZoneOverride: 20 },
-    { id: 2, code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75 },
-    { id: 1, code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25 },
+    { id: 3, code: 'mpv', label: 'Luxury MPV', asDirectedRate: 60, mileage: { tier1: 20, tier2: 4, tier3: 3.5 }, innerZoneOverride: 20, minPrice: 50 },
+    { id: 2, code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75, minPrice: 40 },
+    { id: 1, code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25, minPrice: 30 },
   ],
   surcharges: { congestion: 15, airports: buildDefaultAirportSurcharges(15, 7) },
   nightSurcharge: 30,
+  minimumPriceActive: true,
   zoneRings: fallbackZoneRings,
 };
 
@@ -76,7 +80,7 @@ export async function GET() {
       surchargeCodes
     );
     const [settingsRows] = await pool.query<PricingSettingRow[]>(
-      'SELECT night_surcharge FROM pricing_settings WHERE id = 1 LIMIT 1'
+      'SELECT night_surcharge, min_price_active FROM pricing_settings WHERE id = 1 LIMIT 1'
     );
     const [zoneRingRows] = await pool
       .query<ZoneRingRow[]>('SELECT id, name, radius_miles FROM zone_rings ORDER BY id')
@@ -94,6 +98,7 @@ export async function GET() {
         tier3: Number(v.tier3_rate),
       },
       innerZoneOverride: Number(v.inner_zone_override_rate),
+      minPrice: Number(v.min_price ?? 0),
     }))
       : fallbackPayload.vehicles;
 
@@ -112,6 +117,9 @@ export async function GET() {
     };
 
     const nightSurcharge = Number(settingsRows[0]?.night_surcharge ?? fallbackPayload.nightSurcharge);
+    const minimumPriceActive = Boolean(
+      settingsRows[0]?.min_price_active ?? (fallbackPayload.minimumPriceActive ? 1 : 0)
+    );
 
     const zoneRings =
       zoneRingRows?.length
@@ -124,7 +132,7 @@ export async function GET() {
             .filter((z) => z.radiusMiles > 0)
         : fallbackZoneRings;
 
-    return NextResponse.json({ vehicles, surcharges, nightSurcharge, zoneRings });
+    return NextResponse.json({ vehicles, surcharges, nightSurcharge, minimumPriceActive, zoneRings });
   } catch (err) {
     console.error('Error fetching pricing', err);
     return NextResponse.json(fallbackPayload, { status: 200 });

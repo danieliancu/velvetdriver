@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import AdminPageHeader from '@/components/AdminPageHeader';
 
 type DriverDirectoryEntry = {
@@ -70,6 +70,27 @@ type LiveBookingResponse = {
 };
 
 type VehicleTier = 'executive' | 'luxury' | 'luxury_mpv' | null;
+
+const FALLBACK_ACTIVE: LiveBooking[] = [
+  {
+    journeyId: 0,
+    id: 'BK-1024',
+    pickup: 'Heathrow T5 Arrivals',
+    dropOff: 'The Langham, 1C Portland Pl, London W1B 1JA',
+    passenger: 'Maria Popescu',
+    phone: '+44 7700 900111',
+    email: 'maria.popescu@example.com',
+    notes: 'Meet & greet, 1x large suitcase, flight BA0892, watch delays',
+    time: '13:15',
+    date: '2026-01-10',
+    priceDetails: 'GBP 145.00 | Exec | includes parking',
+    bookedBy: 'Velvet Concierge',
+    drivers: []
+  }
+];
+
+const FALLBACK_COMPLETED: LiveBooking[] = [];
+const LIVE_BOOKINGS_REFRESH_EVENT = 'admin-live-bookings-refresh';
 
 const formatPhoneForWhatsApp = (phone: string) => phone.replace(/\D/g, '');
 
@@ -194,25 +215,75 @@ const AdminDashboardPage: React.FC = () => {
   const [bookedBySaving, setBookedBySaving] = useState<Record<string, boolean>>({});
   const [vehicleLabelById, setVehicleLabelById] = useState<Record<number, string>>({});
 
-  const fallbackActive: LiveBooking[] = [
-    {
-      journeyId: 0,
-      id: 'BK-1024',
-      pickup: 'Heathrow T5 Arrivals',
-      dropOff: 'The Langham, 1C Portland Pl, London W1B 1JA',
-      passenger: 'Maria Popescu',
-      phone: '+44 7700 900111',
-      email: 'maria.popescu@example.com',
-      notes: 'Meet & greet, 1x large suitcase, flight BA0892, watch delays',
-      time: '13:15',
-      date: '2026-01-10',
-      priceDetails: 'GBP 145.00 | Exec | includes parking',
-      bookedBy: 'Velvet Concierge',
-      drivers: []
-    }
-  ];
+  const applyLiveBookingsResponse = useCallback((data: { bookings?: LiveBookingResponse[] }) => {
+    const bookings: LiveBooking[] = (data.bookings || []).map((item: LiveBookingResponse) => ({
+      journeyId: item.id,
+      id: item.code,
+      pickup: item.pickup,
+      dropOff: item.dropOff,
+      passenger: item.passenger,
+      phone: item.phone,
+      email: item.passengerEmail || item.clientEmail || '',
+      notes: item.notes,
+      time: item.time,
+      date: item.date,
+      journeyDate: item.journeyDate ?? null,
+      createdAt: item.createdAt ?? null,
+      updatedAt: item.updatedAt ?? null,
+      priceDetails: item.priceDetails,
+      bookedBy: item.bookedBy,
+      bookedByStaffId: item.bookedByStaffId ?? null,
+      vehicle: item.vehicle || 'Unknown',
+      vehicleTypeId: item.vehicleTypeId ?? null,
+      clientEmail: item.clientEmail || '',
+      driverId: item.driverId || '',
+      clientConfirmed: Boolean(item.clientConfirmed),
+      drivers: [],
+    }));
 
-  const fallbackCompleted: LiveBooking[] = [];
+    setLiveBookings(bookings);
+    const confirmMap: Record<string, boolean> = {};
+    bookings.forEach((b) => {
+      confirmMap[b.id] = Boolean(b.clientConfirmed);
+    });
+    setClientConfirmed(confirmMap);
+    const defaults: Record<string, string> = {};
+    bookings.forEach((b) => {
+      defaults[b.id] = b.bookedByStaffId ? String(b.bookedByStaffId) : '';
+    });
+    setBookedBySelection(defaults);
+    setLiveError(null);
+  }, []);
+
+  const fetchLiveBookings = useCallback(
+    async (options?: { withLoading?: boolean; useFallbackOnError?: boolean }) => {
+      const withLoading = Boolean(options?.withLoading);
+      const useFallbackOnError = Boolean(options?.useFallbackOnError);
+      if (withLoading) setLiveLoading(true);
+      try {
+        const res = await fetch('/api/admin/live-bookings', { cache: 'no-store' });
+        if (!res.ok) throw new Error('Failed to load live bookings');
+        const data = await res.json();
+        applyLiveBookingsResponse(data);
+      } catch (err) {
+        console.error(err);
+        if (useFallbackOnError) {
+          const confirmMap: Record<string, boolean> = {};
+          setLiveBookings([...FALLBACK_ACTIVE, ...FALLBACK_COMPLETED]);
+          const defaults: Record<string, string> = {};
+          [...FALLBACK_ACTIVE, ...FALLBACK_COMPLETED].forEach((b) => {
+            defaults[b.id] = '';
+          });
+          setBookedBySelection(defaults);
+          setClientConfirmed(confirmMap);
+          setLiveError(null);
+        }
+      } finally {
+        if (withLoading) setLiveLoading(false);
+      }
+    },
+    [applyLiveBookingsResponse]
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -264,73 +335,18 @@ const AdminDashboardPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
-    const loadBookings = async () => {
-      setLiveLoading(true);
-      try {
-        const res = await fetch('/api/admin/live-bookings', { cache: 'no-store' });
-        if (!res.ok) throw new Error('Failed to load live bookings');
-        const data = await res.json();
-        if (!isMounted) return;
-        const bookings: LiveBooking[] = (data.bookings || []).map((item: LiveBookingResponse) => ({
-          journeyId: item.id,
-          id: item.code,
-          pickup: item.pickup,
-          dropOff: item.dropOff,
-          passenger: item.passenger,
-          phone: item.phone,
-          email: item.passengerEmail || item.clientEmail || '',
-          notes: item.notes,
-          time: item.time,
-          date: item.date,
-          journeyDate: item.journeyDate ?? null,
-          createdAt: item.createdAt ?? null,
-          updatedAt: item.updatedAt ?? null,
-          priceDetails: item.priceDetails,
-          bookedBy: item.bookedBy,
-          bookedByStaffId: item.bookedByStaffId ?? null,
-          vehicle: item.vehicle || 'Unknown',
-          vehicleTypeId: item.vehicleTypeId ?? null,
-          clientEmail: item.clientEmail || '',
-          driverId: item.driverId || '',
-          clientConfirmed: Boolean(item.clientConfirmed),
-          drivers: [],
-        }));
-        setLiveBookings(bookings);
-        const confirmMap: Record<string, boolean> = {};
-        bookings.forEach((b) => {
-          confirmMap[b.id] = Boolean(b.clientConfirmed);
-        });
-        setClientConfirmed(confirmMap);
-        const defaults: Record<string, string> = {};
-        bookings.forEach((b) => {
-          defaults[b.id] = b.bookedByStaffId ? String(b.bookedByStaffId) : '';
-        });
-        setBookedBySelection(defaults);
-        setLiveError(null);
-      } catch (err) {
-        console.error(err);
-        if (isMounted) {
-          const confirmMap: Record<string, boolean> = {};
+    fetchLiveBookings({ withLoading: true, useFallbackOnError: true });
+  }, [fetchLiveBookings]);
 
-          setLiveBookings([...fallbackActive, ...fallbackCompleted]);
-          const defaults: Record<string, string> = {};
-          [...fallbackActive, ...fallbackCompleted].forEach((b) => {
-            defaults[b.id] = '';
-          });
-          setBookedBySelection(defaults);
-          setClientConfirmed(confirmMap);
-          setLiveError(null);
-        }
-      } finally {
-        if (isMounted) setLiveLoading(false);
-      }
+  useEffect(() => {
+    const refreshOnDemand = () => {
+      fetchLiveBookings({ withLoading: false, useFallbackOnError: false });
     };
-    loadBookings();
+    window.addEventListener(LIVE_BOOKINGS_REFRESH_EVENT, refreshOnDemand);
     return () => {
-      isMounted = false;
+      window.removeEventListener(LIVE_BOOKINGS_REFRESH_EVENT, refreshOnDemand);
     };
-  }, []);
+  }, [fetchLiveBookings]);
 
   useEffect(() => {
     const loadStaff = async () => {

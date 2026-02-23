@@ -180,11 +180,13 @@ const BookingPageInner = () => {
         asDirectedRate: number;
         mileage: { tier1: number; tier2: number; tier3: number };
         innerZoneOverride: number;
+        minPrice: number;
     };
     type PricingData = {
         vehicles: PricingVehicle[];
         surcharges: { congestion: number; airports: Record<AirportCode, AirportSurcharge> };
         nightSurcharge: number;
+        minimumPriceActive: boolean;
         zoneRings: ZoneRing[];
     };
 
@@ -197,12 +199,13 @@ const BookingPageInner = () => {
 
     const fallbackPricing: PricingData = {
         vehicles: [
-            { id: 3, code: 'mpv', label: 'Luxury MPV', asDirectedRate: 60, mileage: { tier1: 20, tier2: 4, tier3: 3.5 }, innerZoneOverride: 20 },
-            { id: 2, code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75 },
-            { id: 1, code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25 }
+            { id: 3, code: 'mpv', label: 'Luxury MPV', asDirectedRate: 60, mileage: { tier1: 20, tier2: 4, tier3: 3.5 }, innerZoneOverride: 20, minPrice: 50 },
+            { id: 2, code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75, minPrice: 40 },
+            { id: 1, code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25, minPrice: 30 }
         ],
         surcharges: { congestion: 15, airports: buildDefaultAirportSurcharges(15, 7) },
         nightSurcharge: 30,
+        minimumPriceActive: true,
         zoneRings: fallbackZoneRings,
     };
     const normalizeAirportSurcharges = (
@@ -222,10 +225,15 @@ const BookingPageInner = () => {
     };
     const normalizePricingData = (data: PricingData): PricingData => ({
         ...data,
+        vehicles: (data?.vehicles?.length ? data.vehicles : fallbackPricing.vehicles).map((v) => ({
+            ...v,
+            minPrice: Number(v.minPrice ?? 0),
+        })),
         surcharges: {
             congestion: Number(data?.surcharges?.congestion ?? fallbackPricing.surcharges.congestion),
             airports: normalizeAirportSurcharges(data?.surcharges?.airports),
         },
+        minimumPriceActive: Boolean(data?.minimumPriceActive ?? true),
         zoneRings: data?.zoneRings ?? fallbackPricing.zoneRings,
     });
     const [pricing, setPricing] = useState<PricingData | null>(null);
@@ -260,14 +268,16 @@ const BookingPageInner = () => {
                 if (normalized?.vehicles?.length) {
                     setPricing(normalized);
                     if (!vehicleTypeId) {
-                        setVehicleTypeId(String(normalized.vehicles[0].id));
-                        setVehicle(normalized.vehicles[0].label);
+                        const firstAvailable = normalized.vehicles[0];
+                        setVehicleTypeId(String(firstAvailable.id));
+                        setVehicle(firstAvailable.label);
                     }
                 } else {
                     setPricing(fallbackPricing);
                     if (!vehicleTypeId) {
-                        setVehicleTypeId(String(fallbackPricing.vehicles[0]?.id ?? ''));
-                        setVehicle(fallbackPricing.vehicles[0]?.label ?? vehicle);
+                        const firstAvailable = fallbackPricing.vehicles[0];
+                        setVehicleTypeId(String(firstAvailable?.id ?? ''));
+                        setVehicle(firstAvailable?.label ?? vehicle);
                     }
                 }
             } catch (err) {
@@ -275,8 +285,9 @@ const BookingPageInner = () => {
                 setPricingError('Using fallback pricing - failed to load from database.');
                 setPricing(fallbackPricing);
                 if (!vehicleTypeId) {
-                    setVehicleTypeId(String(fallbackPricing.vehicles[0]?.id ?? ''));
-                    setVehicle(fallbackPricing.vehicles[0]?.label ?? vehicle);
+                    const firstAvailable = fallbackPricing.vehicles[0];
+                    setVehicleTypeId(String(firstAvailable?.id ?? ''));
+                    setVehicle(firstAvailable?.label ?? vehicle);
                 }
             }
         };
@@ -1124,11 +1135,15 @@ const BookingPageInner = () => {
         : `GBP${totalFare.toFixed(2)}`;
 
     const extrasForDisplay = extras;
+    const outsideZonesBreakdownText =
+        zoneOuterMiles > 0
+            ? `Outside zones ${zoneOuterMiles.toFixed(1)} mi x GBP${standardMileageRate.toFixed(2)} = GBP${zoneOuterCost.toFixed(2)}`
+            : `Outside zones ${zoneOuterMiles.toFixed(1)} mi (no charge)`;
     const mileageBreakdownText =
         serviceType === 'As Directed'
             ? `Mileage: hourly rate GBP${hourlyRate.toFixed(2)}/h`
             : hasZoneOverride
-                ? `Mileage: Zone 1-3 ${zoneInnerMiles.toFixed(1)} mi x GBP${zoneOverrideRate.toFixed(2)} = GBP${zoneInnerCost.toFixed(2)}; Outside zones ${zoneOuterMiles.toFixed(1)} mi x GBP${standardMileageRate.toFixed(2)} = GBP${zoneOuterCost.toFixed(2)}`
+                ? `Mileage: Zone 1-3 ${zoneInnerMiles.toFixed(1)} mi x GBP${zoneOverrideRate.toFixed(2)} = GBP${zoneInnerCost.toFixed(2)}; ${outsideZonesBreakdownText}`
                 : `Mileage: ${chargeableMiles.toFixed(1)} mi x GBP${standardMileageRate.toFixed(2)} = GBP${standardMileageFare.toFixed(2)}`;
     const surchargeBreakdownText = extrasForDisplay.length
         ? `Extras: ${extrasForDisplay
@@ -1151,6 +1166,7 @@ const BookingPageInner = () => {
         return Math.round(capped * 100) / 100;
     }, [discountData, baseTotalFare]);
     const totalFareFinal = Math.max(0, Math.round((baseTotalFare - discountAmount) * 100) / 100);
+    const minimumFareForVehicle = Number(selectedVehicle?.minPrice ?? 0);
 
     const zoneIds = legBreakdown
         .flatMap((leg) => leg.zoneSegments.map((segment) => segment.zoneId))
@@ -1313,6 +1329,10 @@ const BookingPageInner = () => {
                     .
                 </span>
             );
+            return;
+        }
+        if (pricingData.minimumPriceActive && totalFareFinal < minimumFareForVehicle) {
+            showAlert(`The minimum fare fot your chosen category is GBP${minimumFareForVehicle.toFixed(2)}`);
             return;
         }
         if (typeof window !== 'undefined') {

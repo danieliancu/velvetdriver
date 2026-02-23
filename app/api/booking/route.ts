@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
 
 const pool = getDbPool();
+const BOOKING_PAYMENT_NOTIFICATION_RECIPIENTS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
 
 const formatDate = (iso: string) => {
   const date = new Date(iso);
@@ -138,6 +139,69 @@ const sendPaymentEmail = async (payload: {
   });
 };
 
+const sendInternalPaymentNotification = async (payload: {
+  journeyId: number;
+  journeyDate: string;
+  pickup: string;
+  destination: string;
+  passengerName: string;
+  passengerEmail: string;
+  passengerPhone: string;
+  totalFare: number;
+  paymentIntentId?: string;
+  paymentMethod?: string;
+}) => {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.EMAIL_FROM;
+  if (!resendApiKey || !emailFrom) return;
+
+  const { date, time } = formatDate(payload.journeyDate);
+  const code = `VD-${String(payload.journeyId).padStart(4, '0')}`;
+  const subject = `New paid booking ${code}`;
+  const html = `
+    <h2>New paid booking received</h2>
+    <p><strong>Reference:</strong> ${escapeHtml(code)}</p>
+    <p><strong>Date &amp; time:</strong> ${escapeHtml(date)} ${escapeHtml(time)}</p>
+    <p><strong>Passenger:</strong> ${escapeHtml(payload.passengerName)}</p>
+    <p><strong>Email:</strong> ${escapeHtml(payload.passengerEmail)}</p>
+    <p><strong>Phone:</strong> ${escapeHtml(payload.passengerPhone)}</p>
+    <p><strong>Pickup:</strong> ${escapeHtml(payload.pickup)}</p>
+    <p><strong>Destination:</strong> ${escapeHtml(payload.destination)}</p>
+    <p><strong>Amount paid:</strong> GBP ${payload.totalFare.toFixed(2)}</p>
+    <p><strong>Payment method:</strong> ${escapeHtml(payload.paymentMethod || 'Card')}</p>
+    <p><strong>Payment ref:</strong> ${escapeHtml(payload.paymentIntentId || '-')}</p>
+  `;
+  const text = [
+    `New paid booking received: ${code}`,
+    `Date & time: ${date} ${time}`,
+    `Passenger: ${payload.passengerName}`,
+    `Email: ${payload.passengerEmail}`,
+    `Phone: ${payload.passengerPhone}`,
+    `Pickup: ${payload.pickup}`,
+    `Destination: ${payload.destination}`,
+    `Amount paid: GBP ${payload.totalFare.toFixed(2)}`,
+    `Payment method: ${payload.paymentMethod || 'Card'}`,
+    `Payment ref: ${payload.paymentIntentId || '-'}`,
+  ].join('\n');
+
+  await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: emailFrom,
+      to: BOOKING_PAYMENT_NOTIFICATION_RECIPIENTS,
+      subject,
+      html,
+      text,
+    }),
+  }).catch((err) => {
+    console.error('Failed to send internal payment notification', err);
+  });
+};
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -200,17 +264,22 @@ export async function POST(request: Request) {
     const journeyId = Number(result.insertId);
     const paymentStatus = String(body.paymentStatus ?? '').toLowerCase();
     if (journeyId && paymentStatus === 'succeeded') {
-      await sendPaymentEmail({
+      const emailPayload = {
         journeyId,
         journeyDate: journeyDate.toISOString(),
         pickup,
         destination,
         passengerName,
         passengerEmail,
+        passengerPhone,
         totalFare: Number(body.totalFare ?? 0),
         paymentIntentId: body.paymentIntentId ? String(body.paymentIntentId) : undefined,
         paymentMethod: body.paymentMethod ? String(body.paymentMethod) : undefined,
-      });
+      };
+      await Promise.allSettled([
+        sendPaymentEmail(emailPayload),
+        sendInternalPaymentNotification(emailPayload),
+      ]);
     }
 
     return NextResponse.json({ success: true });

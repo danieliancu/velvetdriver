@@ -10,21 +10,24 @@ type PricingVehicle = {
   asDirectedRate: number;
   mileage: { tier1: number; tier2: number; tier3: number };
   innerZoneOverride: number;
+  minPrice: number;
 };
 type PricingState = {
   vehicles: PricingVehicle[];
   surcharges: { congestion: number; airports: Record<AirportCode, AirportSurcharge> };
   nightSurcharge: number;
+  minimumPriceActive: boolean;
 };
 
 const defaultPricing: PricingState = {
   vehicles: [
-    { code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25 },
-    { code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75 },
-    { code: 'mpv', label: 'Luxury MPV', asDirectedRate: 60, mileage: { tier1: 20, tier2: 4, tier3: 3.5 }, innerZoneOverride: 20 },
+    { code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25, minPrice: 30 },
+    { code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75, minPrice: 40 },
+    { code: 'mpv', label: 'Luxury MPV', asDirectedRate: 60, mileage: { tier1: 20, tier2: 4, tier3: 3.5 }, innerZoneOverride: 20, minPrice: 50 },
   ],
   surcharges: { congestion: 15, airports: buildDefaultAirportSurcharges(15, 7) },
   nightSurcharge: 30,
+  minimumPriceActive: true,
 };
 
 const AdminSettingsPage: React.FC = () => {
@@ -53,10 +56,15 @@ const AdminSettingsPage: React.FC = () => {
 
   const normalizePricing = (data: PricingState): PricingState => ({
     ...data,
+    vehicles: (data?.vehicles?.length ? data.vehicles : defaultPricing.vehicles).map((v) => ({
+      ...v,
+      minPrice: Number(v.minPrice ?? 0),
+    })),
     surcharges: {
       congestion: Number(data?.surcharges?.congestion ?? defaultPricing.surcharges.congestion),
       airports: normalizeAirportSurcharges(data?.surcharges?.airports),
     },
+    minimumPriceActive: Boolean(data?.minimumPriceActive ?? true),
   });
 
   useEffect(() => {
@@ -408,6 +416,56 @@ const AdminSettingsPage: React.FC = () => {
                       <span className="text-[11px] text-gray-500">GBP</span>
                     </div>
                   </label>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-black/50 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-lg font-semibold text-white">Minimum price</h3>
+                  <p className="text-xs text-gray-400">Minimum charge allowed per vehicle type</p>
+                </div>
+                <div className="flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSettings((prev) =>
+                        prev ? { ...prev, minimumPriceActive: !prev.minimumPriceActive } : prev
+                      )
+                    }
+                    className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+                      settings.minimumPriceActive
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                    }`}
+                  >
+                    {settings.minimumPriceActive ? 'Active' : 'Inactive'}
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-gray-200">
+                  {[exec, lux, mpv].map((veh) => (
+                    <div key={`${veh.code}-min`} className="rounded-lg border border-white/10 bg-[#161010] p-3 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>{veh.label}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-gray-400">Minimum fare</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            className="w-20 rounded-md border border-white/10 bg-[#1c1c1c] px-2 py-1 text-right text-white"
+                            value={veh.minPrice ?? 0}
+                            onChange={(e) =>
+                              updateVehicleField(veh.code, (v) => ({
+                                ...v,
+                                minPrice: Number(e.target.value) || 0,
+                              }))
+                            }
+                          />
+                          <span className="text-[11px] text-gray-500">GBP</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </section>

@@ -39,6 +39,7 @@ const Footer = () => {
             <div className="min-w-[170px]">
               <h4 className="font-bold font-display text-white text-lg mb-4">Company</h4>
               <ul className="space-y-2">
+                <FooterLink href="/fleet">Our Fleet</FooterLink>
                 <FooterLink href="/client/login">Client</FooterLink>
                 <FooterLink href="/driver/login">Driver</FooterLink>
                 <FooterLink href="/booking">Booking</FooterLink>
