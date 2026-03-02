@@ -62,9 +62,40 @@ const DOC_LABELS: Record<string, string> = {
   profile_photo: 'Profile Photo',
 };
 
+const isRetryableDbError = (err: any) =>
+  err?.code === 'ECONNRESET' ||
+  err?.code === 'PROTOCOL_CONNECTION_LOST' ||
+  err?.code === 'ETIMEDOUT';
+
+const queryWithRetry = async <T extends mysql.RowDataPacket[]>(
+  sql: string,
+  params?: any[]
+) => {
+  try {
+    return await pool.query<T>(sql, params);
+  } catch (err) {
+    if (!isRetryableDbError(err)) throw err;
+    console.warn('Retrying admin/drivers query after transient DB error:', err?.code);
+    return pool.query<T>(sql, params);
+  }
+};
+
+const executeWithRetry = async <T extends mysql.ResultSetHeader>(
+  sql: string,
+  params?: any[]
+) => {
+  try {
+    return await pool.execute<T>(sql, params);
+  } catch (err) {
+    if (!isRetryableDbError(err)) throw err;
+    console.warn('Retrying admin/drivers execute after transient DB error:', err?.code);
+    return pool.execute<T>(sql, params);
+  }
+};
+
 export async function GET() {
   try {
-    const [rows] = await pool.query<DriverRow[]>(
+    const [rows] = await queryWithRetry<DriverRow[]>(
       `SELECT d.id AS driver_id,
               u.id AS user_id,
               u.email,
@@ -92,7 +123,7 @@ export async function GET() {
     let carsByDriver: Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; status: string; vehicleTypeId: number | null; vehicleTypeLabel: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>> = {};
     let pricingVehicles: Array<{ id: number; label: string }> = [];
     if (driverIds.length) {
-      const [docs] = await pool.query<DocumentRow[]>(
+      const [docs] = await queryWithRetry<DocumentRow[]>(
         `SELECT driver_id, doc_type, file_url, format, file_name
          FROM driver_documents
          WHERE driver_id IN (${driverIds.map(() => '?').join(',')})`,
@@ -110,7 +141,7 @@ export async function GET() {
         return acc;
       }, {} as Record<number, Array<{ name: string; url: string; type: string }>>);
 
-      const [cars] = await pool.query<CarRow[]>(
+      const [cars] = await queryWithRetry<CarRow[]>(
         `SELECT dc.id,
                 dc.driver_id,
                 dc.status,
@@ -132,7 +163,7 @@ export async function GET() {
       let carDocsByCar: Record<number, Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }>> = {};
       if (carIds.length) {
         try {
-          const [carDocs] = await pool.query<CarDocRow[]>(
+          const [carDocs] = await queryWithRetry<CarDocRow[]>(
             `SELECT car_id, doc_type, expiry_date, file_url, format, file_name
              FROM driver_car_documents
              WHERE car_id IN (${carIds.map(() => '?').join(',')})`,
@@ -173,7 +204,7 @@ export async function GET() {
         return acc;
       }, {} as Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; status: string; vehicleTypeId: number | null; vehicleTypeLabel: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>>);
 
-      const [pricingRows] = await pool.query<PricingVehicleRow[]>(
+      const [pricingRows] = await queryWithRetry<PricingVehicleRow[]>(
         `SELECT id, label FROM pricing_vehicles ORDER BY id`
       );
       pricingVehicles = pricingRows.map((row) => ({ id: row.id, label: row.label }));
@@ -225,7 +256,7 @@ export async function PATCH(request: Request) {
     }
 
     if (commission !== null) {
-      const [result] = await pool.execute<mysql.ResultSetHeader>(
+      const [result] = await executeWithRetry<mysql.ResultSetHeader>(
         `UPDATE drivers SET commission = ? WHERE id = ? LIMIT 1`,
         [commission, driverId]
       );
@@ -235,7 +266,7 @@ export async function PATCH(request: Request) {
     }
 
     if (driverCarId && vehicleTypeId) {
-      const [result] = await pool.execute<mysql.ResultSetHeader>(
+      const [result] = await executeWithRetry<mysql.ResultSetHeader>(
         `UPDATE cars c
          INNER JOIN driver_cars dc ON dc.car_id = c.id
          SET c.vehicle_type_id = ?
@@ -255,7 +286,7 @@ export async function PATCH(request: Request) {
       if (!allowed.has(nextStatus)) {
         return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
       }
-      const [result] = await pool.execute<mysql.ResultSetHeader>(
+      const [result] = await executeWithRetry<mysql.ResultSetHeader>(
         `UPDATE users u
          INNER JOIN drivers d ON d.user_id = u.id
          SET u.status = ?
@@ -265,7 +296,7 @@ export async function PATCH(request: Request) {
       if (!result.affectedRows) {
         return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
       }
-      const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      const [rows] = await queryWithRetry<mysql.RowDataPacket[]>(
         `SELECT u.status, u.updated_at
          FROM users u
          INNER JOIN drivers d ON d.user_id = u.id

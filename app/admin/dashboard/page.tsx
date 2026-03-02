@@ -43,6 +43,8 @@ type LiveBooking = {
   vehicleTypeId?: number | null;
   clientEmail?: string;
   driverId?: string;
+  driverPrice?: number | null;
+  driverCommissionApplied?: number | null;
   clientConfirmed?: boolean;
 };
 
@@ -67,6 +69,8 @@ type LiveBookingResponse = {
   vehicle?: string;
   vehicleTypeId?: number | null;
   driverId?: string;
+  driverPrice?: number | null;
+  driverCommissionApplied?: number | null;
   clientConfirmed?: boolean;
 };
 
@@ -149,6 +153,14 @@ const appendSelectedCarInstruction = (message: string, selectedCarLabel?: string
   return `${message}\n\nPlease use the car ${selectedCarLabel}`;
 };
 
+const getJourneyTimestamp = (booking: LiveBooking) => {
+  if (booking.journeyDate) {
+    const parsed = new Date(booking.journeyDate);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+  }
+  return null;
+};
+
 const formatBookingCreatedAt = (createdAt?: string | null) => {
   if (!createdAt) return '';
   const parsed = new Date(createdAt);
@@ -161,6 +173,11 @@ const formatBookingCreatedAt = (createdAt?: string | null) => {
     minute: '2-digit',
     hour12: false,
   });
+};
+
+const formatDriverCommission = (value?: number | null) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '';
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
 };
 
 const resolveVehicleTier = (label?: string | null): VehicleTier => {
@@ -214,6 +231,9 @@ const AdminDashboardPage: React.FC = () => {
   const [driverMessages, setDriverMessages] = useState<Record<string, string>>({});
   const [driversExpanded, setDriversExpanded] = useState<Record<string, boolean>>({});
   const [pendingDriverConfirmKey, setPendingDriverConfirmKey] = useState<string | null>(null);
+  const [allocationWarning, setAllocationWarning] = useState<string | null>(null);
+  const [allocationSuccess, setAllocationSuccess] = useState<string | null>(null);
+  const [pendingCancelAllocation, setPendingCancelAllocation] = useState<LiveBooking | null>(null);
   const [pendingClientConfirmId, setPendingClientConfirmId] = useState<string | null>(null);
   const [commissionInputs, setCommissionInputs] = useState<Record<string, string>>({});
   const [selectedCarByDriverKey, setSelectedCarByDriverKey] = useState<Record<string, number>>({});
@@ -247,6 +267,14 @@ const AdminDashboardPage: React.FC = () => {
       vehicleTypeId: item.vehicleTypeId ?? null,
       clientEmail: item.clientEmail || '',
       driverId: item.driverId || '',
+      driverPrice:
+        item.driverPrice !== null && item.driverPrice !== undefined
+          ? Number(item.driverPrice)
+          : null,
+      driverCommissionApplied:
+        item.driverCommissionApplied !== null && item.driverCommissionApplied !== undefined
+          ? Number(item.driverCommissionApplied)
+          : null,
       clientConfirmed: Boolean(item.clientConfirmed),
       drivers: [],
     }));
@@ -413,10 +441,14 @@ const AdminDashboardPage: React.FC = () => {
   };
 
   const partitionedBookings = React.useMemo(() => {
+    const now = Date.now();
     const live: LiveBooking[] = [];
     const allocated: LiveBooking[] = [];
 
     for (const booking of liveBookings) {
+      const journeyTime = getJourneyTimestamp(booking);
+      const isPastJourney = journeyTime !== null && journeyTime <= now;
+      if (isPastJourney) continue;
       const allocatedToDriver = Boolean(booking.driverId);
       if (allocatedToDriver) {
         allocated.push(booking);
@@ -485,14 +517,31 @@ const AdminDashboardPage: React.FC = () => {
       }),
     })
       .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
           throw new Error(data?.error || 'Failed to allocate driver');
+        }
+        if (data?.warning) {
+          setAllocationWarning(String(data.warning));
+        } else {
+          setAllocationSuccess('Booking allocated successfully. Email sent to driver.');
         }
         setLiveBookings((prev) =>
           prev.map((entry) =>
             entry.id === booking.id
-              ? { ...entry, driverId, updatedAt: new Date().toISOString() }
+              ? {
+                  ...entry,
+                  driverId,
+                  driverPrice:
+                    data?.driverPrice !== undefined && data?.driverPrice !== null
+                      ? Number(data.driverPrice)
+                      : entry.driverPrice ?? null,
+                  driverCommissionApplied:
+                    data?.commissionApplied !== undefined && data?.commissionApplied !== null
+                      ? Number(data.commissionApplied)
+                      : entry.driverCommissionApplied ?? null,
+                  updatedAt: new Date().toISOString(),
+                }
               : entry
           )
         );
@@ -662,7 +711,13 @@ const AdminDashboardPage: React.FC = () => {
       setLiveBookings((prev) =>
         prev.map((entry) =>
           entry.id === booking.id
-            ? { ...entry, driverId: '', updatedAt: new Date().toISOString() }
+            ? {
+                ...entry,
+                driverId: '',
+                driverPrice: null,
+                driverCommissionApplied: null,
+                updatedAt: new Date().toISOString(),
+              }
             : entry
         )
       );
@@ -671,6 +726,20 @@ const AdminDashboardPage: React.FC = () => {
     } finally {
       setCancelAllocationBusy((prev) => ({ ...prev, [booking.id]: false }));
     }
+  };
+
+  const requestCancelAllocation = (booking: LiveBooking) => {
+    setPendingCancelAllocation(booking);
+  };
+
+  const confirmCancelAllocation = async () => {
+    if (!pendingCancelAllocation) return;
+    await handleCancelAllocation(pendingCancelAllocation);
+    setPendingCancelAllocation(null);
+  };
+
+  const closeCancelAllocationModal = () => {
+    setPendingCancelAllocation(null);
   };
   return (
     <>
@@ -1062,7 +1131,7 @@ const AdminDashboardPage: React.FC = () => {
                         </div>
                         <button
                           type="button"
-                          onClick={() => handleCancelAllocation(booking)}
+                          onClick={() => requestCancelAllocation(booking)}
                           disabled={cancelAllocationBusy[booking.id]}
                           className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
                         >
@@ -1084,6 +1153,18 @@ const AdminDashboardPage: React.FC = () => {
                       <p className="text-sm text-gray-300">
                         Price: <span className="text-white">{booking.priceDetails}</span>
                       </p>
+                      {booking.driverPrice !== null && booking.driverPrice !== undefined ? (
+                        <p className="text-sm text-gray-300">
+                          Driver Price:{' '}
+                          <span className="text-emerald-300">
+                            GBP {Number(booking.driverPrice).toFixed(2)}
+                            {booking.driverCommissionApplied !== null &&
+                            booking.driverCommissionApplied !== undefined
+                              ? ` (${formatDriverCommission(booking.driverCommissionApplied)}%)`
+                              : ''}
+                          </span>
+                        </p>
+                      ) : null}
                     </article>
                   ))}
                 </div>
@@ -1139,6 +1220,69 @@ const AdminDashboardPage: React.FC = () => {
                 className="rounded-full border border-amber-400 bg-amber-400 px-5 py-2 text-sm font-semibold text-black shadow-[0_0_20px_rgba(251,191,36,0.4)] hover:shadow-[0_0_30px_rgba(251,191,36,0.6)] transition"
               >
                 Yes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {allocationWarning && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="w-full max-w-md rounded-2xl border border-red-400/50 bg-gray-900/90 p-6 shadow-2xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-red-300 mb-3">Allocation warning</p>
+            <p className="text-lg text-white mb-6">{allocationWarning}</p>
+            <div className="flex flex-wrap gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setAllocationWarning(null)}
+                className="rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-gray-200 hover:border-white/40 transition"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {allocationSuccess && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="w-full max-w-md rounded-2xl border border-emerald-400/50 bg-gray-900/90 p-6 shadow-2xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-300 mb-3">Allocation confirmed</p>
+            <p className="text-lg text-white mb-6">{allocationSuccess}</p>
+            <div className="flex flex-wrap gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setAllocationSuccess(null)}
+                className="rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-gray-200 hover:border-white/40 transition"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingCancelAllocation && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-gray-900/90 p-6 shadow-2xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-300 mb-3">Cancel job</p>
+            <p className="text-lg text-white mb-6">
+              Are you sure you want to cancel this allocation and move the booking back to pending?
+            </p>
+            <div className="flex flex-wrap gap-3 justify-end">
+              <button
+                type="button"
+                onClick={closeCancelAllocationModal}
+                className="rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-gray-200 hover:border-white/40 transition"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={confirmCancelAllocation}
+                className="rounded-full border border-red-400 bg-red-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-red-400"
+              >
+                Yes, cancel
               </button>
             </div>
           </div>

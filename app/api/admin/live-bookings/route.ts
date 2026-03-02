@@ -40,6 +40,8 @@ export async function GET() {
               cj.passenger_phone,
               cj.passenger_email,
               cj.driver_name,
+              cj.driver_price,
+              cj.driver_commission_applied,
               cj.client_confirmed,
               cj.created_at,
               cj.updated_at,
@@ -97,6 +99,11 @@ export async function GET() {
         passengerEmail: row.passenger_email || payload?.passengerEmail || '',
         clientEmail: row.client_email || '',
         driverId,
+        driverPrice: row.driver_price !== null && row.driver_price !== undefined ? Number(row.driver_price) : null,
+        driverCommissionApplied:
+          row.driver_commission_applied !== null && row.driver_commission_applied !== undefined
+            ? Number(row.driver_commission_applied)
+            : null,
         clientConfirmed: Boolean(row.client_confirmed),
         createdAt: row.created_at ? String(row.created_at) : null,
         updatedAt: row.updated_at ? String(row.updated_at) : null,

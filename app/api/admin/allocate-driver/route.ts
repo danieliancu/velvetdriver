@@ -140,8 +140,10 @@ export async function POST(request: Request) {
       `SELECT d.id,
               d.first_and_middle_name,
               d.surname,
-              d.pco_license_no
+              d.pco_license_no,
+              u.email AS user_email
          FROM drivers d
+         LEFT JOIN users u ON u.id = d.user_id
         WHERE d.id = ?
         LIMIT 1`,
       [driverIdNumber]
@@ -224,14 +226,15 @@ export async function POST(request: Request) {
     const paymentMethod = payload?.paymentMethod || payload?.paymentType || 'Card';
 
     const driverName = [driver.first_and_middle_name, driver.surname].filter(Boolean).join(' ').trim();
+    const driverRecipient = String(driver.user_email || '').trim();
     const chauffeurId = `VD-${String(driverIdNumber).padStart(3, '0')}`;
     const driverLicence = driver.pco_license_no || '-';
     const carMakeModel = [car.make, car.model].filter(Boolean).join(' ').trim() || '-';
     const carColour = car.colour || '-';
     const carRegistration = car.vehicle_registration || '-';
 
-    const subject = `Velvet Drivers - Chauffeur allocated ${bookingCode}`;
-    const html = `<!DOCTYPE html>
+    const clientSubject = `Velvet Drivers - Chauffeur allocated ${bookingCode}`;
+    const clientHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -447,9 +450,9 @@ export async function POST(request: Request) {
 </body>
 </html>`;
 
-    const text = `Your chauffeur has been allocated for booking ${bookingCode}.`;
+    const clientText = `Your chauffeur has been allocated for booking ${bookingCode}.`;
 
-    const resendRes = await fetch('https://api.resend.com/emails', {
+    const clientEmailRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${resendApiKey}`,
@@ -458,18 +461,126 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         from: emailFrom,
         to: recipient,
-        subject,
-        html,
-        text,
+        subject: clientSubject,
+        html: clientHtml,
+        text: clientText,
       }),
     });
 
-    if (!resendRes.ok) {
-      const data = await resendRes.json().catch(() => ({}));
+    if (!clientEmailRes.ok) {
+      const data = await clientEmailRes.json().catch(() => ({}));
       return NextResponse.json({ error: data?.message || 'Failed to send allocation email' }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true });
+    if (!driverRecipient) {
+      return NextResponse.json({
+        ok: true,
+        driverPrice: driverAmount,
+        commissionApplied: appliedCommission,
+        warning: 'Booking allocated, but driver email is missing and could not be sent.',
+      });
+    }
+
+    const driverSubject = `Velvet Drivers - New Job Allocation ${bookingCode}`;
+    const driverHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Velvet Drivers - New Job Allocation</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f4f4; font-family:Arial, sans-serif;">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:#f4f4f4; padding:20px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:6px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <tr>
+            <td align="center" style="background:linear-gradient(90deg,#3A0511,#000000); padding:24px 20px;">
+              <h1 style="margin:0; font-size:22px; color:#ffffff; letter-spacing:1px; text-transform:uppercase;">Velvet Drivers</h1>
+              <p style="margin:8px 0 0; font-size:13px; color:#f2f2f2;">Driver Allocation Notice</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px 26px 10px; color:#333333; font-size:14px; line-height:1.6;">
+              <p style="margin-top:0;">Dear ${escapeHtml(driverName || 'Driver')},</p>
+              <p>A new booking has been allocated to you. Please retain this email for your records.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 26px 18px;">
+              <h2 style="margin:0 0 8px; font-size:16px; color:#3A0511; border-bottom:2px solid #D1A95F; display:inline-block;">Job Details</h2>
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="font-size:14px; color:#333333;">
+                <tr><td width="40%" style="padding:4px 0; font-weight:bold;">Booking Reference:</td><td width="60%" style="padding:4px 0;">${escapeHtml(bookingCode)}</td></tr>
+                <tr><td style="padding:4px 0; font-weight:bold;">Pickup Date & Time:</td><td style="padding:4px 0;">${escapeHtml(date)} at ${escapeHtml(time)}</td></tr>
+                <tr><td style="padding:4px 0; font-weight:bold;">Passenger:</td><td style="padding:4px 0;">${escapeHtml(passengerName)}</td></tr>
+                <tr><td style="padding:4px 0; font-weight:bold;">Pickup:</td><td style="padding:4px 0;">${escapeHtml(booking.pickup || '')}</td></tr>
+                <tr><td style="padding:4px 0; font-weight:bold;">Drop-off:</td><td style="padding:4px 0;">${escapeHtml(booking.destination || '')}</td></tr>
+                <tr><td style="padding:4px 0; font-weight:bold;">Vehicle Type:</td><td style="padding:4px 0;">${escapeHtml(vehicleLabel)}</td></tr>
+                <tr><td style="padding:4px 0; font-weight:bold;">Allocated Driver Pay:</td><td style="padding:4px 0;">&pound;${driverAmount.toFixed(2)}</td></tr>
+                <tr><td style="padding:4px 0; font-weight:bold; vertical-align:top;">Notes:</td><td style="padding:4px 0;">${escapeHtml(notes)}</td></tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 26px 18px; font-size:13px; color:#555555;">
+              For support regarding this booking, contact dispatch at
+              <a href="mailto:bookings@velvetdrivers.co.uk" style="color:#3A0511; text-decoration:none;"> bookings@velvetdrivers.co.uk</a>
+              or call <strong>0208 175 9186</strong>.
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="background-color:#f7f7f7; padding:14px 20px;">
+              <p style="margin:0; font-size:12px; color:#777777;">Velvet Drivers Limited - Driver Operations</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+    const driverText =
+      `New job allocated ${bookingCode}\n` +
+      `Date/Time: ${date} ${time}\n` +
+      `Passenger: ${passengerName}\n` +
+      `Pickup: ${booking.pickup || ''}\n` +
+      `Drop-off: ${booking.destination || ''}\n` +
+      `Vehicle: ${vehicleLabel}\n` +
+      `Driver Pay: GBP ${driverAmount.toFixed(2)}\n` +
+      `Notes: ${notes}`;
+
+    const driverEmailRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: emailFrom,
+        to: driverRecipient,
+        subject: driverSubject,
+        html: driverHtml,
+        text: driverText,
+      }),
+    });
+
+    if (!driverEmailRes.ok) {
+      const data = await driverEmailRes.json().catch(() => ({}));
+      return NextResponse.json({
+        ok: true,
+        driverPrice: driverAmount,
+        commissionApplied: appliedCommission,
+        warning:
+          data?.message ||
+          'Booking allocated, but driver allocation email could not be sent.',
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      driverPrice: driverAmount,
+      commissionApplied: appliedCommission,
+    });
   } catch (err) {
     console.error('Allocate driver error', err);
     return NextResponse.json({ error: 'Failed to allocate driver' }, { status: 500 });
