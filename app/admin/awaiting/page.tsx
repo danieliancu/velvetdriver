@@ -27,6 +27,7 @@ const AwaitingApprovalPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState<Record<string, boolean>>({});
+  const [warningModal, setWarningModal] = useState<string | null>(null);
 
   const formatDate = (value: string) => {
     if (!value || value === '-') return '-';
@@ -79,9 +80,12 @@ const AwaitingApprovalPage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ driverId }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         throw new Error(data?.error || 'Failed to approve driver');
+      }
+      if (data?.warning) {
+        setWarningModal(String(data.warning));
       }
       setDrivers((prev) => prev.filter((driver) => driver.id !== driverId));
     } catch (err: any) {
@@ -323,6 +327,26 @@ const AwaitingApprovalPage: React.FC = () => {
           </section>
         </div>
       </div>
+      {warningModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-amber-400/40 bg-[#140c0c] p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-amber-300">Email warning</h3>
+            <p className="mt-3 text-sm text-gray-200">{warningModal}</p>
+            <p className="mt-2 text-xs text-gray-400">
+              Șoferul a fost aprobat, dar emailul de Welcome nu a fost trimis.
+            </p>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setWarningModal(null)}
+                className="rounded-full bg-amber-400 px-5 py-2 text-sm font-semibold text-black transition hover:bg-amber-300"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </PageShell>
   );
 };

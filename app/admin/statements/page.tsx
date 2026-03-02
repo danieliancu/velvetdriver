@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import AdminPageHeader from '@/components/AdminPageHeader';
 
 type StatementRow = {
+  id: number;
+  ref: string;
   personAccepting: string;
   bookingDate: string;
   journeyDate: string;
@@ -18,101 +20,86 @@ type StatementRow = {
   vehicleReg: string;
   subletOperatorNo: string;
   subletOperatorName: string;
+  status: 'Paid' | 'Unpaid';
+  pdfUrl: string | null;
 };
-
-const mockStatements: StatementRow[] = [
-  {
-    personAccepting: 'Sarah Lewis',
-    bookingDate: '2025-10-01',
-    journeyDate: '2025-10-02',
-    customerName: 'John Carter',
-    phoneNumber: '+44 7700 900111',
-    collection: 'WD3 4PQ',
-    destination: 'Heathrow T5',
-    fare: 64,
-    despatcher: 'Michael Ross',
-    driverName: 'James P.',
-    driverLicenseNo: 'PCO-70934',
-    vehicleReg: 'LC20 ABC',
-    subletOperatorNo: 'SUB-101',
-    subletOperatorName: 'Velvet Ops'
-  },
-  {
-    personAccepting: 'David Nguyen',
-    bookingDate: '2025-10-03',
-    journeyDate: '2025-10-04',
-    customerName: 'Emily Stone',
-    phoneNumber: '+44 7700 900222',
-    collection: 'HA4 0HJ',
-    destination: 'LHR T3',
-    fare: 52.5,
-    despatcher: 'Laura Blake',
-    driverName: 'Robert K.',
-    driverLicenseNo: 'PCO-70937',
-    vehicleReg: 'EV13 TES',
-    subletOperatorNo: 'SUB-102',
-    subletOperatorName: 'CityWide'
-  },
-  {
-    personAccepting: 'Amelia Green',
-    bookingDate: '2025-10-05',
-    journeyDate: '2025-10-05',
-    customerName: 'Anna B.',
-    phoneNumber: '+44 7700 900456',
-    collection: 'SW1A 1AA',
-    destination: 'Gatwick South',
-    fare: 112,
-    despatcher: 'Oliver T.',
-    driverName: 'Anna B.',
-    driverLicenseNo: 'PCO-70935',
-    vehicleReg: 'BD68 XYZ',
-    subletOperatorNo: 'SUB-103',
-    subletOperatorName: 'Skyline Cars'
-  },
-  {
-    personAccepting: 'Michael Ross',
-    bookingDate: '2025-10-06',
-    journeyDate: '2025-10-07',
-    customerName: 'Peter Shaw',
-    phoneNumber: '+44 7700 900666',
-    collection: 'W1J 7NT',
-    destination: 'City Airport',
-    fare: 74,
-    despatcher: 'Sarah Lewis',
-    driverName: 'Oliver T.',
-    driverLicenseNo: 'PCO-70938',
-    vehicleReg: 'RX70 DVE',
-    subletOperatorNo: 'SUB-104',
-    subletOperatorName: 'Prime Fleet'
-  }
-];
 
 const AdminStatementsPage: React.FC = () => {
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [rows, setRows] = useState<StatementRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadStatements = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams();
+        if (startDate) params.set('startDate', startDate);
+        if (endDate) params.set('endDate', endDate);
+        const query = params.toString();
+        const res = await fetch(`/api/admin/statements${query ? `?${query}` : ''}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.error || 'Failed to load statements');
+        }
+        const data = await res.json();
+        setRows((data.statements || []) as StatementRow[]);
+        setSelected({});
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        setError(err?.message || 'Failed to load statements');
+        setRows([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadStatements();
+    return () => controller.abort();
+  }, [startDate, endDate]);
 
   const toggleSelect = (key: string) => {
     setSelected((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const allSelected = useMemo(() => mockStatements.every((_row, idx) => selected[String(idx)]), [selected]);
+  const allSelected = useMemo(() => rows.length > 0 && rows.every((row) => selected[String(row.id)]), [rows, selected]);
 
   const toggleSelectAll = () => {
-    const next = mockStatements.reduce<Record<string, boolean>>((acc, _row, idx) => {
-      acc[String(idx)] = !allSelected;
+    const next = rows.reduce<Record<string, boolean>>((acc, row) => {
+      acc[String(row.id)] = !allSelected;
       return acc;
     }, {});
     setSelected(next);
   };
 
   const handleDownload = () => {
-    const refs = mockStatements
-      .map((row, idx) => ({ row, idx }))
-      .filter(({ idx }) => selected[String(idx)])
-      .map(({ row }) => row.customerName);
-    if (refs.length === 0) return;
-    alert(`Download initiated for: ${refs.join(', ')}`);
+    const selectedRows = rows.filter((row) => selected[String(row.id)]);
+    if (!selectedRows.length) return;
+
+    const downloadable = selectedRows.filter((row) => row.pdfUrl);
+    if (!downloadable.length) {
+      alert('No PDF statement available for selected rows.');
+      return;
+    }
+
+    downloadable.forEach((row) => {
+      const link = document.createElement('a');
+      link.href = row.pdfUrl as string;
+      link.download = `${row.ref}-statement.pdf`;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
   };
 
   return (
@@ -131,7 +118,7 @@ const AdminStatementsPage: React.FC = () => {
                   onChange={(e) => setStartDate(e.target.value)}
                   className="rounded-md border border-white/10 bg-[#111]/70 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                 />
-                <span className="text-gray-500">ƒ?"</span>
+                <span className="text-gray-500">to</span>
                 <input
                   type="date"
                   value={endDate}
@@ -143,11 +130,15 @@ const AdminStatementsPage: React.FC = () => {
                 type="button"
                 onClick={handleDownload}
                 className="inline-flex items-center gap-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400 transition-colors disabled:opacity-60"
-                disabled={!mockStatements.some((_row, idx) => selected[String(idx)])}
+                disabled={!rows.some((row) => selected[String(row.id)])}
               >
                 Download selected
               </button>
             </div>
+
+            {error ? (
+              <div className="rounded-2xl border border-red-500/50 bg-red-950/40 p-4 text-red-200">{error}</div>
+            ) : null}
 
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm text-gray-100">
@@ -182,37 +173,51 @@ const AdminStatementsPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {mockStatements.map((row, idx) => {
-                    const key = String(idx);
-                    const isSelected = selected[key] ?? false;
-                    return (
-                      <tr key={key} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                        <td className="px-3 py-3">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleSelect(key)}
-                            className="h-4 w-4 accent-amber-500"
-                            aria-label={`Select ${row.customerName} for download`}
-                          />
-                        </td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.personAccepting}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.bookingDate}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.journeyDate}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.customerName}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.phoneNumber}</td>
-                        <td className="px-3 py-3">{row.collection}</td>
-                        <td className="px-3 py-3">{row.destination}</td>
-                        <td className="px-3 py-3 font-semibold text-amber-200">£{row.fare.toFixed(2)}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.despatcher}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.driverName}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.driverLicenseNo}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.vehicleReg}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.subletOperatorNo}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">{row.subletOperatorName}</td>
-                      </tr>
-                    );
-                  })}
+                  {loading ? (
+                    <tr>
+                      <td className="px-3 py-5 text-gray-400" colSpan={15}>
+                        Loading statements...
+                      </td>
+                    </tr>
+                  ) : rows.length === 0 ? (
+                    <tr>
+                      <td className="px-3 py-5 text-gray-400" colSpan={15}>
+                        No statements found for this date range.
+                      </td>
+                    </tr>
+                  ) : (
+                    rows.map((row) => {
+                      const key = String(row.id);
+                      const isSelected = selected[key] ?? false;
+                      return (
+                        <tr key={key} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                          <td className="px-3 py-3">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelect(key)}
+                              className="h-4 w-4 accent-amber-500"
+                              aria-label={`Select ${row.ref} for download`}
+                            />
+                          </td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.personAccepting}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.bookingDate}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.journeyDate}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.customerName}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.phoneNumber}</td>
+                          <td className="px-3 py-3">{row.collection}</td>
+                          <td className="px-3 py-3">{row.destination}</td>
+                          <td className="px-3 py-3 font-semibold text-amber-200">GBP {row.fare.toFixed(2)}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.despatcher}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.driverName}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.driverLicenseNo}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.vehicleReg}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.subletOperatorNo}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">{row.subletOperatorName}</td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>

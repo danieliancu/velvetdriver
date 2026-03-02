@@ -23,9 +23,7 @@ interface Props {
   savedLoading?: boolean;
   onSelectSaved?: (quoteId: SavedQuote['id']) => void;
   onDeleteSaved?: (quoteId: SavedQuote['id']) => void;
-  onBookSaved?: (quoteId: SavedQuote['id']) => void;
   deletingSavedId?: SavedQuote['id'] | null;
-  bookingSavedId?: SavedQuote['id'] | null;
 }
 
 const ClientHistory: React.FC<Props> = ({
@@ -35,9 +33,7 @@ const ClientHistory: React.FC<Props> = ({
   savedLoading = false,
   onSelectSaved,
   onDeleteSaved,
-  onBookSaved,
   deletingSavedId = null,
-  bookingSavedId = null,
 }) => {
   const [filter, setFilter] = useState<FilterStatus>('Upcoming');
   const [query, setQuery] = useState('');
@@ -128,15 +124,7 @@ const ClientHistory: React.FC<Props> = ({
                     className="px-3 py-1 text-xs font-semibold rounded-md bg-amber-500/80 text-black hover:bg-amber-400/80 transition-colors disabled:opacity-60"
                     disabled={!onSelectSaved}
                   >
-                    Load in Booking
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onBookSaved?.(quote.id)}
-                    className="px-3 py-1 text-xs font-semibold rounded-md bg-green-500/80 text-black hover:bg-green-400/80 transition-colors disabled:opacity-60"
-                    disabled={!onBookSaved || bookingSavedId === quote.id}
-                  >
-                    {bookingSavedId === quote.id ? 'Booking...' : 'Book Now!'}
+                    Book now!
                   </button>
                   <button
                     type="button"

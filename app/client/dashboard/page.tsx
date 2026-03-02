@@ -30,7 +30,6 @@ const ClientDashboardPage: React.FC = () => {
   const [savedQuotes, setSavedQuotes] = useState<SavedQuote[]>([]);
   const [savedLoading, setSavedLoading] = useState(true);
   const [deletingQuoteId, setDeletingQuoteId] = useState<SavedQuote['id'] | null>(null);
-  const [bookingSavedId, setBookingSavedId] = useState<SavedQuote['id'] | null>(null);
 
   const handleLogout = () => {
     logout();
@@ -131,25 +130,6 @@ const ClientDashboardPage: React.FC = () => {
     }
   };
 
-  const handleBookSaved = async (quoteId: SavedQuote['id']) => {
-    if (!user?.email) return;
-    setBookingSavedId(quoteId);
-    try {
-      const res = await fetch('/api/client/saved-quotes/book', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email, id: quoteId }),
-      });
-      if (!res.ok) throw new Error('book');
-      await loadHistory();
-    } catch (err) {
-      console.error('Failed to book saved quote', err);
-    } finally {
-      setBookingSavedId(null);
-      loadSavedQuotes();
-    }
-  };
-
   const memoizedJourneys = useMemo(() => journeys, [journeys]);
 
   const tabs = ['History', 'Complain', 'Review', 'Lost property', 'Update Details'];
@@ -166,8 +146,6 @@ const ClientDashboardPage: React.FC = () => {
             onSelectSaved={(quoteId) => router.push(`/booking?saved=${quoteId}`)}
             onDeleteSaved={handleDeleteQuote}
             deletingSavedId={deletingQuoteId}
-            onBookSaved={handleBookSaved}
-            bookingSavedId={bookingSavedId}
           />
         );
       case 'Complain':

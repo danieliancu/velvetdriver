@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
+import { upsertDriverStatementForAllocation } from '@/lib/driver-statements';
 
 const pool = getDbPool();
 
@@ -88,6 +89,7 @@ export async function POST(request: Request) {
     }
     const pricingFareAmount = Number(pricingRow.price ?? pricingPayload?.totalFare ?? 0) || 0;
     const driverAmount = Number((pricingFareAmount * (1 - appliedCommission / 100)).toFixed(2));
+    const warnings: string[] = [];
 
     const [result] = await pool.execute<mysql.ResultSetHeader>(
       `UPDATE client_journeys
@@ -105,17 +107,20 @@ export async function POST(request: Request) {
 
     const resendApiKey = process.env.RESEND_API_KEY;
     const emailFrom = process.env.EMAIL_FROM;
-    if (!resendApiKey || !emailFrom) {
-      return NextResponse.json({ error: 'Email service not configured' }, { status: 500 });
+    const hasEmailService = Boolean(resendApiKey && emailFrom);
+    if (!hasEmailService) {
+      warnings.push('Booking allocated, but email service is not configured.');
     }
 
     const [bookingRows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT cj.id,
               cj.journey_date,
+              cj.created_at,
               cj.pickup,
               cj.destination,
               cj.passenger_name,
               cj.passenger_email,
+              cj.passenger_phone,
               cj.price,
               cj.booking_payload,
               cj.vehicle_type_id,
@@ -133,7 +138,7 @@ export async function POST(request: Request) {
 
     const recipient = booking.client_email || booking.passenger_email;
     if (!recipient) {
-      return NextResponse.json({ error: 'No client email available' }, { status: 400 });
+      warnings.push('Booking allocated, but client email is missing and notification was skipped.');
     }
 
     const [driverRows] = await pool.query<mysql.RowDataPacket[]>(
@@ -232,6 +237,32 @@ export async function POST(request: Request) {
     const carMakeModel = [car.make, car.model].filter(Boolean).join(' ').trim() || '-';
     const carColour = car.colour || '-';
     const carRegistration = car.vehicle_registration || '-';
+
+    try {
+      await upsertDriverStatementForAllocation(pool, {
+        journeyId,
+        driverId: driverIdNumber,
+        bookingRef: bookingCode,
+        bookingDate: booking.created_at ? String(booking.created_at) : null,
+        journeyDate: booking.journey_date ? String(booking.journey_date) : null,
+        customerName: String(passengerName || 'Client'),
+        phoneNumber: String(booking.passenger_phone || payload?.passengerPhone || '-'),
+        collection: String(booking.pickup || '-'),
+        destination: String(booking.destination || '-'),
+        fareQuoted: Number(driverAmount || 0),
+        personAccepting: 'Velvet Admin',
+        personDispatching: 'Velvet Dispatch',
+        driverName: String(driverName || 'Assigned driver'),
+        driverLicenseNo: String(driverLicence || '-'),
+        vehicleReg: String(carRegistration || '-'),
+        vehicleType: String(vehicleLabel || '-'),
+        subletOperatorNo: 'VELVET-001',
+        subletOperatorName: 'Velvet Drivers Limited',
+      });
+    } catch (statementErr) {
+      console.error('Allocate driver statement generation error', statementErr);
+      warnings.push('Booking allocated, but statement PDF could not be generated.');
+    }
 
     const clientSubject = `Velvet Drivers - Chauffeur allocated ${bookingCode}`;
     const clientHtml = `<!DOCTYPE html>
@@ -452,37 +483,35 @@ export async function POST(request: Request) {
 
     const clientText = `Your chauffeur has been allocated for booking ${bookingCode}.`;
 
-    const clientEmailRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: emailFrom,
-        to: recipient,
-        subject: clientSubject,
-        html: clientHtml,
-        text: clientText,
-      }),
-    });
+    if (hasEmailService && recipient) {
+      const clientEmailRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: emailFrom,
+          to: recipient,
+          subject: clientSubject,
+          html: clientHtml,
+          text: clientText,
+        }),
+      });
 
-    if (!clientEmailRes.ok) {
-      const data = await clientEmailRes.json().catch(() => ({}));
-      return NextResponse.json({ error: data?.message || 'Failed to send allocation email' }, { status: 500 });
+      if (!clientEmailRes.ok) {
+        const data = await clientEmailRes.json().catch(() => ({}));
+        warnings.push(
+          data?.message || 'Booking allocated, but client allocation email could not be sent.'
+        );
+      }
     }
 
     if (!driverRecipient) {
-      return NextResponse.json({
-        ok: true,
-        driverPrice: driverAmount,
-        commissionApplied: appliedCommission,
-        warning: 'Booking allocated, but driver email is missing and could not be sent.',
-      });
-    }
-
-    const driverSubject = `Velvet Drivers - New Job Allocation ${bookingCode}`;
-    const driverHtml = `<!DOCTYPE html>
+      warnings.push('Booking allocated, but driver email is missing and could not be sent.');
+    } else if (hasEmailService) {
+      const driverSubject = `Velvet Drivers - New Job Allocation ${bookingCode}`;
+      const driverHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -539,44 +568,46 @@ export async function POST(request: Request) {
 </body>
 </html>`;
 
-    const driverText =
-      `New job allocated ${bookingCode}\n` +
-      `Date/Time: ${date} ${time}\n` +
-      `Passenger: ${passengerName}\n` +
-      `Pickup: ${booking.pickup || ''}\n` +
-      `Drop-off: ${booking.destination || ''}\n` +
-      `Vehicle: ${vehicleLabel}\n` +
-      `Driver Pay: GBP ${driverAmount.toFixed(2)}\n` +
-      `Notes: ${notes}`;
+      const driverText =
+        `New job allocated ${bookingCode}\n` +
+        `Date/Time: ${date} ${time}\n` +
+        `Passenger: ${passengerName}\n` +
+        `Pickup: ${booking.pickup || ''}\n` +
+        `Drop-off: ${booking.destination || ''}\n` +
+        `Vehicle: ${vehicleLabel}\n` +
+        `Driver Pay: GBP ${driverAmount.toFixed(2)}\n` +
+        `Notes: ${notes}`;
 
-    const driverEmailRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: emailFrom,
-        to: driverRecipient,
-        subject: driverSubject,
-        html: driverHtml,
-        text: driverText,
-      }),
-    });
-
-    if (!driverEmailRes.ok) {
-      const data = await driverEmailRes.json().catch(() => ({}));
-      return NextResponse.json({
-        ok: true,
-        driverPrice: driverAmount,
-        commissionApplied: appliedCommission,
-        warning:
-          data?.message ||
-          'Booking allocated, but driver allocation email could not be sent.',
+      const driverEmailRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: emailFrom,
+          to: driverRecipient,
+          subject: driverSubject,
+          html: driverHtml,
+          text: driverText,
+        }),
       });
+
+      if (!driverEmailRes.ok) {
+        const data = await driverEmailRes.json().catch(() => ({}));
+        warnings.push(
+          data?.message ||
+            'Booking allocated, but driver allocation email could not be sent.'
+        );
+      }
     }
 
-    return NextResponse.json({
+    return NextResponse.json(warnings.length ? {
+      ok: true,
+      driverPrice: driverAmount,
+      commissionApplied: appliedCommission,
+      warning: warnings.join(' '),
+    } : {
       ok: true,
       driverPrice: driverAmount,
       commissionApplied: appliedCommission,

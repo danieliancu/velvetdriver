@@ -25,10 +25,18 @@ type DriverJob = {
     date: string;
     pay: number;
 };
-const mockStatementData = [
-    { date: '2025-09-01', ref: 'VD-1001', pickup: 'WD3 4PQ', dropoff: 'Heathrow T5', vehicle: 'Saloon', miles: 18, wait: 10, fare: 64.00 },
-    { date: '2025-09-03', ref: 'VD-1002', pickup: 'HA4 0HJ', dropoff: 'LHR T3', vehicle: 'MPV', miles: 12, wait: 0, fare: 52.50 },
-];
+type DriverStatementRow = {
+    date: string;
+    ref: string;
+    pickup: string;
+    dropoff: string;
+    vehicle: string;
+    miles: number;
+    wait: number;
+    fare: number;
+    status: 'Paid' | 'Unpaid';
+    pdfUrl: string | null;
+};
 
 type DocumentItem = {
     name: string;
@@ -669,11 +677,46 @@ const DriverProfile = () => {
 };
 
 const MonthlyStatement: React.FC = () => {
+    const { user } = useAuth();
+    const [rows, setRows] = useState<DriverStatementRow[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!user?.email) return;
+        const controller = new AbortController();
+        const loadStatements = async () => {
+            setLoading(true);
+            setError(null);
+            try {
+                const res = await fetch(`/api/driver/statements?email=${encodeURIComponent(user.email)}`, {
+                    cache: 'no-store',
+                    signal: controller.signal,
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data?.error || 'Failed to load monthly statement');
+                }
+                const data = await res.json();
+                setRows((data.statements || []) as DriverStatementRow[]);
+            } catch (err: any) {
+                if (err?.name === 'AbortError') return;
+                setError(err?.message || 'Failed to load monthly statement');
+                setRows([]);
+            } finally {
+                setLoading(false);
+            }
+        };
+        loadStatements();
+        return () => controller.abort();
+    }, [user?.email]);
+
     const handleDownloadCSV = () => {
-        const headers = ['Date', 'Ref', 'Pickup', 'Dropoff', 'Vehicle', 'Miles', 'Wait', 'Fare (£)'];
+        if (!rows.length) return;
+        const headers = ['Date', 'Ref', 'Pickup', 'Dropoff', 'Vehicle', 'Miles', 'Wait', 'Fare (GBP)'];
         const csvRows = [
             headers.join(','),
-            ...mockStatementData.map(row => 
+            ...rows.map((row) =>
                 [
                     row.date,
                     row.ref,
@@ -682,11 +725,11 @@ const MonthlyStatement: React.FC = () => {
                     row.vehicle,
                     row.miles,
                     row.wait,
-                    row.fare.toFixed(2)
+                    row.fare.toFixed(2),
                 ].join(',')
-            )
+            ),
         ];
-        
+
         const csvString = csvRows.join('\n');
         const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
@@ -704,7 +747,8 @@ const MonthlyStatement: React.FC = () => {
         <div className="bg-gradient-to-br from-[#1E1212] via-[#100808] to-black border border-amber-900/50 rounded-2xl p-8">
             <h2 className="text-2xl font-bold font-display text-amber-400 mb-2">Monthly Statement</h2>
             <p className="text-sm text-amber-200/60 mb-8">Export bookings and earnings</p>
-            
+            {error ? <p className="text-sm text-red-300 mb-4">{error}</p> : null}
+
             <div className="overflow-x-auto">
                 <table className="w-full min-w-max text-left">
                     <thead>
@@ -716,11 +760,19 @@ const MonthlyStatement: React.FC = () => {
                             <th className="p-3 text-sm font-semibold text-amber-400 uppercase tracking-wider">Vehicle</th>
                             <th className="p-3 text-sm font-semibold text-amber-400 uppercase tracking-wider">Miles</th>
                             <th className="p-3 text-sm font-semibold text-amber-400 uppercase tracking-wider">Wait</th>
-                            <th className="p-3 text-sm font-semibold text-amber-400 uppercase tracking-wider text-right">Fare (£)</th>
+                            <th className="p-3 text-sm font-semibold text-amber-400 uppercase tracking-wider text-right">Fare (GBP)</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {mockStatementData.map((row, index) => (
+                        {loading ? (
+                            <tr>
+                                <td colSpan={8} className="p-3 text-gray-400">Loading statement rows...</td>
+                            </tr>
+                        ) : rows.length === 0 ? (
+                            <tr>
+                                <td colSpan={8} className="p-3 text-gray-400">No statement rows yet.</td>
+                            </tr>
+                        ) : rows.map((row) => (
                             <tr key={row.ref} className="border-b border-amber-900/40">
                                 <td className="p-3 text-white/90">{row.date}</td>
                                 <td className="p-3 text-white/90">{row.ref}</td>
@@ -729,7 +781,7 @@ const MonthlyStatement: React.FC = () => {
                                 <td className="p-3 text-white/90">{row.vehicle}</td>
                                 <td className="p-3 text-white/90">{row.miles}</td>
                                 <td className="p-3 text-white/90">{row.wait}</td>
-                                <td className="p-3 text-amber-400 font-semibold text-right">£{row.fare.toFixed(2)}</td>
+                                <td className="p-3 text-amber-400 font-semibold text-right">GBP {row.fare.toFixed(2)}</td>
                             </tr>
                         ))}
                     </tbody>
@@ -737,9 +789,10 @@ const MonthlyStatement: React.FC = () => {
             </div>
 
             <div className="mt-8">
-                <button 
+                <button
                     onClick={handleDownloadCSV}
-                    className="px-10 py-2.5 font-semibold bg-transparent border-2 border-amber-500 text-amber-400 rounded-lg hover:bg-amber-500 hover:text-black transition-colors"
+                    className="px-10 py-2.5 font-semibold bg-transparent border-2 border-amber-500 text-amber-400 rounded-lg hover:bg-amber-500 hover:text-black transition-colors disabled:opacity-60"
+                    disabled={!rows.length}
                 >
                     Download CSV
                 </button>

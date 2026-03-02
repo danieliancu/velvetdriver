@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
+import { createOrUpdatePaidInvoice } from '@/lib/client-invoices';
 
 const pool = getDbPool();
 const BOOKING_PAYMENT_NOTIFICATION_RECIPIENTS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
@@ -32,6 +33,8 @@ const sendPaymentEmail = async (payload: {
   totalFare: number;
   paymentIntentId?: string;
   paymentMethod?: string;
+  invoiceAttachmentBase64?: string;
+  invoiceFileName?: string;
 }) => {
   const resendApiKey = process.env.RESEND_API_KEY;
   const emailFrom = process.env.EMAIL_FROM;
@@ -133,6 +136,15 @@ const sendPaymentEmail = async (payload: {
       subject,
       html,
       text: `Payment received for booking ${code}. Amount GBP${payload.totalFare.toFixed(2)}.`,
+      attachments:
+        payload.invoiceAttachmentBase64 && payload.invoiceFileName
+          ? [
+              {
+                filename: payload.invoiceFileName,
+                content: payload.invoiceAttachmentBase64,
+              },
+            ]
+          : undefined,
     }),
   }).catch((err) => {
     console.error('Failed to send payment email', err);
@@ -264,6 +276,28 @@ export async function POST(request: Request) {
     const journeyId = Number(result.insertId);
     const paymentStatus = String(body.paymentStatus ?? '').toLowerCase();
     if (journeyId && paymentStatus === 'succeeded') {
+      let invoiceAttachmentBase64: string | undefined;
+      let invoiceFileName: string | undefined;
+      try {
+        const invoice = await createOrUpdatePaidInvoice(pool, {
+          journeyId,
+          clientId,
+          journeyDateIso: journeyDate.toISOString(),
+          passengerName,
+          passengerEmail,
+          passengerPhone,
+          pickup,
+          destination,
+          totalFare: Number(body.totalFare ?? 0),
+          paymentIntentId: body.paymentIntentId ? String(body.paymentIntentId) : undefined,
+          paymentMethod: body.paymentMethod ? String(body.paymentMethod) : undefined,
+        });
+        invoiceAttachmentBase64 = Buffer.from(invoice.pdfBytes).toString('base64');
+        invoiceFileName = invoice.fileName;
+      } catch (invoiceErr) {
+        console.error('Invoice create/save error', invoiceErr);
+      }
+
       const emailPayload = {
         journeyId,
         journeyDate: journeyDate.toISOString(),
@@ -275,6 +309,8 @@ export async function POST(request: Request) {
         totalFare: Number(body.totalFare ?? 0),
         paymentIntentId: body.paymentIntentId ? String(body.paymentIntentId) : undefined,
         paymentMethod: body.paymentMethod ? String(body.paymentMethod) : undefined,
+        invoiceAttachmentBase64,
+        invoiceFileName,
       };
       await Promise.allSettled([
         sendPaymentEmail(emailPayload),
