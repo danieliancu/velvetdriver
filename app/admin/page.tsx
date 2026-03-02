@@ -18,7 +18,7 @@ export default function AdminLoginPage() {
     e.preventDefault();
     if (username === 'admin' && password === 'admin') {
       setError('');
-      login(Role.ADMIN);
+      login(Role.ADMIN, { name: 'Administrator', email: 'admin@admin.local' });
       router.push('/admin/dashboard');
     } else {
       setError('Invalid username or password');

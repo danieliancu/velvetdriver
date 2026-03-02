@@ -83,7 +83,6 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
   const [drivers, setDrivers] = useState<Record<string, DriverEntry>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [cancelBusy, setCancelBusy] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     let mounted = true;
@@ -91,7 +90,7 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
       setLoading(true);
       try {
         const [bookingsRes, driversRes] = await Promise.all([
-          fetch('/api/admin/live-bookings', { cache: 'no-store' }),
+          fetch('/api/admin/older-bookings', { cache: 'no-store' }),
           fetch('/api/admin/drivers', { cache: 'no-store' }),
         ]);
         if (!bookingsRes.ok) {
@@ -152,23 +151,12 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
     };
   }, []);
 
-  const allocatedBookings = useMemo(() => {
-    const now = Date.now();
-    return bookings.filter((booking) => {
-      if (!booking.driverId) return false;
-      const source = booking.journeyDate || `${booking.date}T${booking.time}`;
-      const journeyTime = new Date(source);
-      if (Number.isNaN(journeyTime.getTime())) return false;
-      return journeyTime.getTime() <= now;
-    });
-  }, [bookings]);
-
   const filteredBookings = useMemo(() => {
     if (!query.trim()) {
-      return allocatedBookings;
+      return bookings;
     }
     const searchTerm = query.toLowerCase();
-    return allocatedBookings.filter((booking) => {
+    return bookings.filter((booking) => {
       const driver = booking.driverId ? drivers[booking.driverId] : null;
       const haystack = [
         booking.code,
@@ -190,7 +178,7 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
         .toLowerCase();
       return haystack.includes(searchTerm);
     });
-  }, [allocatedBookings, drivers, query]);
+  }, [bookings, drivers, query]);
 
   const groupedBookings = useMemo(() => {
     const map = new Map<string, LiveBooking[]>();
@@ -202,31 +190,6 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
     });
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [filteredBookings]);
-
-  const handleCancel = async (booking: LiveBooking) => {
-    if (!booking.journeyId) return;
-    setCancelBusy((prev) => ({ ...prev, [booking.journeyId]: true }));
-    try {
-      const res = await fetch('/api/admin/unassign-driver', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ journeyId: booking.journeyId }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error || 'Failed to unassign driver');
-      }
-      setBookings((prev) =>
-        prev.map((entry) =>
-          entry.id === booking.id ? { ...entry, driverId: '' } : entry
-        )
-      );
-    } catch (err) {
-      console.error('Failed to unassign driver', err);
-    } finally {
-      setCancelBusy((prev) => ({ ...prev, [booking.journeyId]: false }));
-    }
-  };
 
   return (
     <div className={className}>
@@ -317,17 +280,7 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
                           </div>
                         </div>
                         <div className="space-y-3 rounded-2xl border border-white/10 bg-black/40 p-4 lg:basis-[45%]">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-sm font-semibold text-white">Driver contact</p>
-                            <button
-                              type="button"
-                              onClick={() => handleCancel(booking)}
-                              disabled={cancelBusy[booking.journeyId]}
-                              className="text-[11px] font-semibold uppercase tracking-[0.3em] rounded-full px-3 py-1 transition flex items-center gap-1 border border-red-400 bg-red-500 text-white hover:bg-red-400 disabled:opacity-60 disabled:cursor-not-allowed"
-                            >
-                              Cancel
-                            </button>
-                          </div>
+                          <p className="text-sm font-semibold text-white">Driver contact</p>
                           {driverInfo ? (
                             <div className="space-y-1 text-xs text-gray-300">
                               <p>Name: {driverInfo.name}</p>

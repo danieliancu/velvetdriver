@@ -1,0 +1,23 @@
+-- Add per-allocation commission + net driver price fields.
+ALTER TABLE client_journeys
+  ADD COLUMN driver_commission_applied DECIMAL(5,2) NULL AFTER price,
+  ADD COLUMN driver_price DECIMAL(10,2) NULL AFTER driver_commission_applied;
+
+-- Optional backfill for already-allocated journeys where driver_name stores driver id.
+UPDATE client_journeys cj
+INNER JOIN drivers d ON d.id = CAST(cj.driver_name AS UNSIGNED)
+SET
+  cj.driver_commission_applied = IFNULL(
+    cj.driver_commission_applied,
+    LEAST(100, GREATEST(0, COALESCE(d.commission, 20)))
+  ),
+  cj.driver_price = IFNULL(
+    cj.driver_price,
+    ROUND(
+      COALESCE(cj.price, 0) * (
+        1 - (LEAST(100, GREATEST(0, COALESCE(d.commission, 20))) / 100)
+      ),
+      2
+    )
+  )
+WHERE cj.driver_name REGEXP '^[0-9]+$';

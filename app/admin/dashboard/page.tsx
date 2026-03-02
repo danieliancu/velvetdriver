@@ -9,6 +9,7 @@ type DriverDirectoryEntry = {
   phone: string;
   email: string;
   license: string;
+  commission: number;
   cars: Array<{
     id: number;
     status: string;
@@ -107,11 +108,30 @@ const formatLocationWithLink = (label: string, location: string) => {
   return `${label}: ${location}\nMap: ${link}`;
 };
 
-const buildBookingSummary = (booking: LiveBooking) => {
+const parseBookingPriceAmount = (priceDetails: string) => {
+  const numericMatch = String(priceDetails || '').match(/(\d+(?:\.\d+)?)/);
+  if (!numericMatch) return null;
+  const amount = Number(numericMatch[1]);
+  if (!Number.isFinite(amount)) return null;
+  return amount;
+};
+
+const formatPriceForDriver = (priceDetails: string, commissionPercent: number) => {
+  const originalAmount = parseBookingPriceAmount(priceDetails);
+  if (originalAmount === null) return priceDetails;
+  const normalizedCommission = Number.isFinite(commissionPercent)
+    ? Math.min(100, Math.max(0, commissionPercent))
+    : 0;
+  const driverAmount = originalAmount * (1 - normalizedCommission / 100);
+  return `GBP ${driverAmount.toFixed(2)}`;
+};
+
+const buildBookingSummary = (booking: LiveBooking, commissionPercent = 0) => {
   const pickupLine = formatLocationWithLink('Pickup', booking.pickup);
   const dropOffLine = formatLocationWithLink('Drop-off', booking.dropOff);
+  const driverPrice = formatPriceForDriver(booking.priceDetails, commissionPercent);
 
-  return `Time: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${pickupLine}\n\nTO\n\n${dropOffLine}\n\nPrice:  ${booking.priceDetails}\n\nNotes: ${booking.notes}`;
+  return `Time: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${pickupLine}\n\nTO\n\n${dropOffLine}\n\nPrice:  ${driverPrice}\n\nNotes: ${booking.notes}`;
 };
 
 const formatCarLabel = (car: {
@@ -127,17 +147,6 @@ const formatCarLabel = (car: {
 const appendSelectedCarInstruction = (message: string, selectedCarLabel?: string) => {
   if (!selectedCarLabel) return message;
   return `${message}\n\nPlease use the car ${selectedCarLabel}`;
-};
-
-const getJourneyTimestamp = (booking: LiveBooking) => {
-  if (booking.journeyDate) {
-    const parsed = new Date(booking.journeyDate);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
-  }
-
-  // Fallback for legacy payloads without journeyDate.
-  const fallback = new Date(`${booking.date}T${booking.time}`);
-  return Number.isNaN(fallback.getTime()) ? null : fallback.getTime();
 };
 
 const formatBookingCreatedAt = (createdAt?: string | null) => {
@@ -214,6 +223,7 @@ const AdminDashboardPage: React.FC = () => {
   const [bookedBySelection, setBookedBySelection] = useState<Record<string, string>>({});
   const [bookedBySaving, setBookedBySaving] = useState<Record<string, boolean>>({});
   const [vehicleLabelById, setVehicleLabelById] = useState<Record<number, string>>({});
+  const [cancelAllocationBusy, setCancelAllocationBusy] = useState<Record<string, boolean>>({});
 
   const applyLiveBookingsResponse = useCallback((data: { bookings?: LiveBookingResponse[] }) => {
     const bookings: LiveBooking[] = (data.bookings || []).map((item: LiveBookingResponse) => ({
@@ -320,6 +330,7 @@ const AdminDashboardPage: React.FC = () => {
             phone: driver.phone || '-',
             email: driver.email || '-',
             license: driver.license || '-',
+            commission: Number(driver.commission ?? 20),
             cars,
           } as DriverDirectoryEntry;
         });
@@ -402,17 +413,13 @@ const AdminDashboardPage: React.FC = () => {
   };
 
   const partitionedBookings = React.useMemo(() => {
-    const now = Date.now();
     const live: LiveBooking[] = [];
-    const history: LiveBooking[] = [];
+    const allocated: LiveBooking[] = [];
 
     for (const booking of liveBookings) {
       const allocatedToDriver = Boolean(booking.driverId);
-      const journeyTime = getJourneyTimestamp(booking);
-      const shouldBeVisibleInHistory = allocatedToDriver && journeyTime !== null && journeyTime <= now;
-
-      if (shouldBeVisibleInHistory) {
-        history.push(booking);
+      if (allocatedToDriver) {
+        allocated.push(booking);
       } else if (!allocatedToDriver) {
         live.push(booking);
       }
@@ -431,11 +438,11 @@ const AdminDashboardPage: React.FC = () => {
       return b.journeyId - a.journeyId;
     });
 
-    return { live, history };
+    return { live, allocated };
   }, [liveBookings]);
 
   const activeBookings = partitionedBookings.live;
-  const jobHistoryBookings = partitionedBookings.history;
+  const allocatedBookings = partitionedBookings.allocated;
 
   const pendingClientConfirmations = activeBookings.filter(
     (booking) => !clientConfirmed[booking.id]
@@ -455,6 +462,7 @@ const AdminDashboardPage: React.FC = () => {
 
   const handleConfirmDriver = () => {
     if (!pendingDriverConfirmKey) return;
+    const driverKey = pendingDriverConfirmKey;
     const lastDash = pendingDriverConfirmKey.lastIndexOf('-');
     if (lastDash <= 0) {
       setPendingDriverConfirmKey(null);
@@ -470,7 +478,11 @@ const AdminDashboardPage: React.FC = () => {
     fetch('/api/admin/allocate-driver', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ journeyId: booking.journeyId, driverId }),
+      body: JSON.stringify({
+        journeyId: booking.journeyId,
+        driverId,
+        commission: getCommissionValueForDriverKey(driverKey),
+      }),
     })
       .then(async (res) => {
         if (!res.ok) {
@@ -512,12 +524,35 @@ const AdminDashboardPage: React.FC = () => {
     return selectedCar ? formatCarLabel(selectedCar) : '';
   };
 
+  const getDefaultCommissionByDriverKey = (driverKey: string) => {
+    const lastDash = driverKey.lastIndexOf('-');
+    if (lastDash <= 0) return 20;
+    const driverId = driverKey.slice(lastDash + 1);
+    const driver = availableDrivers.find((entry) => entry.id === driverId);
+    const value = Number(driver?.commission ?? 20);
+    return Number.isFinite(value) ? value : 20;
+  };
+
+  const getCommissionValueForDriverKey = (driverKey: string) => {
+    const rawInput = commissionInputs[driverKey];
+    if (rawInput === undefined) return getDefaultCommissionByDriverKey(driverKey);
+    const parsed = Number(rawInput);
+    return Number.isFinite(parsed) ? parsed : getDefaultCommissionByDriverKey(driverKey);
+  };
+
+  const getDriverNameById = (driverId?: string) => {
+    if (!driverId) return 'Pending assignment';
+    const driver = availableDrivers.find((entry) => entry.id === driverId);
+    return driver?.name || driverId;
+  };
+
   const handlePasteInfo = (
     driverKey: string,
     booking: LiveBooking,
     selectedCarLabel?: string
   ) => {
-    const baseMessage = buildBookingSummary(booking);
+    const commissionValue = getCommissionValueForDriverKey(driverKey);
+    const baseMessage = buildBookingSummary(booking, commissionValue);
     setDriverMessages((prev) => ({
       ...prev,
       [driverKey]: appendSelectedCarInstruction(baseMessage, selectedCarLabel),
@@ -613,6 +648,7 @@ const AdminDashboardPage: React.FC = () => {
 
   const handleCancelAllocation = async (booking: LiveBooking) => {
     if (!booking.journeyId) return;
+    setCancelAllocationBusy((prev) => ({ ...prev, [booking.id]: true }));
     try {
       const res = await fetch('/api/admin/unassign-driver', {
         method: 'POST',
@@ -632,6 +668,8 @@ const AdminDashboardPage: React.FC = () => {
       );
     } catch (err) {
       console.error('Failed to unassign driver', err);
+    } finally {
+      setCancelAllocationBusy((prev) => ({ ...prev, [booking.id]: false }));
     }
   };
   return (
@@ -665,6 +703,10 @@ const AdminDashboardPage: React.FC = () => {
                 ) : (
                   activeBookings.map((booking) => {
                     const confirmed = clientConfirmed[booking.id];
+                    const selectedStaffId =
+                      bookedBySelection[booking.id] ??
+                      (booking.bookedByStaffId ? String(booking.bookedByStaffId) : '');
+                    const hasSelectedStaff = Boolean(String(selectedStaffId).trim());
                     const bookingCreatedAt = formatBookingCreatedAt(booking.createdAt);
                     const bookingDrivers = availableDrivers
                       .map((driver) => {
@@ -748,12 +790,17 @@ const AdminDashboardPage: React.FC = () => {
                             <button
                               type="button"
                               onClick={() =>
-                                confirmed
+                                !confirmed && !hasSelectedStaff
+                                  ? null
+                                  : confirmed
                                   ? updateClientConfirmation(booking.id, false)
                                   : requestClientConfirmation(booking)
                               }
+                              disabled={!confirmed && !hasSelectedStaff}
                               className={`flex items-center gap-2 text-sm font-semibold transition ${
                                 confirmed ? 'text-green-400' : 'text-gray-300'
+                              } ${
+                                !confirmed && !hasSelectedStaff ? 'cursor-not-allowed opacity-50' : ''
                               }`}
                             >
                               <span
@@ -805,7 +852,9 @@ const AdminDashboardPage: React.FC = () => {
                                       const isWhatsappOpen = whatsappOpen[driverKey];
                                       const messageValue = driverMessages[driverKey] ?? '';
                                       const bookingLocked = bookingAllocated && !confirmedDriver;
-                                      const commissionValue = commissionInputs[driverKey] ?? '20';
+                                      const commissionValue =
+                                        commissionInputs[driverKey] ??
+                                        String(getDefaultCommissionByDriverKey(driverKey));
                                       const selectedCarLabel = getSelectedCarLabel(driverKey, driver.eligibleCars);
 
                                       return (
@@ -818,9 +867,6 @@ const AdminDashboardPage: React.FC = () => {
                                               <p className="text-sm font-semibold text-white">{driver.name}</p>
                                               <p className="text-[11px] text-gray-400">Phone: {driver.phone}</p>
                                               <div className="mt-2 space-y-1">
-                                                <p className="text-[11px] uppercase tracking-[0.2em] text-gray-400">
-                                                  Cars (eligible)
-                                                </p>
                                                 {driver.eligibleCars.map((car) => {
                                                   const optionId = `${driverKey}-car-${car.id}`;
                                                   const checked = selectedCarByDriverKey[driverKey] === car.id;
@@ -828,7 +874,7 @@ const AdminDashboardPage: React.FC = () => {
                                                     <label
                                                       key={optionId}
                                                       htmlFor={optionId}
-                                                      className="flex items-center gap-2 text-[11px] text-gray-300"
+                                                      className="flex items-start gap-2 text-[11px] text-gray-300"
                                                     >
                                                       <input
                                                         id={optionId}
@@ -845,9 +891,18 @@ const AdminDashboardPage: React.FC = () => {
                                                       />
                                                       <span>
                                                         {formatCarLabel(car)}
-                                                        <span className="ml-2 text-gray-500">
-                                                          ({car.vehicleTypeLabel} | {car.status})
-                                                        </span>
+                                                        <div className="flex items-center gap-1 text-gray-500">
+                                                          {String(car.status).toLowerCase() === 'active' ? (
+                                                            <span className="rounded-full bg-green-500/25 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-200">
+                                                              {car.status}
+                                                            </span>
+                                                          ) : (
+                                                            <span className="rounded-full bg-red-500/25 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-200">
+                                                              {car.status}
+                                                            </span>
+                                                          )}
+                                                          <span className="font-bold">{car.vehicleTypeLabel}</span>
+                                                        </div>
                                                       </span>
                                                     </label>
                                                   );
@@ -946,7 +1001,10 @@ const AdminDashboardPage: React.FC = () => {
                                                   onClick={() =>
                                                     handleSend(
                                                       driverKey,
-                                                      buildBookingSummary(booking),
+                                                      buildBookingSummary(
+                                                        booking,
+                                                        getCommissionValueForDriverKey(driverKey)
+                                                      ),
                                                       selectedCarLabel || undefined
                                                     )
                                                   }
@@ -983,23 +1041,33 @@ const AdminDashboardPage: React.FC = () => {
 
             <section className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-semibold text-white">Job History</h3>
-                <span className="text-xs text-gray-400">{jobHistoryBookings.length} item(s)</span>
+                <h3 className="text-base font-semibold text-white">Allocated</h3>
+                <span className="text-xs text-gray-400">{allocatedBookings.length} item(s)</span>
               </div>
-              {jobHistoryBookings.length === 0 ? (
-                <p className="text-sm text-gray-400">No jobs have started yet.</p>
+              {allocatedBookings.length === 0 ? (
+                <p className="text-sm text-gray-400">No allocated jobs.</p>
               ) : (
                 <div className="space-y-3">
-                  {jobHistoryBookings.map((booking) => (
+                  {allocatedBookings.map((booking) => (
                     <article
-                      key={`history-${booking.id}`}
-                      className="rounded-xl border border-white/10 bg-black/40 p-4"
+                      key={`allocated-${booking.id}`}
+                      className="rounded-xl border border-emerald-400/20 bg-black/40 p-4"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-semibold text-white">{booking.id}</p>
-                        <p className="text-xs text-gray-400">
-                          {booking.date} {booking.time}
-                        </p>
+                        <div>
+                          <p className="text-sm font-semibold text-white">{booking.id}</p>
+                          <p className="text-xs text-gray-400">
+                            {booking.date} {booking.time}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelAllocation(booking)}
+                          disabled={cancelAllocationBusy[booking.id]}
+                          className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
                       </div>
                       <p className="mt-2 text-sm text-gray-300">
                         Pickup: <span className="text-white">{booking.pickup}</span>
@@ -1011,7 +1079,7 @@ const AdminDashboardPage: React.FC = () => {
                         Passenger: <span className="text-white">{booking.passenger}</span>
                       </p>
                       <p className="text-sm text-gray-300">
-                        Driver: <span className="text-white">{booking.driverId || 'Pending assignment'}</span>
+                        Driver: <span className="text-emerald-300">{getDriverNameById(booking.driverId)}</span>
                       </p>
                       <p className="text-sm text-gray-300">
                         Price: <span className="text-white">{booking.priceDetails}</span>
@@ -1081,4 +1149,3 @@ const AdminDashboardPage: React.FC = () => {
 };
 
 export default AdminDashboardPage;
-

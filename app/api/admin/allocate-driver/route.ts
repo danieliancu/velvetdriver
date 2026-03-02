@@ -35,6 +35,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const journeyId = Number(body?.journeyId);
     const driverId = String(body?.driverId ?? '').trim();
+    const requestedCommission = body?.commission !== undefined ? Number(body.commission) : null;
 
     if (!journeyId) {
       return NextResponse.json({ error: 'Missing journey id' }, { status: 400 });
@@ -49,16 +50,53 @@ export async function POST(request: Request) {
     }
 
     const [driverExistsRows] = await pool.query<mysql.RowDataPacket[]>(
-      'SELECT id FROM drivers WHERE id = ? LIMIT 1',
+      'SELECT id, commission FROM drivers WHERE id = ? LIMIT 1',
       [driverIdNumber]
     );
     if (!driverExistsRows.length) {
       return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
     }
+    const driverCommission = Number(driverExistsRows[0]?.commission ?? 20);
+    const appliedCommissionRaw =
+      requestedCommission !== null && Number.isFinite(requestedCommission)
+        ? requestedCommission
+        : driverCommission;
+    const appliedCommission = Math.min(100, Math.max(0, appliedCommissionRaw));
+
+    const [pricingRows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT price, booking_payload
+         FROM client_journeys
+        WHERE id = ?
+        LIMIT 1`,
+      [journeyId]
+    );
+    const pricingRow = pricingRows[0];
+    if (!pricingRow) {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+    }
+
+    let pricingPayload: any = null;
+    if (pricingRow.booking_payload) {
+      try {
+        pricingPayload =
+          typeof pricingRow.booking_payload === 'string'
+            ? JSON.parse(pricingRow.booking_payload)
+            : pricingRow.booking_payload;
+      } catch {
+        pricingPayload = null;
+      }
+    }
+    const pricingFareAmount = Number(pricingRow.price ?? pricingPayload?.totalFare ?? 0) || 0;
+    const driverAmount = Number((pricingFareAmount * (1 - appliedCommission / 100)).toFixed(2));
 
     const [result] = await pool.execute<mysql.ResultSetHeader>(
-      'UPDATE client_journeys SET driver_name = ? WHERE id = ? LIMIT 1',
-      [driverId, journeyId]
+      `UPDATE client_journeys
+          SET driver_name = ?,
+              driver_commission_applied = ?,
+              driver_price = ?
+        WHERE id = ?
+        LIMIT 1`,
+      [driverId, appliedCommission, driverAmount, journeyId]
     );
 
     if (!result.affectedRows) {

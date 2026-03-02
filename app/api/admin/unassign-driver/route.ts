@@ -13,7 +13,12 @@ export async function POST(request: Request) {
     }
 
     const [result] = await pool.execute<mysql.ResultSetHeader>(
-      'UPDATE client_journeys SET driver_name = ? WHERE id = ? LIMIT 1',
+      `UPDATE client_journeys
+          SET driver_name = ?,
+              driver_commission_applied = NULL,
+              driver_price = NULL
+        WHERE id = ?
+        LIMIT 1`,
       ['Pending assignment', journeyId]
     );
 

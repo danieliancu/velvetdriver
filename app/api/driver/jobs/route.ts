@@ -41,7 +41,8 @@ export async function GET(request: Request) {
               cj.pickup,
               cj.destination,
               cj.passenger_name,
-              cj.price
+              cj.price,
+              cj.driver_price
        FROM client_journeys cj
        WHERE cj.status = 'Upcoming'
          AND cj.driver_name = ?
@@ -57,7 +58,7 @@ export async function GET(request: Request) {
         pickup: row.pickup,
         dropOff: row.destination,
         passenger: row.passenger_name || 'Client',
-        price: Number(row.price ?? 0) || 0,
+        price: Number(row.driver_price ?? row.price ?? 0) || 0,
         date,
         time,
       };
