@@ -45,7 +45,10 @@ export async function POST(request: Request) {
     const body = await request.json();
     const email = String(body.email ?? '').trim().toLowerCase();
     const payload = body.payload;
-    const label = String(body.label ?? '').trim() || `${payload?.pickup || 'Journey'} -> ${(payload?.dropOffs?.[0] ?? '')}`;
+    const finalDestination = Array.isArray(payload?.dropOffs)
+      ? String(payload.dropOffs[payload.dropOffs.length - 1] ?? '').trim()
+      : '';
+    const label = String(body.label ?? '').trim() || `${payload?.pickup || 'Journey'} -> ${finalDestination}`;
     if (!email || !payload) return NextResponse.json({ error: 'Missing data' }, { status: 400 });
     const [users] = await pool.query<mysql.RowDataPacket[]>('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
     const user = users[0];

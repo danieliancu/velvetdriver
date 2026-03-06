@@ -245,7 +245,9 @@ export async function POST(request: Request) {
     }
 
     const destination = dropOffs
-      .map((stop: string, index: number) => (index === 0 ? stop : `Stop ${index + 1}: ${stop}`))
+      .map((stop: string, index: number) =>
+        index === dropOffs.length - 1 ? stop : `Stop ${index + 1}: ${stop}`
+      )
       .join(', ');
 
     const payload = {

@@ -148,6 +148,7 @@ const BookingPageInner = () => {
         dropOffAddresses.every((addr) => addr.trim().length > 0) &&
         date.trim().length > 0 &&
         time.trim().length > 0;
+    const finalDropIndex = Math.max(0, dropOffAddresses.length - 1);
     const bookingLeadTimeHours = useMemo(() => {
         if (!date.trim() || !time.trim()) return null;
         const journeyDateTime = new Date(`${date}T${time}`);
@@ -689,7 +690,7 @@ const BookingPageInner = () => {
                         const coords = [...stopCoords];
                         coords[index] = { lat: full.geometry.location.lat(), lng: full.geometry.location.lng() };
                         setStopCoords(coords);
-                        if (index === 0) {
+                        if (index === finalDropIndex) {
                             setDropOffLatLng({ lat: full.geometry.location.lat(), lng: full.geometry.location.lng() });
                         }
                     }
@@ -795,7 +796,7 @@ const BookingPageInner = () => {
                     const coords = [...stopCoords];
                     coords[index] = { lat, lng };
                     setStopCoords(coords);
-                    if (index === 0) setDropOffLatLng({ lat, lng });
+                    if (index === finalDropIndex) setDropOffLatLng({ lat, lng });
                 }
                 const flags = [...dropIsAirportFlags];
                 flags[index] = match.isAirport;
@@ -1024,7 +1025,9 @@ const BookingPageInner = () => {
         setSavingQuote(true);
         try {
             const payload = { ...buildQuotePayload(), totalFare };
-            const label = `${pickupDisplay || payload.pickup || 'Journey'} -> ${dropOffDisplays[0] || payload.dropOffs?.[0] || 'Destination'}`;
+            const destination =
+                (Array.isArray(payload.dropOffs) ? payload.dropOffs[payload.dropOffs.length - 1] : '') || 'Destination';
+            const label = `${pickupDisplay || payload.pickup || 'Journey'} -> ${destination}`;
             const res = await fetch('/api/client/saved-quotes', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1176,15 +1179,36 @@ const BookingPageInner = () => {
     const zoneMilesText = '';
 
     const handleAddStop = () => {
-        setDropOffAddresses([...dropOffAddresses, '']);
-        setDropOffDisplays([...dropOffDisplays, '']);
-        setStopCoords([...stopCoords, null]);
-        setDropIsAirportFlags([...dropIsAirportFlags, false]);
-        setDropAirportCodes([...dropAirportCodes, null]);
+        const insertAt = Math.max(0, dropOffAddresses.length - 1);
+        setDropOffAddresses([
+            ...dropOffAddresses.slice(0, insertAt),
+            '',
+            ...dropOffAddresses.slice(insertAt),
+        ]);
+        setDropOffDisplays([
+            ...dropOffDisplays.slice(0, insertAt),
+            '',
+            ...dropOffDisplays.slice(insertAt),
+        ]);
+        setStopCoords([
+            ...stopCoords.slice(0, insertAt),
+            null,
+            ...stopCoords.slice(insertAt),
+        ]);
+        setDropIsAirportFlags([
+            ...dropIsAirportFlags.slice(0, insertAt),
+            false,
+            ...dropIsAirportFlags.slice(insertAt),
+        ]);
+        setDropAirportCodes([
+            ...dropAirportCodes.slice(0, insertAt),
+            null,
+            ...dropAirportCodes.slice(insertAt),
+        ]);
     };
 
     const handleRemoveStop = (index: number) => {
-        if (dropOffDisplays.length > 1) {
+        if (dropOffDisplays.length > 1 && index < dropOffDisplays.length - 1) {
             const newDropOffs = dropOffAddresses.filter((_, i) => i !== index);
             const newDropOffDisplays = dropOffDisplays.filter((_, i) => i !== index);
             const newCoords = stopCoords.filter((_, i) => i !== index);
@@ -1214,7 +1238,7 @@ const BookingPageInner = () => {
         const newCodes = [...dropAirportCodes];
         newCodes[index] = null;
         setDropAirportCodes(newCodes);
-        if (index === 0) setDropOffLatLng(null);
+        if (index === finalDropIndex) setDropOffLatLng(null);
     };
     useEffect(() => {
         if (!airportDetected) {
@@ -1617,7 +1641,7 @@ const BookingPageInner = () => {
                                     <div key={index} className="flex items-center gap-2">
                                         <div className="flex-grow">
                                             <BookingInput 
-                                                label={index === 0 ? "Drop-off" : `Stop ${index + 1}`}
+                                                label={index === dropOffDisplays.length - 1 ? "Drop-off" : `Stop ${index + 1}`}
                                                 id={`dropoff-${index}`} 
                                                 ref={(el) => { dropoffInputRefs.current[index] = el; }}
                                         value={stop}
@@ -1626,7 +1650,7 @@ const BookingPageInner = () => {
                                                 required
                                             />
                                         </div>
-                                        {index > 0 && (
+                                        {index < dropOffDisplays.length - 1 && (
                                             <button type="button" onClick={() => handleRemoveStop(index)} className="mt-5 text-red-500 hover:text-red-400 transition-colors">
                                                 <XCircle size={24} />
                                             </button>
@@ -1890,7 +1914,9 @@ const BookingPageInner = () => {
                                     </div>
                                     <div className="flex flex-col items-start gap-1">
                                         <span className="text-gray-400">Drop-off:</span>
-                                        <span className="font-semibold text-amber-100">{dropOffDisplays[0] || dropOffAddresses[0]}</span>
+                                        <span className="font-semibold text-amber-100">
+                                            {dropOffDisplays[dropOffDisplays.length - 1] || dropOffAddresses[dropOffAddresses.length - 1]}
+                                        </span>
                                     </div>
                                     <div className="flex flex-col items-start gap-1">
                                         <span className="text-gray-400">Date:</span>

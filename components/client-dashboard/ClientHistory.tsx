@@ -83,7 +83,8 @@ const ClientHistory: React.FC<Props> = ({
           const payload = quote.payload || {};
           const pickup = payload.pickup || 'Pickup TBD';
           const dropOffs: string[] = Array.isArray(payload.dropOffs) ? payload.dropOffs.filter(Boolean) : payload.dropOff ? [payload.dropOff] : [];
-          const primaryDrop = dropOffs[0] || 'Drop-off TBD';
+          const primaryDrop = dropOffs[dropOffs.length - 1] || 'Drop-off TBD';
+          const intermediateStops = dropOffs.slice(0, -1);
           const iso = payload.date && payload.time ? `${payload.date}T${payload.time}` : payload.date;
           let formatted: string | null = null;
           if (iso) {
@@ -138,10 +139,10 @@ const ClientHistory: React.FC<Props> = ({
               </div>
               <div className="text-sm text-gray-300">
                 {pickup} <span className="text-gray-500">-&gt;</span> {primaryDrop}
-                {dropOffs.length > 1 ? (
+                {intermediateStops.length > 0 ? (
                   <div className="mt-1 text-xs text-gray-400">
-                    {dropOffs.slice(1).map((stop, idx) => (
-                      <div key={stop + idx}>Stop {idx + 2}: {stop}</div>
+                    {intermediateStops.map((stop, idx) => (
+                      <div key={stop + idx}>Stop {idx + 1}: {stop}</div>
                     ))}
                   </div>
                 ) : null}

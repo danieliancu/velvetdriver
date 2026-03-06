@@ -24,7 +24,9 @@ export async function POST(request: Request) {
     const passengerName = String(body?.passengerName ?? '').trim();
     const passengerEmail = String(body?.passengerEmail ?? '').trim();
     const pickup = String(body?.pickup ?? '').trim();
-    const dropOff = Array.isArray(body?.dropOffs) ? String(body.dropOffs[0] ?? '').trim() : '';
+    const dropOff = Array.isArray(body?.dropOffs)
+      ? String(body.dropOffs[body.dropOffs.length - 1] ?? '').trim()
+      : '';
 
     const paymentIntent = await stripe.paymentIntents.create({
       amount: Math.round(amount * 100),

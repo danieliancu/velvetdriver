@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { Search } from 'lucide-react';
+import { ChevronDown, ChevronUp, Search } from 'lucide-react';
 
 type LiveBooking = {
   journeyId: number;
@@ -33,10 +33,48 @@ type DriverEntry = {
 };
 
 const formatDateHeading = (date: string) => {
-  const parsed = new Date(date);
-  return Number.isNaN(parsed.getTime())
-    ? date
-    : parsed.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  }).formatToParts(parsed);
+  const weekday = parts.find((part) => part.type === 'weekday')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  const year = parts.find((part) => part.type === 'year')?.value;
+  return weekday && month && day && year ? `${weekday} ${month} ${day} ${year}` : date;
+};
+
+const toDateKey = (booking: LiveBooking) => {
+  if (booking.journeyDate) {
+    const rawKey = booking.journeyDate.split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rawKey)) return rawKey;
+    const parsed = new Date(booking.journeyDate);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  }
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(booking.date || '')) {
+    const [day, month, year] = String(booking.date).split('/');
+    return `${year}-${month}-${day}`;
+  }
+  return booking.date || 'Unknown date';
+};
+
+const toTimeRank = (booking: LiveBooking) => {
+  if (booking.journeyDate) {
+    const parsed = new Date(booking.journeyDate);
+    if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
+  }
+  const dateKey = toDateKey(booking);
+  const timeMatch = (booking.time || '').match(/^(\d{1,2}):(\d{2})/);
+  if (timeMatch && /^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    const [, hour, minute] = timeMatch;
+    const parsed = new Date(`${dateKey}T${hour.padStart(2, '0')}:${minute}:00`);
+    if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
+  }
+  return Number.MAX_SAFE_INTEGER;
 };
 
 const formatDateTime = (value?: string | null) => {
@@ -83,6 +121,7 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
   const [drivers, setDrivers] = useState<Record<string, DriverEntry>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let mounted = true;
@@ -183,12 +222,13 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
   const groupedBookings = useMemo(() => {
     const map = new Map<string, LiveBooking[]>();
     filteredBookings.forEach((booking) => {
-      const journeyKey = booking.journeyDate || '';
-      const groupKey = journeyKey ? journeyKey.split('T')[0] : booking.date || 'Unknown date';
+      const groupKey = toDateKey(booking);
       const existing = map.get(groupKey) ?? [];
       map.set(groupKey, [...existing, booking]);
     });
-    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+    return Array.from(map.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([date, entries]) => [date, [...entries].sort((a, b) => toTimeRank(a) - toTimeRank(b))] as const);
   }, [filteredBookings]);
 
   return (
@@ -222,82 +262,93 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
         <div className="space-y-6">
           {groupedBookings.map(([date, entries]) => (
             <div key={date} className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-5">
-              <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setCollapsedDates((prev) => ({ ...prev, [date]: !prev[date] }))}
+                className="flex w-full items-center justify-between text-left"
+                aria-expanded={!collapsedDates[date]}
+              >
                 <div>
                   <p className="text-xs uppercase tracking-wide text-gray-400">Date</p>
                   <h2 className="text-xl font-semibold text-white">{formatDateHeading(date)}</h2>
                 </div>
-                <p className="text-sm text-gray-400">{entries.length} bookings</p>
-              </div>
+                <div className="flex items-center gap-2 text-sm text-gray-400">
+                  <p>{entries.length} bookings</p>
+                  {collapsedDates[date] ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+                </div>
+              </button>
 
-              <div className="space-y-4">
-                {entries.map((booking) => {
-                  const driverInfo = booking.driverId ? drivers[booking.driverId] : null;
-                  const bookingCreated = formatDateTime(booking.createdAt);
-                  const bookingAccepted = formatDateTime(booking.updatedAt);
-                  const journeyDate = booking.date || formatDateOnly(booking.journeyDate);
-                  return (
-                    <div
-                      key={booking.id}
-                      className="rounded-2xl border border-white/10 bg-black/60 p-5 shadow-inner shadow-black/40"
-                    >
-                      <div className="flex flex-col gap-6 lg:flex-row">
-                        <div className="flex-1 space-y-4">
-                          <div className="space-y-1 text-sm text-gray-200">
-                            <p>
-                              <span className="font-semibold text-white">Booking #{booking.code}.</span>{' '}
-                              Date of booking : {bookingCreated || booking.createdAt || '-'}
-                              {bookingAccepted ? `. Accepted: ${bookingAccepted}` : ''}
-                            </p>
-                            <p>Booked and dispatched by: {booking.bookedBy}</p>
-                          </div>
-
-                          <div className="space-y-1 text-sm text-gray-200">
-                            <p>
-                              Date of journey : <span className="font-semibold text-white">{journeyDate || '-'}</span>
-                            </p>
-                            <p>
-                              Time: <span className="font-semibold text-white">{booking.time}</span>
-                            </p>
-                            <p>
-                              Passenger: <span className="font-semibold text-white">{booking.passenger}</span>
-                            </p>
-                            <p>
-                              Phone: <span className="font-semibold text-white">{booking.phone}</span>
-                            </p>
-                            <p>
-                              Pickup: <span className="font-semibold text-white">{booking.pickup}</span>
-                            </p>
-                            <p>
-                              Drop-off: <span className="font-semibold text-white">{booking.dropOff}</span>
-                            </p>
-                            <p>
-                              Notes: <span className="font-semibold text-white">{booking.notes}</span>
-                            </p>
-                            <p>
-                              Fare quoted: <span className="font-semibold text-white">{booking.priceDetails}</span>
-                            </p>
-                          </div>
-                        </div>
-                        <div className="space-y-3 rounded-2xl border border-white/10 bg-black/40 p-4 lg:basis-[45%]">
-                          <p className="text-sm font-semibold text-white">Driver contact</p>
-                          {driverInfo ? (
-                            <div className="space-y-1 text-xs text-gray-300">
-                              <p>Name: {driverInfo.name}</p>
-                              <p>Phone: {driverInfo.phone}</p>
-                              <p>PCO licence number: {driverInfo.license}</p>
-                              <p>{driverInfo.carLabel}</p>
-                              <p>Email: {driverInfo.email}</p>
+              {!collapsedDates[date] && (
+                <div className="space-y-4">
+                  {entries.map((booking) => {
+                    const driverInfo = booking.driverId ? drivers[booking.driverId] : null;
+                    const bookingCreated = formatDateTime(booking.createdAt);
+                    const bookingAccepted = formatDateTime(booking.updatedAt);
+                    const journeyDate = booking.date || formatDateOnly(booking.journeyDate);
+                    return (
+                      <div
+                        key={booking.id}
+                        className="rounded-2xl border border-white/10 bg-black/60 p-5 shadow-inner shadow-black/40"
+                      >
+                        <div className="flex flex-col gap-6 lg:flex-row">
+                          <div className="flex-1 space-y-4">
+                            <div className="space-y-1 text-sm text-gray-200">
+                              <p>
+                                <span className="font-semibold text-white">Booking #{booking.code}.</span>{' '}
+                                Date of booking : {bookingCreated || booking.createdAt || '-'}
+                                {bookingAccepted ? `. Accepted: ${bookingAccepted}` : ''}
+                              </p>
+                              <p>Booked and dispatched by: {booking.bookedBy}</p>
                             </div>
-                          ) : (
-                            <p className="text-xs text-gray-500">No driver contact on file.</p>
-                          )}
+
+                            <div className="space-y-1 text-sm text-gray-200">
+                              <p>
+                                Date of journey :{' '}
+                                <span className="font-semibold text-white">{journeyDate || '-'}</span>
+                              </p>
+                              <p>
+                                Time: <span className="font-semibold text-white">{booking.time}</span>
+                              </p>
+                              <p>
+                                Passenger: <span className="font-semibold text-white">{booking.passenger}</span>
+                              </p>
+                              <p>
+                                Phone: <span className="font-semibold text-white">{booking.phone}</span>
+                              </p>
+                              <p>
+                                Pickup: <span className="font-semibold text-white">{booking.pickup}</span>
+                              </p>
+                              <p>
+                                Drop-off: <span className="font-semibold text-white">{booking.dropOff}</span>
+                              </p>
+                              <p>
+                                Notes: <span className="font-semibold text-white">{booking.notes}</span>
+                              </p>
+                              <p>
+                                Fare quoted: <span className="font-semibold text-white">{booking.priceDetails}</span>
+                              </p>
+                            </div>
+                          </div>
+                          <div className="space-y-3 rounded-2xl border border-white/10 bg-black/40 p-4 lg:basis-[45%]">
+                            <p className="text-sm font-semibold text-white">Driver contact</p>
+                            {driverInfo ? (
+                              <div className="space-y-1 text-xs text-gray-300">
+                                <p>Name: {driverInfo.name}</p>
+                                <p>Phone: {driverInfo.phone}</p>
+                                <p>PCO licence number: {driverInfo.license}</p>
+                                <p>{driverInfo.carLabel}</p>
+                                <p>Email: {driverInfo.email}</p>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-gray-500">No driver contact on file.</p>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ))}
         </div>
