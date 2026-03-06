@@ -1,12 +1,20 @@
 'use client';
 
+import { Suspense, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { useState, type FormEvent } from 'react';
 import FormLayout from '@/components/FormLayout';
 import Input from '@/components/Input';
 
 export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={<ResetPasswordFallback />}>
+      <ResetPasswordForm />
+    </Suspense>
+  );
+}
+
+function ResetPasswordForm() {
   const searchParams = useSearchParams();
   const token = String(searchParams?.get('token') ?? '').trim();
   const [password, setPassword] = useState('');
@@ -97,3 +105,12 @@ export default function ResetPasswordPage() {
   );
 }
 
+function ResetPasswordFallback() {
+  return (
+    <FormLayout title="Reset Password">
+      <div className="space-y-4">
+        <p className="text-sm text-gray-300">Loading reset form...</p>
+      </div>
+    </FormLayout>
+  );
+}

@@ -34,6 +34,62 @@ export default function DriverSignUpPage() {
   const [fileData, setFileData] = useState<Record<string, File | null>>({});
   const [isFindingVehicle, setIsFindingVehicle] = useState(false);
 
+  const handleFindVehicle = async () => {
+    const registrationNumber = (formData.vehicleReg ?? '').trim().toUpperCase();
+    if (!registrationNumber) {
+      showAlert('Please enter a VRM before searching.');
+      return;
+    }
+
+    setIsFindingVehicle(true);
+    try {
+      const apiKey = process.env.NEXT_PUBLIC_DVLA_API_KEY;
+      const proxy = (process.env.NEXT_PUBLIC_DVLA_PROXY_URL ?? '/api/dvla').trim();
+      const dvlaBaseUrl = proxy.replace(/\/$/, '');
+      const response = await fetch(`${dvlaBaseUrl}/vehicle-enquiry/v1/vehicles`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { 'x-api-key': apiKey } : {}),
+        },
+        body: JSON.stringify({ registrationNumber }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => null);
+        if (response.status === 404) {
+          showAlert('DVLA: vehicle not found for that VRM.');
+          setFormData((prev) => ({ ...prev, make: '', model: '' }));
+          return;
+        }
+        if (response.status === 429) {
+          showAlert('DVLA rate limit reached. Please wait a moment and try again.');
+          return;
+        }
+
+        const fallbackError =
+          typeof errorBody === 'string'
+            ? errorBody
+            : errorBody?.errors?.[0]?.detail || errorBody?.error || errorBody?.message || 'Check the DVLA proxy and API key.';
+        showAlert(`DVLA lookup failed (${response.status}). ${fallbackError}`);
+        return;
+      }
+
+      const data = await response.json();
+      setFormData((prev) => ({
+        ...prev,
+        make: data.make || prev.make || '',
+        model: data.model || prev.model || '',
+      }));
+      showAlert('Vehicle found via DVLA. Fields updated.');
+    } catch (err) {
+      console.error('DVLA lookup error', err);
+      showAlert('Could not reach DVLA. Please check NEXT_PUBLIC_DVLA_PROXY_URL and try again.');
+    } finally {
+      setIsFindingVehicle(false);
+    }
+  };
+
   const handleFieldChange =
     (field: string) => (event: ChangeEvent<HTMLInputElement>) => {
       if (event.target.type === 'file') {
@@ -173,52 +229,7 @@ export default function DriverSignUpPage() {
             />
             <button
               type="button"
-              onClick={async () => {
-                const registrationNumber = (formData.vehicleReg ?? '').trim().toUpperCase();
-                if (!registrationNumber) {
-                  showAlert('Please enter a VRM before searching.');
-                  return;
-                }
-                setIsFindingVehicle(true);
-                try {
-                  const apiKey = process.env.NEXT_PUBLIC_DVLA_API_KEY;
-                  const proxy = process.env.NEXT_PUBLIC_DVLA_PROXY_URL;
-                  if (!apiKey || !proxy) {
-                    showAlert('DVLA lookup unavailable. Configure NEXT_PUBLIC_DVLA_API_KEY and NEXT_PUBLIC_DVLA_PROXY_URL.');
-                    return;
-                  }
-                  const dvlaBaseUrl = proxy.replace(/\/$/, '');
-                  const response = await fetch(`${dvlaBaseUrl}/vehicle-enquiry/v1/vehicles`, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'x-api-key': apiKey,
-                    },
-                    body: JSON.stringify({ registrationNumber }),
-                  });
-                  if (!response.ok) {
-                    if (response.status === 404) {
-                      showAlert('DVLA: vehicle not found for that VRM.');
-                      setFormData((prev) => ({ ...prev, make: '', model: '' }));
-                      return;
-                    }
-                    showAlert(`DVLA lookup failed (${response.status}).`);
-                    return;
-                  }
-                  const data = await response.json();
-                  setFormData((prev) => ({
-                    ...prev,
-                    make: data.make || prev.make || '',
-                    model: data.model || prev.model || '',
-                  }));
-                  showAlert('Vehicle found via DVLA. Fields updated.');
-                } catch (err) {
-                  console.error('DVLA lookup error', err);
-                  showAlert('Could not reach DVLA. Please try again.');
-                } finally {
-                  setIsFindingVehicle(false);
-                }
-              }}
+              onClick={handleFindVehicle}
               disabled={isFindingVehicle}
               className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-black bg-amber-400 rounded-md shadow-md shadow-amber-400/40 disabled:opacity-60 disabled:cursor-not-allowed"
             >
