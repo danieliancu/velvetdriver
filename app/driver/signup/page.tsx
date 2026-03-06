@@ -22,6 +22,7 @@ const fileFields = Object.freeze({
     { id: 'phvDoc', label: 'PHV Car licence' },
     { id: 'logbookDoc', label: 'Logbook V5 Page 1' },
     { id: 'logbookDocPage2', label: 'Logbook V5 Page 2' },
+    { id: 'otherDoc', label: 'Other documents' },
   ],
 } as const);
 

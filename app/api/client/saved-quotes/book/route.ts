@@ -17,6 +17,18 @@ export async function POST(request: Request) {
       const user = users[0];
       if (!user) return NextResponse.json({ error: 'Client not found' }, { status: 404 });
 
+      const [countRows] = await conn.query<mysql.RowDataPacket[]>(
+        'SELECT COUNT(*) AS total FROM client_journeys WHERE client_id = ?',
+        [user.id]
+      );
+      const previousJourneys = Number(countRows[0]?.total ?? 0);
+      if (previousJourneys < 5) {
+        return NextResponse.json(
+          { error: 'For your first 5 journeys, payment must be made in advance by card.' },
+          { status: 403 }
+        );
+      }
+
       const [quotes] = await conn.query<mysql.RowDataPacket[]>(
         'SELECT payload FROM client_saved_quotes WHERE id = ? AND client_id = ? LIMIT 1',
         [quoteId, user.id]

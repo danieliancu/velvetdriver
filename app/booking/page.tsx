@@ -126,6 +126,7 @@ const BookingPageInner = () => {
     const [paymentError, setPaymentError] = useState<string | null>(null);
     const [paymentOption, setPaymentOption] = useState<'pay_now' | 'pay_driver' | 'invoice'>('pay_now');
     const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
+    const [clientJourneyCount, setClientJourneyCount] = useState<number | null>(null);
     const [discountCodeInput, setDiscountCodeInput] = useState('');
     const [discountData, setDiscountData] = useState<{
         code: string;
@@ -149,6 +150,14 @@ const BookingPageInner = () => {
         date.trim().length > 0 &&
         time.trim().length > 0;
     const finalDropIndex = Math.max(0, dropOffAddresses.length - 1);
+    const firstFivePrepayRequired = Boolean(user?.email && (clientJourneyCount == null || clientJourneyCount < 5));
+    const paymentOptions: Array<{ key: 'pay_now' | 'pay_driver' | 'invoice'; label: string }> = firstFivePrepayRequired
+        ? [{ key: 'pay_now', label: 'Pay now' }]
+        : [
+            { key: 'pay_now', label: 'Pay now' },
+            { key: 'pay_driver', label: 'Pay to driver' },
+            { key: 'invoice', label: 'Pay by invoice' },
+        ];
     const bookingLeadTimeHours = useMemo(() => {
         if (!date.trim() || !time.trim()) return null;
         const journeyDateTime = new Date(`${date}T${time}`);
@@ -445,6 +454,33 @@ const BookingPageInner = () => {
             setPrefilledClientData(false);
         }
     }, [user, prefilledClientData]);
+
+    useEffect(() => {
+        if (!user?.email) {
+            setClientJourneyCount(null);
+            return;
+        }
+        let cancelled = false;
+        fetch(`/api/client/history?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' })
+            .then(async (res) => {
+                if (!res.ok) throw new Error('history');
+                const data = await res.json();
+                const journeys = Array.isArray(data?.journeys) ? data.journeys : [];
+                if (!cancelled) setClientJourneyCount(journeys.length);
+            })
+            .catch(() => {
+                if (!cancelled) setClientJourneyCount(0);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [user?.email]);
+
+    useEffect(() => {
+        if (firstFivePrepayRequired && paymentOption !== 'pay_now') {
+            setPaymentOption('pay_now');
+        }
+    }, [firstFivePrepayRequired, paymentOption]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -1481,6 +1517,11 @@ const BookingPageInner = () => {
     };
 
     const finalizeBookingManual = async (method: 'Pay to driver' | 'Pay by invoice') => {
+        if (firstFivePrepayRequired) {
+            setPaymentOption('pay_now');
+            showAlert('For your first 5 journeys, payment must be made in advance by card.');
+            return;
+        }
         setBookingSubmitting(true);
         try {
             const response = await fetch('/api/booking', {
@@ -1902,83 +1943,87 @@ const BookingPageInner = () => {
                 >
                     <div className="space-y-6">
                         {!checkoutActive && (
-                            <>
-                                <p className="text-amber-100 text-lg leading-relaxed">
-                                    Before you confirm, please take a moment to verify your pickup address, date and time details. If we dispatch a car using incorrect information, you may be charged the full fare.
-                                </p>
-                                
-                                <div className="bg-black/30 border border-amber-900/40 rounded-lg p-4 space-y-3 text-sm text-gray-300">
-                                    <div className="flex flex-col items-start gap-1">
-                                        <span className="text-gray-400">Pickup:</span>
-                                        <span className="font-semibold text-amber-100">{pickupDisplay || pickupAddress}</span>
-                                    </div>
-                                    <div className="flex flex-col items-start gap-1">
-                                        <span className="text-gray-400">Drop-off:</span>
-                                        <span className="font-semibold text-amber-100">
-                                            {dropOffDisplays[dropOffDisplays.length - 1] || dropOffAddresses[dropOffAddresses.length - 1]}
-                                        </span>
-                                    </div>
-                                    <div className="flex flex-col items-start gap-1">
-                                        <span className="text-gray-400">Date:</span>
-                                        <span className="font-semibold text-amber-100">{date}</span>
-                                    </div>
-                                    <div className="flex flex-col items-start gap-1">
-                                        <span className="text-gray-400">Time:</span>
-                                        <span className="font-semibold text-amber-100">{time}</span>
-                                    </div>
-                                    <div className="flex flex-col items-start gap-1">
-                                        <span className="text-gray-400">Miles:</span>
-                                        <span className="font-semibold text-amber-100">{miles ? `${miles} mi` : 'Auto'}</span>
-                                    </div>
-                                    <div className="flex flex-col items-start gap-1">
-                                        <span className="text-gray-400">{baseFareLabel}:</span>
-                                        <span className="font-semibold text-amber-100">GBP{baseFareValue.toFixed(2)}</span>
-                                    </div>
-                                    {discountAmount > 0 && (
+                            <div className="flex max-h-[calc(100vh-13rem)] flex-col gap-4">
+                                <div className="space-y-6 overflow-y-auto pr-1">
+                                    <p className="text-amber-100 text-lg leading-relaxed">
+                                        Before you confirm, please take a moment to verify your pickup address, date and time details. If we dispatch a car using incorrect information, you may be charged the full fare.
+                                    </p>
+
+                                    <div className="bg-black/30 border border-amber-900/40 rounded-lg p-4 space-y-3 text-sm text-gray-300">
                                         <div className="flex flex-col items-start gap-1">
-                                            <span className="text-gray-400">Discount:</span>
-                                            <span className="font-semibold text-amber-100">-GBP{discountAmount.toFixed(2)}</span>
+                                            <span className="text-gray-400">Pickup:</span>
+                                            <span className="font-semibold text-amber-100">{pickupDisplay || pickupAddress}</span>
                                         </div>
-                                    )}
-                                    <div className="flex flex-col items-start gap-1">
-                                        <span className="text-gray-400">Total fare:</span>
-                                        <span className="font-semibold text-amber-100">GBP{totalFareFinal.toFixed(2)}</span>
-                                    </div>
-                                    {extrasForDisplay.length ? (
-                                        <div className="pt-3 border-t border-amber-900/30 space-y-2">
-                                            <p className="text-xs uppercase tracking-wider text-amber-300/80">Extras applied</p>
-                                            <div className="space-y-1">
-                                                {extrasForDisplay.map((item, idx) => (
-                                                    <div key={`${item.label}-${idx}`} className="flex flex-col items-start gap-1">
-                                                        <span className="text-gray-400">{item.label}:</span>
-                                                        <span className="font-semibold text-amber-100">
-                                                            {item.amount != null ? `GBP${item.amount.toFixed(2)}` : '—'}
-                                                        </span>
-                                                    </div>
-                                                ))}
+                                        <div className="flex flex-col items-start gap-1">
+                                            <span className="text-gray-400">Drop-off:</span>
+                                            <span className="font-semibold text-amber-100">
+                                                {dropOffDisplays[dropOffDisplays.length - 1] || dropOffAddresses[dropOffAddresses.length - 1]}
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-col items-start gap-1">
+                                            <span className="text-gray-400">Date:</span>
+                                            <span className="font-semibold text-amber-100">{date}</span>
+                                        </div>
+                                        <div className="flex flex-col items-start gap-1">
+                                            <span className="text-gray-400">Time:</span>
+                                            <span className="font-semibold text-amber-100">{time}</span>
+                                        </div>
+                                        <div className="flex flex-col items-start gap-1">
+                                            <span className="text-gray-400">Miles:</span>
+                                            <span className="font-semibold text-amber-100">{miles ? `${miles} mi` : 'Auto'}</span>
+                                        </div>
+                                        <div className="flex flex-col items-start gap-1">
+                                            <span className="text-gray-400">{baseFareLabel}:</span>
+                                            <span className="font-semibold text-amber-100">GBP{baseFareValue.toFixed(2)}</span>
+                                        </div>
+                                        {discountAmount > 0 && (
+                                            <div className="flex flex-col items-start gap-1">
+                                                <span className="text-gray-400">Discount:</span>
+                                                <span className="font-semibold text-amber-100">-GBP{discountAmount.toFixed(2)}</span>
                                             </div>
+                                        )}
+                                        <div className="flex flex-col items-start gap-1">
+                                            <span className="text-gray-400">Total fare:</span>
+                                            <span className="font-semibold text-amber-100">GBP{totalFareFinal.toFixed(2)}</span>
                                         </div>
-                                    ) : null}
+                                        {extrasForDisplay.length ? (
+                                            <div className="pt-3 border-t border-amber-900/30 space-y-2">
+                                                <p className="text-xs uppercase tracking-wider text-amber-300/80">Extras applied</p>
+                                                <div className="space-y-1">
+                                                    {extrasForDisplay.map((item, idx) => (
+                                                        <div key={`${item.label}-${idx}`} className="flex flex-col items-start gap-1">
+                                                            <span className="text-gray-400">{item.label}:</span>
+                                                            <span className="font-semibold text-amber-100">
+                                                                {item.amount != null ? `GBP${item.amount.toFixed(2)}` : '—'}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                    </div>
                                 </div>
 
-                                <div className="flex flex-col sm:flex-row gap-4 pt-4">
-                                    <button
-                                        type="button"
-                                        onClick={handleGoBackAndVerify}
-                                        className="w-full sm:w-auto px-6 py-3 font-semibold bg-transparent border-2 border-amber-600 text-amber-400 rounded-lg hover:bg-amber-900/50 transition-colors"
-                                    >
-                                        Go back and change
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={handleProceedToCheckout}
-                                        disabled={bookingSubmitting}
-                                        className="w-full sm:w-auto px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)] disabled:opacity-60"
-                                    >
-                                        {bookingSubmitting ? 'Preparing checkout...' : 'Happy to proceed to checkout'}
-                                    </button>
+                                <div className="sticky bottom-0 z-10 border-t border-amber-900/30 bg-[#120909]/95 pt-4 backdrop-blur-sm">
+                                    <div className="flex flex-col sm:flex-row gap-4">
+                                        <button
+                                            type="button"
+                                            onClick={handleGoBackAndVerify}
+                                            className="w-full sm:w-auto px-6 py-3 font-semibold bg-transparent border-2 border-amber-600 text-amber-400 rounded-lg hover:bg-amber-900/50 transition-colors"
+                                        >
+                                            Go back and change
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleProceedToCheckout}
+                                            disabled={bookingSubmitting}
+                                            className="w-full sm:w-auto px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)] disabled:opacity-60"
+                                        >
+                                            {bookingSubmitting ? 'Preparing checkout...' : 'Happy to proceed to checkout'}
+                                        </button>
+                                    </div>
                                 </div>
-                            </>
+                            </div>
                         )}
 
                         {checkoutActive && (
@@ -2017,12 +2062,13 @@ const BookingPageInner = () => {
                                 {user && (
                                     <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
                                         <p className="text-sm text-gray-300">Choose payment method</p>
+                                        {firstFivePrepayRequired ? (
+                                            <p className="text-xs text-amber-300">
+                                                Registered clients can use only advance card payment for the first 5 journeys.
+                                            </p>
+                                        ) : null}
                                         <div className="flex flex-col sm:flex-row gap-3">
-                                            {[
-                                                { key: 'pay_now', label: 'Pay now' },
-                                                { key: 'pay_driver', label: 'Pay to driver' },
-                                                { key: 'invoice', label: 'Pay by invoice' },
-                                            ].map((option) => (
+                                            {paymentOptions.map((option) => (
                                                 <label
                                                     key={option.key}
                                                     className={`flex-1 cursor-pointer rounded-lg border px-4 py-3 text-sm font-semibold transition ${

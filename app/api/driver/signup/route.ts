@@ -21,6 +21,7 @@ const CAR_DOC_TYPE_MAP: Record<string, string> = {
   phvDoc: 'phv_car_licence',
   logbookDoc: 'logbook_v5',
   logbookDocPage2: 'logbook_v5_page2',
+  otherDoc: 'other',
 };
 
 type CloudinaryUpload = {
@@ -182,12 +183,28 @@ export async function POST(request: Request) {
     await conn.beginTransaction();
 
     const [existing] = await conn.query<mysql.RowDataPacket[]>(
-      'SELECT id FROM users WHERE email = ? LIMIT 1',
+      `SELECT u.id, r.code AS role_code
+       FROM users u
+       INNER JOIN roles r ON r.id = u.role_id
+       WHERE u.email = ?
+       LIMIT 1`,
       [email]
     );
     if (existing.length) {
       await conn.rollback();
-      return NextResponse.json({ error: 'Email already registered' }, { status: 409 });
+      const roleCode = String(existing[0]?.role_code ?? '').toLowerCase();
+      if (roleCode && roleCode !== 'driver') {
+        return NextResponse.json(
+          {
+            error: `This email is already registered as ${roleCode}. A ${roleCode} account cannot be registered as driver.`,
+          },
+          { status: 409 }
+        );
+      }
+      return NextResponse.json(
+        { error: 'This email is already registered as driver. Please sign in.' },
+        { status: 409 }
+      );
     }
 
     const [roleResult] = await conn.execute<mysql.ResultSetHeader>(

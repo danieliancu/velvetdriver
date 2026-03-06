@@ -10,6 +10,9 @@ export async function POST(request: Request) {
     const body = await request.json();
     const email = String(body.email ?? '').trim().toLowerCase();
     const password = String(body.password ?? '');
+    const expectedRole = String(body.expectedRole ?? '')
+      .trim()
+      .toLowerCase();
     if (!email || !password) {
       return NextResponse.json({ error: 'Missing credentials' }, { status: 400 });
     }
@@ -55,6 +58,12 @@ export async function POST(request: Request) {
     }
     if (user.role === 'driver' && user.status !== 'active') {
       return NextResponse.json({ error: 'Driver account not active.' }, { status: 403 });
+    }
+    if (expectedRole && user.role !== expectedRole) {
+      return NextResponse.json(
+        { error: `This account is ${user.role}, not ${expectedRole}.` },
+        { status: 403 }
+      );
     }
 
     let name: string | null = null;

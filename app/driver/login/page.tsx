@@ -15,6 +15,7 @@ export default function DriverLoginPage() {
   const [isRecoverModalOpen, setRecoverModalOpen] = useState(false);
   const [recoverEmail, setRecoverEmail] = useState('');
   const [recoverMessage, setRecoverMessage] = useState<string | null>(null);
+  const [recoverLoading, setRecoverLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +29,7 @@ export default function DriverLoginPage() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, expectedRole: 'driver' }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -47,9 +48,26 @@ export default function DriverLoginPage() {
     }
   };
 
-  const handleRecoverSubmit = (event: FormEvent) => {
+  const handleRecoverSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    setRecoverMessage('If this email is on file, we will send reset instructions shortly.');
+    setRecoverMessage(null);
+    setRecoverLoading(true);
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: recoverEmail, expectedRole: 'driver' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to process password recovery.');
+      }
+      setRecoverMessage(data?.message || 'If this email is on file, we will send reset instructions shortly.');
+    } catch (err: any) {
+      setRecoverMessage(err?.message || 'Failed to process password recovery.');
+    } finally {
+      setRecoverLoading(false);
+    }
   };
 
   return (
@@ -102,9 +120,10 @@ export default function DriverLoginPage() {
           {recoverMessage && <p className="text-sm text-amber-300">{recoverMessage}</p>}
           <button
             type="submit"
+            disabled={recoverLoading}
             className="w-full rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400"
           >
-            Continue
+            {recoverLoading ? 'Sending...' : 'Continue'}
           </button>
         </form>
       </Modal>

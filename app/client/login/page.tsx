@@ -21,6 +21,7 @@ export default function ClientLoginPage() {
   const [isRecoverModalOpen, setRecoverModalOpen] = useState(false);
   const [recoverEmail, setRecoverEmail] = useState('');
   const [recoverMessage, setRecoverMessage] = useState<string | null>(null);
+  const [recoverLoading, setRecoverLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -34,13 +35,16 @@ export default function ClientLoginPage() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, expectedRole: 'client' }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error || 'Failed to sign in');
       }
       const data = await res.json();
+      if (data.role !== 'client') {
+        throw new Error('This account is not a client account.');
+      }
       login(Role.CLIENT, { id: data.id, name: data.name, email: data.email, phone: data.phone });
       router.push('/client/dashboard');
     } catch (err: any) {
@@ -68,9 +72,26 @@ export default function ClientLoginPage() {
     }
   }, [user, router]);
 
-  const handleRecoverSubmit = (event: FormEvent) => {
+  const handleRecoverSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    setRecoverMessage('If this email is on file, we will send reset instructions shortly.');
+    setRecoverMessage(null);
+    setRecoverLoading(true);
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: recoverEmail, expectedRole: 'client' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to process password recovery.');
+      }
+      setRecoverMessage(data?.message || 'If this email is on file, we will send reset instructions shortly.');
+    } catch (err: any) {
+      setRecoverMessage(err?.message || 'Failed to process password recovery.');
+    } finally {
+      setRecoverLoading(false);
+    }
   };
 
   return (
@@ -169,9 +190,10 @@ export default function ClientLoginPage() {
           {recoverMessage && <p className="text-sm text-amber-300">{recoverMessage}</p>}
           <button
             type="submit"
+            disabled={recoverLoading}
             className="w-full rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400"
           >
-            Continue
+            {recoverLoading ? 'Sending...' : 'Continue'}
           </button>
         </form>
       </Modal>

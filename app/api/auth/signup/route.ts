@@ -22,12 +22,28 @@ export async function POST(request: Request) {
     await conn.beginTransaction();
 
     const [existing] = await conn.query<mysql.RowDataPacket[]>(
-      'SELECT id FROM users WHERE email = ? LIMIT 1',
+      `SELECT u.id, r.code AS role_code
+       FROM users u
+       INNER JOIN roles r ON r.id = u.role_id
+       WHERE u.email = ?
+       LIMIT 1`,
       [email]
     );
     if (existing.length) {
       await conn.rollback();
-      return NextResponse.json({ error: 'Email already registered' }, { status: 409 });
+      const roleCode = String(existing[0]?.role_code ?? '').toLowerCase();
+      if (roleCode && roleCode !== 'client') {
+        return NextResponse.json(
+          {
+            error: `This email is already registered as ${roleCode}. A ${roleCode} account cannot be registered as client.`,
+          },
+          { status: 409 }
+        );
+      }
+      return NextResponse.json(
+        { error: 'This email is already registered as client. Please sign in.' },
+        { status: 409 }
+      );
     }
 
     const [roleResult] = await conn.execute<mysql.ResultSetHeader>(

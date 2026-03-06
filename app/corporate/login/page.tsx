@@ -15,6 +15,7 @@ export default function CorporateLoginPage() {
   const [isRecoverModalOpen, setRecoverModalOpen] = useState(false);
   const [recoverEmail, setRecoverEmail] = useState('');
   const [recoverMessage, setRecoverMessage] = useState<string | null>(null);
+  const [recoverLoading, setRecoverLoading] = useState(false);
 
   const handleLogin = (event: FormEvent) => {
     event.preventDefault();
@@ -22,9 +23,26 @@ export default function CorporateLoginPage() {
     router.push('/corporate/dashboard');
   };
 
-  const handleRecoverSubmit = (event: FormEvent) => {
+  const handleRecoverSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    setRecoverMessage('If this email is on file, we will send reset instructions shortly.');
+    setRecoverMessage(null);
+    setRecoverLoading(true);
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: recoverEmail, expectedRole: 'corporate' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to process password recovery.');
+      }
+      setRecoverMessage(data?.message || 'If this email is on file, we will send reset instructions shortly.');
+    } catch (err: any) {
+      setRecoverMessage(err?.message || 'Failed to process password recovery.');
+    } finally {
+      setRecoverLoading(false);
+    }
   };
 
   return (
@@ -75,9 +93,10 @@ export default function CorporateLoginPage() {
           {recoverMessage && <p className="text-sm text-amber-300">{recoverMessage}</p>}
           <button
             type="submit"
+            disabled={recoverLoading}
             className="w-full rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400"
           >
-            Continue
+            {recoverLoading ? 'Sending...' : 'Continue'}
           </button>
         </form>
       </Modal>

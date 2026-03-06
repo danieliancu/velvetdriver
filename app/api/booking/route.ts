@@ -224,6 +224,9 @@ export async function POST(request: Request) {
     const passengerName = String(body.passengerName ?? '').trim();
     const passengerEmail = String(body.passengerEmail ?? '').trim();
     const passengerPhone = String(body.passengerPhone ?? '').trim();
+    const paymentStatus = String(body.paymentStatus ?? '').trim().toLowerCase();
+    const paymentMethodRaw = String(body.paymentMethod ?? '').trim();
+    const paymentMethod = paymentMethodRaw.toLowerCase();
 
     if (!pickup || !dropOffs.length || !date || !time || !passengerName || !passengerEmail || !passengerPhone) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -235,12 +238,26 @@ export async function POST(request: Request) {
     }
 
     let clientId: number | null = null;
-    if (body.clientEmail) {
-      const email = String(body.clientEmail ?? '').trim().toLowerCase();
-      if (email) {
-        const [users] = await pool.query<mysql.RowDataPacket[]>('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
-        const user = users[0];
-        if (user) clientId = Number(user.id);
+    const clientLookupEmail = String(body.clientEmail ?? passengerEmail ?? '').trim().toLowerCase();
+    if (clientLookupEmail) {
+      const [users] = await pool.query<mysql.RowDataPacket[]>('SELECT id FROM users WHERE email = ? LIMIT 1', [clientLookupEmail]);
+      const user = users[0];
+      if (user) clientId = Number(user.id);
+    }
+
+    if (clientId) {
+      const [countRows] = await pool.query<mysql.RowDataPacket[]>(
+        'SELECT COUNT(*) AS total FROM client_journeys WHERE client_id = ?',
+        [clientId]
+      );
+      const previousJourneys = Number(countRows[0]?.total ?? 0);
+      const inFirstFiveJourneys = previousJourneys < 5;
+      const isAdvanceCardPayment = paymentStatus === 'succeeded' && paymentMethod === 'card';
+      if (inFirstFiveJourneys && !isAdvanceCardPayment) {
+        return NextResponse.json(
+          { error: 'Registered clients must pay in advance by card for their first 5 journeys.' },
+          { status: 403 }
+        );
       }
     }
 
@@ -276,7 +293,6 @@ export async function POST(request: Request) {
     );
 
     const journeyId = Number(result.insertId);
-    const paymentStatus = String(body.paymentStatus ?? '').toLowerCase();
     if (journeyId && paymentStatus === 'succeeded') {
       let invoiceAttachmentBase64: string | undefined;
       let invoiceFileName: string | undefined;
@@ -292,7 +308,7 @@ export async function POST(request: Request) {
           destination,
           totalFare: Number(body.totalFare ?? 0),
           paymentIntentId: body.paymentIntentId ? String(body.paymentIntentId) : undefined,
-          paymentMethod: body.paymentMethod ? String(body.paymentMethod) : undefined,
+          paymentMethod: paymentMethodRaw || undefined,
         });
         invoiceAttachmentBase64 = Buffer.from(invoice.pdfBytes).toString('base64');
         invoiceFileName = invoice.fileName;
@@ -310,7 +326,7 @@ export async function POST(request: Request) {
         passengerPhone,
         totalFare: Number(body.totalFare ?? 0),
         paymentIntentId: body.paymentIntentId ? String(body.paymentIntentId) : undefined,
-        paymentMethod: body.paymentMethod ? String(body.paymentMethod) : undefined,
+        paymentMethod: paymentMethodRaw || undefined,
         invoiceAttachmentBase64,
         invoiceFileName,
       };
