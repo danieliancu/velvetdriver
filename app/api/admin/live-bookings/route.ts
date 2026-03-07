@@ -76,6 +76,7 @@ export async function GET() {
       const bookedByName = row.staff_name || null;
       const vehicleLabel =
         row.vehicle_label || payload?.vehicle || payload?.vehicleLabel || payload?.vehicleTypeLabel || 'Unknown';
+      const paymentMethod = String(payload?.paymentMethod || payload?.paymentType || '').trim();
       const rawDriverName = String(row.driver_name ?? '').trim();
       const driverId =
         rawDriverName && rawDriverName.toLowerCase() !== 'pending assignment' ? rawDriverName : '';
@@ -94,6 +95,7 @@ export async function GET() {
         date,
         time,
         priceDetails: formatPriceDetails(priceNumber, payload?.extras),
+        paymentMethod,
         vehicle: vehicleLabel,
         vehicleTypeId: row.vehicle_type_id ? Number(row.vehicle_type_id) : null,
         passengerEmail: row.passenger_email || payload?.passengerEmail || '',

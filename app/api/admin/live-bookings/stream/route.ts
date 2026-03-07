@@ -6,6 +6,26 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const pool = getDbPool();
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isRetryableDbError = (err: any) =>
+  err?.code === 'ECONNRESET' ||
+  err?.code === 'PROTOCOL_CONNECTION_LOST' ||
+  err?.code === 'ETIMEDOUT';
+
+const queryWithRetry = async <T extends mysql.RowDataPacket[]>(
+  sql: string,
+  params?: any[],
+  retries = 1
+) => {
+  try {
+    return await pool.query<T>(sql, params);
+  } catch (err) {
+    if (!isRetryableDbError(err) || retries <= 0) throw err;
+    await sleep(150);
+    return queryWithRetry<T>(sql, params, retries - 1);
+  }
+};
 
 type StreamBooking = {
   journeyId: number;
@@ -38,7 +58,7 @@ const formatPriceDetails = (price: number, extras?: unknown) => {
 };
 
 const getCurrentMaxUpcomingId = async () => {
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+  const [rows] = await queryWithRetry<mysql.RowDataPacket[]>(
     `SELECT COALESCE(MAX(id), 0) AS max_id
       FROM client_journeys
       WHERE status = 'Upcoming'`
@@ -49,7 +69,7 @@ const getCurrentMaxUpcomingId = async () => {
 };
 
 const getNewUpcomingBookings = async (afterId: number): Promise<StreamBooking[]> => {
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+  const [rows] = await queryWithRetry<mysql.RowDataPacket[]>(
     `SELECT cj.id,
             cj.journey_date,
             cj.pickup,
@@ -111,6 +131,8 @@ export async function GET(request: Request) {
       let lastSeenId = requestedAfterId ?? (await getCurrentMaxUpcomingId());
       let checker: ReturnType<typeof setInterval> | null = null;
       let keepAlive: ReturnType<typeof setInterval> | null = null;
+      let checking = false;
+      let lastErrorLogAt = 0;
 
       const writeEvent = (event: string, payload: Record<string, unknown>) => {
         const chunk = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -134,7 +156,8 @@ export async function GET(request: Request) {
       writeEvent('connected', { ok: true, ts: Date.now(), lastSeenId });
 
       const checkForUpdates = async () => {
-        if (closed) return;
+        if (closed || checking) return;
+        checking = true;
         try {
           const newBookings = await getNewUpcomingBookings(lastSeenId);
           if (newBookings.length) {
@@ -144,7 +167,13 @@ export async function GET(request: Request) {
             lastSeenId = newBookings[newBookings.length - 1].journeyId;
           }
         } catch (err) {
-          console.error('Live bookings stream check failed', err);
+          const now = Date.now();
+          if (now - lastErrorLogAt > 15000) {
+            console.error('Live bookings stream check failed', err);
+            lastErrorLogAt = now;
+          }
+        } finally {
+          checking = false;
         }
       };
 

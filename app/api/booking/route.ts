@@ -336,7 +336,7 @@ export async function POST(request: Request) {
       ]);
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, journeyId });
   } catch (err) {
     console.error('Booking create error', err);
     return NextResponse.json({ error: 'Failed to submit booking' }, { status: 500 });

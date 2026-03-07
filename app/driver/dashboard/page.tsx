@@ -9,18 +9,15 @@ import { Clock, User, Car } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import DashboardInput from '@/components/DashboardInput';
 
-const mockCompletedJobs = [
-    { id: 'c1', client: 'Charlie Chaplin', time: '2023-10-28 10:00', pickup: 'The Savoy', destination: 'Heathrow T2', pay: 80.00 },
-    { id: 'c2', client: 'Diana Prince', time: '2023-10-25 15:00', pickup: 'Buckingham Palace', destination: 'Windsor Castle', pay: 120.00 },
-    { id: 'c3', client: 'Peter Parker', time: '2023-10-22 09:00', pickup: 'Daily Bugle', destination: 'Stark Tower', pay: 55.00 },
-];
-
 type DriverJob = {
     id: number;
     code: string;
+    jobType: string;
     pickup: string;
     destination: string;
     client: string;
+    phone: string;
+    priceType: string;
     time: string;
     date: string;
     pay: number;
@@ -82,9 +79,12 @@ const uploadButtonClass = "cursor-pointer bg-amber-500 text-black px-4 py-1.5 ro
 
 const DriverJobs: React.FC<{ onJobCountChange?: (count: number) => void }> = ({ onJobCountChange }) => {
     const { user } = useAuth();
-    const [jobs, setJobs] = useState<DriverJob[]>([]);
+    const { showAlert } = useAlert();
+    const [nextJobs, setNextJobs] = useState<DriverJob[]>([]);
+    const [completedJobs, setCompletedJobs] = useState<DriverJob[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [cancelBusy, setCancelBusy] = useState<Record<number, boolean>>({});
 
     useEffect(() => {
         if (!user?.email) return;
@@ -99,23 +99,41 @@ const DriverJobs: React.FC<{ onJobCountChange?: (count: number) => void }> = ({ 
                 }
                 const data = await res.json();
                 if (!mounted) return;
-                const nextJobs: DriverJob[] = (data.jobs || []).map((job: any) => ({
+                const parsedNextJobs: DriverJob[] = (data.nextJobs || []).map((job: any) => ({
                     id: Number(job.id),
                     code: job.code,
+                    jobType: job.jobType || 'EXECUTIVE',
                     pickup: job.pickup,
-                    destination: job.dropOff,
+                    destination: job.destination,
                     client: job.passenger,
+                    phone: job.phone || '-',
+                    priceType: job.priceType || 'PAYED',
                     time: job.time,
                     date: job.date,
                     pay: Number(job.price || 0),
                 }));
-                setJobs(nextJobs);
-                onJobCountChange?.(nextJobs.length);
+                const parsedCompletedJobs: DriverJob[] = (data.completedJobs || []).map((job: any) => ({
+                    id: Number(job.id),
+                    code: job.code,
+                    jobType: job.jobType || 'EXECUTIVE',
+                    pickup: job.pickup,
+                    destination: job.destination,
+                    client: job.passenger,
+                    phone: job.phone || '-',
+                    priceType: job.priceType || 'PAYED',
+                    time: job.time,
+                    date: job.date,
+                    pay: Number(job.price || 0),
+                }));
+                setNextJobs(parsedNextJobs);
+                setCompletedJobs(parsedCompletedJobs);
+                onJobCountChange?.(parsedNextJobs.length);
                 setError(null);
             } catch (err: any) {
                 console.error(err);
                 if (!mounted) return;
                 setError(err?.message || 'Failed to load jobs');
+                onJobCountChange?.(0);
             } finally {
                 if (mounted) setLoading(false);
             }
@@ -125,6 +143,39 @@ const DriverJobs: React.FC<{ onJobCountChange?: (count: number) => void }> = ({ 
             mounted = false;
         };
     }, [user?.email, onJobCountChange]);
+
+    const handleCancelJob = async (job: DriverJob) => {
+        if (!user?.email) {
+            showAlert('Please sign in again.');
+            return;
+        }
+        const confirmed = window.confirm('Are you sure you want to cancel this job?');
+        if (!confirmed) return;
+
+        setCancelBusy((prev) => ({ ...prev, [job.id]: true }));
+        try {
+            const res = await fetch('/api/driver/cancel-job', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: user.email, journeyId: job.id }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data?.error || 'Failed to cancel job');
+            }
+
+            setNextJobs((prev) => {
+                const updated = prev.filter((entry) => entry.id !== job.id);
+                onJobCountChange?.(updated.length);
+                return updated;
+            });
+            showAlert('Job cancelled and returned to dispatch.');
+        } catch (err: any) {
+            showAlert(err?.message || 'Failed to cancel job');
+        } finally {
+            setCancelBusy((prev) => ({ ...prev, [job.id]: false }));
+        }
+    };
 
     return (
         <div>
@@ -137,27 +188,35 @@ const DriverJobs: React.FC<{ onJobCountChange?: (count: number) => void }> = ({ 
                 <div className="text-center py-16 bg-gray-900/50 border border-gray-800 rounded-lg">
                     <p className="text-red-400">{error}</p>
                 </div>
-            ) : jobs.length > 0 ? (
+            ) : nextJobs.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {jobs.map((job) => (
-                        <div key={job.id} className="bg-gray-900/50 border border-gray-800 rounded-lg p-6 space-y-4">
-                            <div className="flex justify-between items-start">
-                                <div>
-                                    <h3 className="text-xl font-bold text-amber-400">{job.pickup}</h3>
-                                    <p className="text-lg text-white">to {job.destination}</p>
-                                </div>
-                                <div className="text-right">
-                                    <p className="text-2xl font-bold flex items-center gap-2">
-                                        <Clock size={20} /> {job.time}
-                                    </p>
-                                    <p className="text-xs text-gray-400">{job.date}</p>
-                                </div>
+                    {nextJobs.map((job) => (
+                        <div key={job.id} className="bg-gray-900/50 border border-gray-800 rounded-lg p-6 space-y-3">
+                            <p className="text-sm text-amber-300 font-semibold">JOB TYPE: <span className="text-white">{job.jobType}</span></p>
+                            <p className="text-sm text-gray-200">Time: <span className="text-white">{job.time}</span></p>
+                            <p className="text-sm text-gray-200">Date: <span className="text-white">{job.date}</span></p>
+                            <p className="text-sm text-gray-200">Passenger: <span className="text-white">{job.client}</span></p>
+                            <p className="text-sm text-gray-200">Phone: <span className="text-white">{job.phone}</span></p>
+                            <div className="pt-1">
+                                <p className="text-sm text-gray-200">Pickup: <span className="text-white">{job.pickup}</span></p>
                             </div>
-                            <div className="border-t border-gray-700 pt-4 space-y-2">
-                                <p className="flex items-center gap-2 text-gray-300">
-                                    <User size={16} /> Client: {job.client}
+                            <div className="pt-1">
+                                <p className="text-sm text-gray-200">Drop-off: <span className="text-white">{job.destination}</span></p>
+                            </div>
+                            <div className="pt-1">
+                                <p className="text-sm text-gray-200">
+                                    Price: <span className="text-white">{job.priceType}  GBP {job.pay.toFixed(2)}</span>
                                 </p>
-                                <p className="text-gray-300">Est. Pay: GBP {job.pay.toFixed(2)}</p>
+                            </div>
+                            <div className="pt-3">
+                                <button
+                                    type="button"
+                                    onClick={() => handleCancelJob(job)}
+                                    disabled={Boolean(cancelBusy[job.id])}
+                                    className="rounded-full border border-red-500 bg-red-600 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                    {cancelBusy[job.id] ? 'Cancelling...' : 'Cancel'}
+                                </button>
                             </div>
                         </div>
                     ))}
@@ -169,27 +228,41 @@ const DriverJobs: React.FC<{ onJobCountChange?: (count: number) => void }> = ({ 
             )}
 
             <h2 className="text-2xl font-semibold mt-12 mb-4">Completed Jobs</h2>
-            <div className="space-y-3">
-                {mockCompletedJobs.map(job => (
-                    <div
-                      key={job.id}
-                      className="rounded-lg border border-gray-800 bg-gray-900/60 px-4 py-3 shadow-inner shadow-black/30"
-                    >
-                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                        <p className="text-base font-semibold text-white">
-                          {job.pickup} <span className="text-amber-300">to</span> {job.destination}
-                        </p>
-                        <p className="text-sm text-gray-300 flex items-center gap-2">
-                          <Clock size={14} /> {job.time}
-                        </p>
-                      </div>
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mt-2 text-sm text-gray-300">
-                        <span className="flex items-center gap-2"><User size={14} /> Client: {job.client}</span>
-                        <span className="font-semibold text-white">Pay: GBP {job.pay.toFixed(2)}</span>
-                      </div>
-                    </div>
-                ))}
-            </div>
+            {loading ? (
+                <div className="text-center py-12 bg-gray-900/50 border border-gray-800 rounded-lg">
+                    <p className="text-gray-400">Loading completed jobs...</p>
+                </div>
+            ) : error ? (
+                <div className="text-center py-12 bg-gray-900/50 border border-gray-800 rounded-lg">
+                    <p className="text-red-400">{error}</p>
+                </div>
+            ) : completedJobs.length > 0 ? (
+                <div className="space-y-3">
+                    {completedJobs.map((job) => (
+                        <div
+                          key={job.id}
+                          className="rounded-lg border border-gray-800 bg-gray-900/60 px-4 py-3 shadow-inner shadow-black/30"
+                        >
+                          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                            <p className="text-base font-semibold text-white">
+                              {job.pickup} <span className="text-amber-300">to</span> {job.destination}
+                            </p>
+                            <p className="text-sm text-gray-300 flex items-center gap-2">
+                              <Clock size={14} /> {job.date} {job.time}
+                            </p>
+                          </div>
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mt-2 text-sm text-gray-300">
+                            <span className="flex items-center gap-2"><User size={14} /> Client: {job.client}</span>
+                            <span className="font-semibold text-white">Pay: GBP {job.pay.toFixed(2)}</span>
+                          </div>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div className="text-center py-12 bg-gray-900/50 border border-gray-800 rounded-lg">
+                    <p className="text-gray-400">No completed jobs yet.</p>
+                </div>
+            )}
         </div>
     );
 };

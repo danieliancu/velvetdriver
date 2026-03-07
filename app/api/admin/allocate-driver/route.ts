@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
-import { upsertDriverStatementForAllocation } from '@/lib/driver-statements';
 
 const pool = getDbPool();
 
@@ -30,6 +29,7 @@ const buildNotes = (payload: any) => {
   ].filter(Boolean);
   return pieces.length ? pieces.join(' - ') : '-';
 };
+
 
 export async function POST(request: Request) {
   try {
@@ -90,20 +90,6 @@ export async function POST(request: Request) {
     const pricingFareAmount = Number(pricingRow.price ?? pricingPayload?.totalFare ?? 0) || 0;
     const driverAmount = Number((pricingFareAmount * (1 - appliedCommission / 100)).toFixed(2));
     const warnings: string[] = [];
-
-    const [result] = await pool.execute<mysql.ResultSetHeader>(
-      `UPDATE client_journeys
-          SET driver_name = ?,
-              driver_commission_applied = ?,
-              driver_price = ?
-        WHERE id = ?
-        LIMIT 1`,
-      [driverId, appliedCommission, driverAmount, journeyId]
-    );
-
-    if (!result.affectedRows) {
-      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
-    }
 
     const resendApiKey = process.env.RESEND_API_KEY;
     const emailFrom = process.env.EMAIL_FROM;
@@ -238,30 +224,20 @@ export async function POST(request: Request) {
     const carColour = car.colour || '-';
     const carRegistration = car.vehicle_registration || '-';
 
-    try {
-      await upsertDriverStatementForAllocation(pool, {
-        journeyId,
-        driverId: driverIdNumber,
-        bookingRef: bookingCode,
-        bookingDate: booking.created_at ? String(booking.created_at) : null,
-        journeyDate: booking.journey_date ? String(booking.journey_date) : null,
-        customerName: String(passengerName || 'Client'),
-        phoneNumber: String(booking.passenger_phone || payload?.passengerPhone || '-'),
-        collection: String(booking.pickup || '-'),
-        destination: String(booking.destination || '-'),
-        fareQuoted: Number(driverAmount || 0),
-        personAccepting: 'Velvet Admin',
-        personDispatching: 'Velvet Dispatch',
-        driverName: String(driverName || 'Assigned driver'),
-        driverLicenseNo: String(driverLicence || '-'),
-        vehicleReg: String(carRegistration || '-'),
-        vehicleType: String(vehicleLabel || '-'),
-        subletOperatorNo: 'VELVET-001',
-        subletOperatorName: 'Velvet Drivers Limited',
-      });
-    } catch (statementErr) {
-      console.error('Allocate driver statement generation error', statementErr);
-      warnings.push('Booking allocated, but statement PDF could not be generated.');
+    const [result] = await pool.execute<mysql.ResultSetHeader>(
+      `UPDATE client_journeys
+          SET driver_name = ?,
+              car = ?,
+              plate = ?,
+              driver_commission_applied = ?,
+              driver_price = ?
+        WHERE id = ?
+        LIMIT 1`,
+      [driverName || driverId, carMakeModel, carRegistration, appliedCommission, driverAmount, journeyId]
+    );
+
+    if (!result.affectedRows) {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
     }
 
     const clientSubject = `Velvet Drivers - Chauffeur allocated ${bookingCode}`;

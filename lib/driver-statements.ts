@@ -6,8 +6,8 @@ export type StatementAllocationPayload = {
   journeyId: number;
   driverId: number;
   bookingRef: string;
-  bookingDate: string | null;
-  journeyDate: string | null;
+  bookingDate: string | Date | null;
+  journeyDate: string | Date | null;
   customerName: string;
   phoneNumber: string;
   collection: string;
@@ -26,15 +26,28 @@ export type StatementAllocationPayload = {
 const A4_WIDTH = 595.28;
 const A4_HEIGHT = 841.89;
 
-const formatDate = (value: string | null) => {
+const formatDate = (value: string | Date | null) => {
   if (!value) return '-';
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString('en-GB', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   });
+};
+
+const toMySqlDateTime = (value: string | Date | null) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mi = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
 };
 
 async function buildStatementPdfBytes(payload: StatementAllocationPayload) {
@@ -126,7 +139,7 @@ async function buildStatementPdfBytes(payload: StatementAllocationPayload) {
     y -= Math.max(20, lines.length * 15 + 5);
   });
 
-  page.drawText('Generated automatically at allocation time.', {
+  page.drawText('Generated automatically at completion time.', {
     x: left,
     y: 40,
     size: 9,
@@ -176,6 +189,8 @@ export async function upsertDriverStatementForAllocation(
   payload: StatementAllocationPayload
 ) {
   await ensureDriverStatementsTable(pool);
+  const bookingDateSql = toMySqlDateTime(payload.bookingDate);
+  const journeyDateSql = toMySqlDateTime(payload.journeyDate);
 
   const pdfBytes = await buildStatementPdfBytes(payload);
   const fileName = `${payload.bookingRef}-statement.pdf`;
@@ -236,8 +251,8 @@ export async function upsertDriverStatementForAllocation(
       payload.journeyId,
       payload.driverId,
       payload.bookingRef,
-      payload.bookingDate,
-      payload.journeyDate,
+      bookingDateSql,
+      journeyDateSql,
       payload.customerName,
       payload.phoneNumber,
       payload.collection,

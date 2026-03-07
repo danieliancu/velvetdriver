@@ -36,6 +36,7 @@ type LiveBooking = {
   createdAt?: string | null;
   updatedAt?: string | null;
   priceDetails: string;
+  paymentMethod?: string;
   bookedBy: string;
   bookedByStaffId?: number | null;
   drivers: string[];
@@ -64,6 +65,7 @@ type LiveBookingResponse = {
   createdAt?: string | null;
   updatedAt?: string | null;
   priceDetails: string;
+  paymentMethod?: string;
   bookedBy: string;
   bookedByStaffId?: number | null;
   vehicle?: string;
@@ -120,22 +122,44 @@ const parseBookingPriceAmount = (priceDetails: string) => {
   return amount;
 };
 
-const formatPriceForDriver = (priceDetails: string, commissionPercent: number) => {
+const formatDriverNetAmount = (priceDetails: string, commissionPercent: number) => {
   const originalAmount = parseBookingPriceAmount(priceDetails);
-  if (originalAmount === null) return priceDetails;
+  if (originalAmount === null) return null;
   const normalizedCommission = Number.isFinite(commissionPercent)
     ? Math.min(100, Math.max(0, commissionPercent))
     : 0;
   const driverAmount = originalAmount * (1 - normalizedCommission / 100);
-  return `GBP ${driverAmount.toFixed(2)}`;
+  return Number(driverAmount.toFixed(2));
+};
+
+const resolveWhatsappJobType = (vehicle?: string) => {
+  const normalized = String(vehicle || '').toLowerCase();
+  if (normalized.includes('luxury mpv')) return 'LUXURY MPV';
+  if (normalized.includes('luxury')) return 'LUXURY';
+  return 'EXECUTIVE';
+};
+
+const resolveWhatsappPriceType = (paymentMethod?: string) => {
+  const normalized = String(paymentMethod || '').toLowerCase();
+  if (normalized.includes('account')) return 'ACCOUNT';
+  if (normalized.includes('cash') || normalized.includes('card')) return 'CASH/CARD';
+  if (normalized.includes('pay') || normalized.includes('stripe') || normalized.includes('online')) {
+    return 'PAYED';
+  }
+  return 'PAYED';
 };
 
 const buildBookingSummary = (booking: LiveBooking, commissionPercent = 0) => {
   const pickupLine = formatLocationWithLink('Pickup', booking.pickup);
   const dropOffLine = formatLocationWithLink('Drop-off', booking.dropOff);
-  const driverPrice = formatPriceForDriver(booking.priceDetails, commissionPercent);
+  const jobType = resolveWhatsappJobType(booking.vehicle);
+  const priceType = resolveWhatsappPriceType(booking.paymentMethod);
+  const amount = formatDriverNetAmount(booking.priceDetails, commissionPercent);
+  const priceLine =
+    amount !== null ? `${priceType}  GBP ${amount.toFixed(2)}` : `${priceType}  ${booking.priceDetails}`;
+  const notes = booking.notes?.trim() ? booking.notes.trim() : '-';
 
-  return `Time: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${pickupLine}\n\nTO\n\n${dropOffLine}\n\nPrice:  ${driverPrice}\n\nNotes: ${booking.notes}`;
+  return `JOB TYPE: ${jobType}\nTime: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${pickupLine}\n\nTO\n\n${dropOffLine}\nPrice: ${priceLine}\n\nNotes: ${notes}`;
 };
 
 const formatCarLabel = (car: {
@@ -244,6 +268,7 @@ const AdminDashboardPage: React.FC = () => {
   const [bookedBySaving, setBookedBySaving] = useState<Record<string, boolean>>({});
   const [vehicleLabelById, setVehicleLabelById] = useState<Record<number, string>>({});
   const [cancelAllocationBusy, setCancelAllocationBusy] = useState<Record<string, boolean>>({});
+  const [completeAllocationBusy, setCompleteAllocationBusy] = useState<Record<string, boolean>>({});
 
   const applyLiveBookingsResponse = useCallback((data: { bookings?: LiveBookingResponse[] }) => {
     const bookings: LiveBooking[] = (data.bookings || []).map((item: LiveBookingResponse) => ({
@@ -261,6 +286,7 @@ const AdminDashboardPage: React.FC = () => {
       createdAt: item.createdAt ?? null,
       updatedAt: item.updatedAt ?? null,
       priceDetails: item.priceDetails,
+      paymentMethod: item.paymentMethod || '',
       bookedBy: item.bookedBy,
       bookedByStaffId: item.bookedByStaffId ?? null,
       vehicle: item.vehicle || 'Unknown',
@@ -441,14 +467,10 @@ const AdminDashboardPage: React.FC = () => {
   };
 
   const partitionedBookings = React.useMemo(() => {
-    const now = Date.now();
     const live: LiveBooking[] = [];
     const allocated: LiveBooking[] = [];
 
     for (const booking of liveBookings) {
-      const journeyTime = getJourneyTimestamp(booking);
-      const isPastJourney = journeyTime !== null && journeyTime <= now;
-      if (isPastJourney) continue;
       const allocatedToDriver = Boolean(booking.driverId);
       if (allocatedToDriver) {
         allocated.push(booking);
@@ -609,28 +631,50 @@ const AdminDashboardPage: React.FC = () => {
   };
 
   const openWhatsAppChat = (driverKey: string, text: string) => {
-    if (!text) return;
-    const driverId = driverKey.split('-').at(-1);
-    if (!driverId) return;
-    const driver = availableDrivers.find((entry) => entry.id === driverId);
-    if (!driver) return;
-    const digits = formatPhoneForWhatsApp(driver.phone);
-    if (!digits) return;
-    const params = new URLSearchParams();
-    params.set('text', text);
-    const url = `whatsapp://send?phone=${digits}&${params.toString()}`;
-    if (typeof window !== 'undefined') {
-      window.location.href = url;
+    if (!text.trim()) {
+      setAllocationWarning('WhatsApp message is empty.');
+      return false;
     }
+    const driverId = driverKey.split('-').at(-1);
+    if (!driverId) {
+      setAllocationWarning('Unable to resolve driver for WhatsApp message.');
+      return false;
+    }
+    const driver = availableDrivers.find((entry) => entry.id === driverId);
+    if (!driver) {
+      setAllocationWarning('Driver not found for WhatsApp message.');
+      return false;
+    }
+    const digits = formatPhoneForWhatsApp(driver.phone);
+    if (!digits) {
+      setAllocationWarning(`Driver ${driver.name} has no valid phone number.`);
+      return false;
+    }
+    const encodedText = encodeURIComponent(text);
+    const webUrl = `https://wa.me/${digits}?text=${encodedText}`;
+    const nativeUrl = `whatsapp://send?phone=${digits}&text=${encodedText}`;
+    if (typeof window !== 'undefined') {
+      const popup = window.open(webUrl, '_blank', 'noopener,noreferrer');
+      if (!popup) {
+        window.location.href = nativeUrl;
+      }
+    }
+    return true;
   };
 
   const handleSend = (driverKey: string, fallbackMessage?: string, selectedCarLabel?: string) => {
     const draft = (driverMessages[driverKey] ?? '').trim();
     const baseMessage = draft || fallbackMessage?.trim() || '';
     const message = appendSelectedCarInstruction(baseMessage, selectedCarLabel);
-    if (!message) return;
-    openWhatsAppChat(driverKey, message);
-    setDriverMessages((prev) => ({ ...prev, [driverKey]: '' }));
+    if (!message) {
+      setAllocationWarning('Nothing to send on WhatsApp.');
+      return;
+    }
+    const sent = openWhatsAppChat(driverKey, message);
+    if (sent) {
+      setAllocationSuccess('WhatsApp chat opened with prepared message.');
+      setDriverMessages((prev) => ({ ...prev, [driverKey]: '' }));
+    }
   };
 
   const handleClear = (driverKey: string) => {
@@ -730,6 +774,35 @@ const AdminDashboardPage: React.FC = () => {
 
   const requestCancelAllocation = (booking: LiveBooking) => {
     setPendingCancelAllocation(booking);
+  };
+
+  const handleCompleteAllocation = async (booking: LiveBooking) => {
+    if (!booking.journeyId) return;
+    const confirmed = window.confirm('Mark this job as completed?');
+    if (!confirmed) return;
+
+    setCompleteAllocationBusy((prev) => ({ ...prev, [booking.id]: true }));
+    try {
+      const res = await fetch('/api/admin/complete-booking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journeyId: booking.journeyId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to mark booking as completed');
+      }
+
+      setLiveBookings((prev) => prev.filter((entry) => entry.id !== booking.id));
+      setAllocationSuccess('Job marked as completed.');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event(LIVE_BOOKINGS_REFRESH_EVENT));
+      }
+    } catch (err: any) {
+      setAllocationWarning(err?.message || 'Failed to mark job as completed.');
+    } finally {
+      setCompleteAllocationBusy((prev) => ({ ...prev, [booking.id]: false }));
+    }
   };
 
   const confirmCancelAllocation = async () => {
@@ -1122,7 +1195,7 @@ const AdminDashboardPage: React.FC = () => {
                       key={`allocated-${booking.id}`}
                       className="rounded-xl border border-emerald-400/20 bg-black/40 p-4"
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center justify-start gap-2">
                         <div>
                           <p className="text-sm font-semibold text-white">{booking.id}</p>
                           <p className="text-xs text-gray-400">
@@ -1136,6 +1209,14 @@ const AdminDashboardPage: React.FC = () => {
                           className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCompleteAllocation(booking)}
+                          disabled={completeAllocationBusy[booking.id]}
+                          className="rounded-full border border-emerald-400 bg-emerald-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {completeAllocationBusy[booking.id] ? 'Completing...' : 'Job Completed'}
                         </button>
                       </div>
                       <p className="mt-2 text-sm text-gray-300">

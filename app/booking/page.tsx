@@ -57,6 +57,39 @@ type PlaceLike = {
     location?: { lat: number; lng: number } | { lat: () => number; lng: () => number };
 };
 
+const BOOKING_WHATSAPP_NOTIFY_PHONE = '+447400606640';
+
+const formatPhoneForWhatsApp = (phone: string) => phone.replace(/\D/g, '');
+
+const openWhatsAppBookingNotification = (payload: {
+    bookingRef: string;
+    date: string;
+    time: string;
+    passengerName: string;
+    passengerPhone: string;
+    pickup: string;
+    destination: string;
+    totalFare: number;
+}) => {
+    if (typeof window === 'undefined') return;
+    const digits = formatPhoneForWhatsApp(BOOKING_WHATSAPP_NOTIFY_PHONE);
+    if (!digits) return;
+    const text = [
+        `New paid booking: ${payload.bookingRef}`,
+        `Date/time: ${payload.date} ${payload.time}`,
+        `Passenger: ${payload.passengerName}`,
+        `Phone: ${payload.passengerPhone}`,
+        `Pickup: ${payload.pickup}`,
+        `Drop-off: ${payload.destination}`,
+        `Amount paid: GBP ${payload.totalFare.toFixed(2)}`,
+    ].join('\\n');
+
+    const params = new URLSearchParams();
+    params.set('text', text);
+    const url = `whatsapp://send?phone=${digits}&${params.toString()}`;
+    window.location.href = url;
+};
+
 const BookingPageInner = () => {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -1505,6 +1538,25 @@ const BookingPageInner = () => {
                 const data = await response.json().catch(() => ({}));
                 throw new Error(data?.error || 'Failed to submit booking');
             }
+            const data = await response.json().catch(() => ({}));
+            const destinationText = Array.isArray(pendingBookingPayload?.dropOffs) && pendingBookingPayload.dropOffs.length
+                ? String(pendingBookingPayload.dropOffs[pendingBookingPayload.dropOffs.length - 1] || '')
+                : '';
+            const bookingRef = data?.journeyId
+                ? `VD-${String(data.journeyId).padStart(4, '0')}`
+                : paymentIntent.id
+                    ? `PI-${paymentIntent.id}`
+                    : `BK-${Date.now()}`;
+            openWhatsAppBookingNotification({
+                bookingRef,
+                date: pendingBookingPayload?.date || '',
+                time: pendingBookingPayload?.time || '',
+                passengerName: pendingBookingPayload?.passengerName || '',
+                passengerPhone: pendingBookingPayload?.passengerPhone || '',
+                pickup: pendingBookingPayload?.pickup || '',
+                destination: destinationText,
+                totalFare: Number(totalFareFinal),
+            });
             setShowVerificationModal(false);
             setCheckoutActive(false);
             showAlert('Payment confirmed! Your booking is now complete.');
