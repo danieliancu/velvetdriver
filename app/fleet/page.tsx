@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import PageShell from '@/components/PageShell';
+import { getFleetDisplayImages } from '@/lib/fleet-gallery';
 import { getPublicFleetTypes } from '@/lib/fleet-types';
 
 export default async function FleetPage() {
@@ -25,29 +26,52 @@ export default async function FleetPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {fleet.map((item) => (
-              <Link
-                href={`/fleet/${item.slug}`}
-                key={item.slug}
-                className="group rounded-2xl overflow-hidden border border-white/10 bg-black/40 shadow-lg shadow-black/30 hover:border-amber-400/50 transition-all"
-              >
-                <div className="relative h-48 overflow-hidden">
-                  <img
-                    src={item.hero_image || 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1200&q=80'}
-                    alt={item.label}
-                    className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                  />
-                  <span className="absolute top-3 left-3 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold text-amber-300">
-                    Available
-                  </span>
-                </div>
-                <div className="p-5 space-y-3">
-                  <h3 className="text-xl font-semibold text-white">{item.label}</h3>
-                  <p className="text-sm text-gray-300 leading-relaxed">{item.summary}</p>
-                  <span className="text-sm font-semibold text-amber-300 group-hover:text-amber-200 transition-colors">
-                    View details {'>'}
-                  </span>
-                </div>
-              </Link>
+              (() => {
+                const images = getFleetDisplayImages(item.hero_image, item.gallery_images);
+                const primaryImage = images[0] || 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1200&q=80';
+                const secondaryImages = images.slice(1, 4);
+
+                return (
+                  <Link
+                    href={`/fleet/${item.slug}`}
+                    key={item.slug}
+                    className="group rounded-2xl overflow-hidden border border-white/10 bg-black/40 shadow-lg shadow-black/30 hover:border-amber-400/50 transition-all"
+                  >
+                    <div className="relative h-48 overflow-hidden">
+                      <img
+                        src={primaryImage}
+                        alt={item.label}
+                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                      />
+                      <span className="absolute top-3 left-3 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold text-amber-300">
+                        Available
+                      </span>
+                    </div>
+                    <div className="p-5 space-y-3">
+                      <h3 className="text-xl font-semibold text-white">{item.label}</h3>
+                      <p className="text-sm text-gray-300 leading-relaxed">{item.summary}</p>
+                      {secondaryImages.length ? (
+                        <div className="flex items-center gap-2 overflow-x-auto">
+                          {secondaryImages.map((imageUrl) => (
+                            <img
+                              key={`${item.slug}-${imageUrl}`}
+                              src={imageUrl}
+                              alt={item.label}
+                              className="h-12 w-16 rounded-lg border border-white/10 object-cover"
+                            />
+                          ))}
+                          <span className="text-xs text-gray-400 whitespace-nowrap">{images.length} images</span>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500">1 image</p>
+                      )}
+                      <span className="text-sm font-semibold text-amber-300 group-hover:text-amber-200 transition-colors">
+                        View details {'>'}
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })()
             ))}
           </div>
         )}

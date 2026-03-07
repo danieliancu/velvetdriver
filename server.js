@@ -26,16 +26,41 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
+let blogTableEnsured = false;
+
+async function ensureBlogPostsTable() {
+  if (blogTableEnsured) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS blog_posts (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      slug VARCHAR(180) NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      summary TEXT NULL,
+      body LONGTEXT NULL,
+      hero_image TEXT NULL,
+      tag VARCHAR(80) NULL,
+      published_at DATETIME NULL,
+      created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_blog_posts_slug (slug),
+      KEY idx_blog_posts_published (published_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  `);
+  blogTableEnsured = true;
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
 
 app.get('/api/blog-posts', async (_req, res) => {
   try {
+    await ensureBlogPostsTable();
     const [rows] = await pool.query(
       `SELECT id, slug, title, summary, body, hero_image, tag, published_at
        FROM blog_posts
-       ORDER BY published_at DESC, id DESC`
+       ORDER BY COALESCE(published_at, created_at) DESC, id DESC`
     );
     res.json(rows);
   } catch (err) {

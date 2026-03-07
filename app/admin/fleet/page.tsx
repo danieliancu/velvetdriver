@@ -10,6 +10,7 @@ type FleetType = {
   summary: string | null;
   description: string | null;
   hero_image: string | null;
+  gallery_images: string[];
   features: string | null;
   sort_order: number | null;
   is_active: number | null;
@@ -23,6 +24,7 @@ type FleetFormState = {
   summary: string;
   description: string;
   hero_image: string;
+  gallery_images: string[];
   features: string;
   sort_order: string;
   is_active: boolean;
@@ -34,10 +36,16 @@ const emptyForm: FleetFormState = {
   summary: '',
   description: '',
   hero_image: '',
+  gallery_images: [],
   features: '',
   sort_order: '0',
   is_active: true,
 };
+
+const fallbackFleetImage = 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1400&q=80';
+
+const uniqueImages = (urls: string[]) =>
+  Array.from(new Set(urls.map((url) => url.trim()).filter(Boolean)));
 
 const AdminFleetPage = () => {
   const [items, setItems] = useState<FleetType[]>([]);
@@ -46,8 +54,8 @@ const AdminFleetPage = () => {
   const [form, setForm] = useState<FleetFormState>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
-  const [heroUploading, setHeroUploading] = useState(false);
-  const [heroUploadError, setHeroUploadError] = useState<string | null>(null);
+  const [galleryUploading, setGalleryUploading] = useState(false);
+  const [galleryUploadError, setGalleryUploadError] = useState<string | null>(null);
 
   const loadFleet = async () => {
     setLoading(true);
@@ -56,10 +64,13 @@ const AdminFleetPage = () => {
       const res = await fetch('/api/fleet-types?includeInactive=1', { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as FleetType[];
-      setItems(data || []);
+      const nextItems = Array.isArray(data) ? data : [];
+      setItems(nextItems);
+      return nextItems;
     } catch (err: any) {
       setError(err?.message || 'Failed to load fleet types');
       setItems([]);
+      return [] as FleetType[];
     } finally {
       setLoading(false);
     }
@@ -74,7 +85,7 @@ const AdminFleetPage = () => {
   const resetForm = () => {
     setForm(emptyForm);
     setEditingId(null);
-    setHeroUploadError(null);
+    setGalleryUploadError(null);
   };
 
   const handleEdit = (item: FleetType) => {
@@ -85,6 +96,7 @@ const AdminFleetPage = () => {
       summary: item.summary || '',
       description: item.description || '',
       hero_image: item.hero_image || '',
+      gallery_images: item.gallery_images || [],
       features: item.features || '',
       sort_order: item.sort_order != null ? String(item.sort_order) : '0',
       is_active: Boolean(item.is_active),
@@ -115,6 +127,7 @@ const AdminFleetPage = () => {
         summary: form.summary.trim() || null,
         description: form.description.trim() || null,
         hero_image: form.hero_image.trim() || null,
+        gallery_images: form.gallery_images,
         features: form.features.trim() || null,
         sort_order: Number(form.sort_order || 0),
         is_active: form.is_active,
@@ -128,8 +141,17 @@ const AdminFleetPage = () => {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error || 'Save failed');
       }
-      await loadFleet();
-      resetForm();
+      const refreshed = await loadFleet();
+      if (editingId) {
+        const updated = refreshed.find((item) => item.id === editingId);
+        if (updated) {
+          handleEdit(updated);
+        } else {
+          resetForm();
+        }
+      } else {
+        resetForm();
+      }
     } catch (err: any) {
       setError(err?.message || 'Failed to save fleet type');
     } finally {
@@ -137,34 +159,94 @@ const AdminFleetPage = () => {
     }
   };
 
-  const handleHeroUpload = async (file: File | null) => {
-    if (!file) return;
-    setHeroUploading(true);
-    setHeroUploadError(null);
+  const handleGalleryUpload = async (queue: File[]) => {
+    if (!queue.length) return;
+    setGalleryUploading(true);
+    setGalleryUploadError(null);
     try {
-      const payload = new FormData();
-      payload.append('file', file);
-      if (editingId) {
-        payload.append('fleetId', String(editingId));
+      const uploadedUrls: string[] = [];
+      for (const file of queue) {
+        const payload = new FormData();
+        payload.append('file', file);
+        if (editingId) {
+          payload.append('fleetId', String(editingId));
+        }
+        if (form.slug.trim()) {
+          payload.append('slug', form.slug.trim());
+        }
+        const res = await fetch('/api/admin/fleet/photo', {
+          method: 'POST',
+          body: payload,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error || 'Failed to upload fleet image');
+        }
+        if (data?.url) {
+          uploadedUrls.push(String(data.url));
+        }
       }
-      if (form.slug.trim()) {
-        payload.append('slug', form.slug.trim());
-      }
-      const res = await fetch('/api/admin/fleet/photo', {
-        method: 'POST',
-        body: payload,
+
+      setForm((prev) => {
+        const shouldUseLatestAsCover = queue.length === 1;
+        const latestUploaded = uploadedUrls[uploadedUrls.length - 1] || '';
+        const nextHero = shouldUseLatestAsCover ? latestUploaded : prev.hero_image || uploadedUrls[0] || '';
+        const nextGallerySource = shouldUseLatestAsCover
+          ? [prev.hero_image, ...uploadedUrls, ...prev.gallery_images]
+          : [...uploadedUrls, ...prev.gallery_images];
+        const nextGallery = uniqueImages(nextGallerySource).filter((url) => url !== nextHero);
+        return {
+          ...prev,
+          hero_image: nextHero,
+          gallery_images: nextGallery,
+        };
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to upload hero image');
-      }
-      setForm((prev) => ({ ...prev, hero_image: data?.url || prev.hero_image }));
     } catch (err: any) {
-      setHeroUploadError(err?.message || 'Failed to upload hero image');
+      setGalleryUploadError(err?.message || 'Failed to upload fleet images');
     } finally {
-      setHeroUploading(false);
+      setGalleryUploading(false);
     }
   };
+
+  const handleSetCover = (imageUrl: string) => {
+    setForm((prev) => {
+      const nextHero = imageUrl.trim();
+      if (!nextHero || nextHero === prev.hero_image) {
+        return prev;
+      }
+      const nextGallery = uniqueImages([prev.hero_image, ...prev.gallery_images]).filter((url) => url && url !== nextHero);
+      return {
+        ...prev,
+        hero_image: nextHero,
+        gallery_images: nextGallery,
+      };
+    });
+  };
+
+  const handleRemoveImage = (imageUrl: string) => {
+    setForm((prev) => {
+      const trimmed = imageUrl.trim();
+      if (!trimmed) {
+        return prev;
+      }
+
+      if (prev.hero_image === trimmed) {
+        const [nextHero = '', ...remaining] = prev.gallery_images.filter((url) => url !== trimmed);
+        return {
+          ...prev,
+          hero_image: nextHero,
+          gallery_images: remaining,
+        };
+      }
+
+      return {
+        ...prev,
+        gallery_images: prev.gallery_images.filter((url) => url !== trimmed),
+      };
+    });
+  };
+
+  const previewImages = uniqueImages([form.hero_image, ...form.gallery_images]);
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
@@ -253,26 +335,83 @@ const AdminFleetPage = () => {
                   <label className="inline-flex items-center gap-2 rounded-lg border border-white/20 px-3 py-2 text-xs text-white hover:border-amber-400 transition cursor-pointer">
                     <input
                       type="file"
+                      multiple
                       accept="image/*"
                       className="hidden"
                       onChange={(event) => {
-                        const file = event.target.files?.[0] || null;
+                        const selectedFiles = Array.from(event.target.files || []);
                         event.target.value = '';
-                        handleHeroUpload(file);
+                        handleGalleryUpload(selectedFiles);
                       }}
                     />
-                    {heroUploading ? 'Uploading...' : 'Upload image'}
+                    {galleryUploading ? 'Uploading...' : 'Upload images'}
                   </label>
                   {form.hero_image ? (
-                    <span className="text-xs text-gray-400 truncate max-w-[220px]">Saved URL set</span>
+                    <span className="text-xs text-gray-400 truncate max-w-[220px]">Cover image set</span>
                   ) : (
                     <span className="text-xs text-gray-500">No image uploaded yet.</span>
                   )}
                 </div>
-                {heroUploadError ? (
-                  <p className="mt-2 text-xs text-red-300">{heroUploadError}</p>
+                {galleryUploadError ? (
+                  <p className="mt-2 text-xs text-red-300">{galleryUploadError}</p>
                 ) : null}
+                <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+                  <img
+                    src={form.hero_image || previewImages[0] || fallbackFleetImage}
+                    alt={form.label || 'Fleet cover'}
+                    className="h-44 w-full object-cover"
+                  />
+                </div>
               </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <label className="block text-[11px] uppercase tracking-wide text-gray-400">Fleet gallery</label>
+                  <p className="text-xs text-gray-500">Upload multiple photos. The cover image is used on cards; all images are shown on the detail page.</p>
+                </div>
+                <span className="text-xs text-gray-400">{previewImages.length} image{previewImages.length === 1 ? '' : 's'}</span>
+              </div>
+              {previewImages.length ? (
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {previewImages.map((imageUrl) => {
+                    const isCover = imageUrl === form.hero_image;
+                    return (
+                      <div key={imageUrl} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+                        <img src={imageUrl} alt={form.label || 'Fleet image'} className="h-36 w-full object-cover" />
+                        <div className="flex items-center justify-between gap-2 border-t border-white/10 px-3 py-2">
+                          <span className={`text-[11px] uppercase tracking-[0.2em] ${isCover ? 'text-amber-300' : 'text-gray-500'}`}>
+                            {isCover ? 'Cover' : 'Gallery'}
+                          </span>
+                          <div className="flex gap-2">
+                            {!isCover ? (
+                              <button
+                                type="button"
+                                onClick={() => handleSetCover(imageUrl)}
+                                className="text-xs text-amber-300 hover:text-amber-200"
+                              >
+                                Set cover
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveImage(imageUrl)}
+                              className="text-xs text-red-300 hover:text-red-200"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-4 py-6 text-sm text-gray-500">
+                  No gallery images added yet.
+                </div>
+              )}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-3">
@@ -335,7 +474,8 @@ const AdminFleetPage = () => {
                         {item.is_active ? 'Active' : 'Hidden'}
                       </p>
                       <h4 className="text-xl font-semibold text-white">{item.label}</h4>
-                      <p className="text-xs text-gray-400">/{item.slug}</p>
+                      <p className="text-xs text-gray-400">ID {item.id} • /{item.slug}</p>
+                      {item.updated_at ? <p className="text-[11px] text-gray-500">Updated: {item.updated_at}</p> : null}
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -353,6 +493,20 @@ const AdminFleetPage = () => {
                         Delete
                       </button>
                     </div>
+                  </div>
+                  <div className="flex items-center gap-2 overflow-x-auto">
+                    {uniqueImages([item.hero_image || '', ...(item.gallery_images || [])]).slice(0, 4).map((imageUrl) => (
+                      <img
+                        key={imageUrl}
+                        src={imageUrl}
+                        alt={item.label}
+                        className="h-16 w-20 rounded-xl border border-white/10 object-cover"
+                      />
+                    ))}
+                    <span className="text-xs text-gray-500">
+                      {uniqueImages([item.hero_image || '', ...(item.gallery_images || [])]).length} image
+                      {uniqueImages([item.hero_image || '', ...(item.gallery_images || [])]).length === 1 ? '' : 's'}
+                    </span>
                   </div>
                   <p className="text-sm text-gray-300">{item.summary || 'No summary added yet.'}</p>
                 </div>

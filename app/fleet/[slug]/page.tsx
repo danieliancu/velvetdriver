@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import PageShell from '@/components/PageShell';
+import { getFleetDisplayImages } from '@/lib/fleet-gallery';
 import { getPublicFleetTypes } from '@/lib/fleet-types';
 
 const parseFeatures = (value?: string | null) =>
@@ -18,6 +19,8 @@ export default async function FleetDetailPage({ params }: { params: { slug: stri
   }
 
   const features = parseFeatures(item.features);
+  const images = getFleetDisplayImages(item.hero_image, item.gallery_images);
+  const [primaryImage, ...secondaryImages] = images;
 
   return (
     <PageShell mainClassName="flex flex-col items-center px-4 sm:px-6 md:px-8 py-16 bg-black text-white min-h-screen">
@@ -42,11 +45,21 @@ export default async function FleetDetailPage({ params }: { params: { slug: stri
 
         <div className="overflow-hidden rounded-3xl border border-white/10 bg-black/40">
           <img
-            src={item.hero_image || 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1400&q=80'}
+            src={primaryImage || 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1400&q=80'}
             alt={item.label}
             className="w-full h-[360px] object-cover"
           />
         </div>
+
+        {secondaryImages.length ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {secondaryImages.map((imageUrl) => (
+              <div key={imageUrl} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+                <img src={imageUrl} alt={item.label} className="h-48 w-full object-cover" />
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         <div className="grid gap-6 md:grid-cols-2">
           <div className="rounded-2xl border border-white/10 bg-black/40 p-6 space-y-4">

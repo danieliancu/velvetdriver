@@ -1,5 +1,6 @@
 import { unstable_noStore as noStore } from 'next/cache';
 import { getDbPool, type DbRow } from '@/lib/db';
+import { parseFleetGalleryImages } from '@/lib/fleet-gallery';
 
 type DbFleetType = {
   id: number;
@@ -8,6 +9,7 @@ type DbFleetType = {
   summary: string | null;
   description: string | null;
   hero_image: string | null;
+  gallery_images: string | null;
   features: string | null;
   sort_order: number | null;
   is_active: number | null;
@@ -22,6 +24,7 @@ export type FleetTypePublic = {
   summary: string | null;
   description: string | null;
   hero_image: string | null;
+  gallery_images: string[];
   features: string | null;
   sort_order: number | null;
   is_active: number | null;
@@ -31,7 +34,7 @@ export async function getPublicFleetTypes() {
   noStore();
   const pool = getDbPool();
   const [rows] = await pool.query<DbFleetTypeRow[]>(
-    `SELECT id, slug, label, summary, description, hero_image, features, sort_order, is_active
+    `SELECT id, slug, label, summary, description, hero_image, gallery_images, features, sort_order, is_active
      FROM fleet_types
      WHERE is_active = 1
      ORDER BY sort_order ASC, label ASC, id ASC`
@@ -45,6 +48,7 @@ export async function getPublicFleetTypes() {
       summary: row.summary ?? null,
       description: row.description ?? null,
       hero_image: row.hero_image ?? null,
+      gallery_images: parseFleetGalleryImages(row.gallery_images),
       features: row.features ?? null,
       sort_order: row.sort_order ?? 0,
       is_active: row.is_active ?? 0,

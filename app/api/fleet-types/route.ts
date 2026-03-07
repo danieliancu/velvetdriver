@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool, type DbRow } from '@/lib/db';
+import { parseFleetGalleryImages, sanitizeFleetGalleryImages } from '@/lib/fleet-gallery';
 
 const pool = getDbPool();
 
@@ -11,6 +12,7 @@ type DbFleetType = {
   summary: string | null;
   description: string | null;
   hero_image: string | null;
+  gallery_images: string | null;
   features: string | null;
   sort_order: number | null;
   is_active: number | null;
@@ -40,12 +42,17 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const includeInactive = url.searchParams.get('includeInactive') === '1';
     const [rows] = await pool.query<DbFleetTypeRow[]>(
-      `SELECT id, slug, label, summary, description, hero_image, features, sort_order, is_active, created_at, updated_at
+      `SELECT id, slug, label, summary, description, hero_image, gallery_images, features, sort_order, is_active, created_at, updated_at
        FROM fleet_types
        ${includeInactive ? '' : 'WHERE is_active = 1'}
        ORDER BY sort_order ASC, label ASC, id ASC`
     );
-    return NextResponse.json(rows);
+    return NextResponse.json(
+      rows.map((row) => ({
+        ...row,
+        gallery_images: parseFleetGalleryImages(row.gallery_images),
+      }))
+    );
   } catch (err) {
     console.error('Error fetching fleet types', err);
     return NextResponse.json({ error: 'Failed to load fleet types' }, { status: 500 });
@@ -61,14 +68,15 @@ export async function POST(req: Request) {
     const summary = body.summary ?? null;
     const description = body.description ?? null;
     const hero = body.hero_image ?? null;
+    const galleryImages = sanitizeFleetGalleryImages(body.gallery_images, hero);
     const features = body.features ?? null;
     const sortOrder = Number.isFinite(Number(body.sort_order)) ? Number(body.sort_order) : 0;
     const isActive = normalizeBool(body.is_active, true) ? 1 : 0;
 
     const [result] = await pool.execute<mysql.ResultSetHeader>(
-      `INSERT INTO fleet_types (slug, label, summary, description, hero_image, features, sort_order, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [slug, label, summary, description, hero, features, sortOrder, isActive]
+      `INSERT INTO fleet_types (slug, label, summary, description, hero_image, gallery_images, features, sort_order, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [slug, label, summary, description, hero, JSON.stringify(galleryImages), features, sortOrder, isActive]
     );
     return NextResponse.json({ id: result.insertId, slug }, { status: 201 });
   } catch (err) {
@@ -88,15 +96,16 @@ export async function PUT(req: Request) {
     const summary = body.summary ?? null;
     const description = body.description ?? null;
     const hero = body.hero_image ?? null;
+    const galleryImages = sanitizeFleetGalleryImages(body.gallery_images, hero);
     const features = body.features ?? null;
     const sortOrder = Number.isFinite(Number(body.sort_order)) ? Number(body.sort_order) : 0;
     const isActive = normalizeBool(body.is_active, true) ? 1 : 0;
 
     await pool.execute(
       `UPDATE fleet_types
-       SET slug = ?, label = ?, summary = ?, description = ?, hero_image = ?, features = ?, sort_order = ?, is_active = ?
+       SET slug = ?, label = ?, summary = ?, description = ?, hero_image = ?, gallery_images = ?, features = ?, sort_order = ?, is_active = ?
        WHERE id = ?`,
-      [slug, label, summary, description, hero, features, sortOrder, isActive, id]
+      [slug, label, summary, description, hero, JSON.stringify(galleryImages), features, sortOrder, isActive, id]
     );
     return NextResponse.json({ ok: true, slug });
   } catch (err) {
