@@ -1,16 +1,41 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { Role, type Journey } from '@/types';
 import PageShell from '@/components/PageShell';
-import type { Journey } from '@/types';
-
 import ClientHistory from '@/components/client-dashboard/ClientHistory';
 import ClientComplain from '@/components/client-dashboard/ClientComplain';
 import ClientReview from '@/components/client-dashboard/ClientReview';
 import ClientLostProperty from '@/components/client-dashboard/ClientLostProperty';
 import CorporateUpdateDetails from '@/components/corporate-dashboard/CorporateUpdateDetails';
+import { useAlert } from '@/components/AlertProvider';
+
+type CorporateProfile = {
+  email: string;
+  companyName: string;
+  businessAddress: string;
+  companyRegNumber: string;
+  vatNumber: string;
+  businessType: string;
+  contactName: string;
+  contactTitle: string;
+  contactPhone: string;
+  accountsName: string;
+  accountsEmail: string;
+  accountsPhone: string;
+  billingAddress: string;
+  invoiceMethod: string;
+  estimatedJourneys: string;
+  vehicleTypes: string;
+  serviceNotes: string;
+  paymentMethod: string;
+  poRequired: string;
+  invoiceEmail: string;
+  journeyTypes: string[];
+  corporateStatus?: string | null;
+};
 
 const DashboardContentWrapper: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div className="bg-gradient-to-br from-[#1E1212] via-[#100808] to-black border border-amber-900/50 rounded-2xl p-8 max-w-2xl mx-auto">
@@ -19,79 +44,199 @@ const DashboardContentWrapper: React.FC<{ title: string; children: React.ReactNo
   </div>
 );
 
-const corporateJourneys: Journey[] = [
-  {
-    id: 1,
-    date: '2025-02-01 09:00',
-    pickup: 'Canary Wharf',
-    destination: 'The Shard',
-    driver: 'Robert K.',
-    car: 'BMW 7 Series',
-    plate: 'RX70DVE',
-    serviceType: 'As Directed',
-    status: 'Completed',
-    price: 95,
-    invoiceUrl: null,
-  },
-  {
-    id: 2,
-    date: '2025-02-10 14:00',
-    pickup: 'LHR T5',
-    destination: 'The Ned',
-    driver: 'Anna B.',
-    car: 'Mercedes V-Class',
-    plate: 'AB21LUX',
-    serviceType: 'Transfer',
-    status: 'Upcoming',
-    price: 180,
-    invoiceUrl: null,
-  },
-];
-
 const CorporateDashboardPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState('History');
   const { user, logout } = useAuth();
+  const { showAlert } = useAlert();
   const router = useRouter();
+
+  const [journeys, setJourneys] = useState<Journey[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [profile, setProfile] = useState<CorporateProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileSaving, setProfileSaving] = useState(false);
 
   const handleLogout = () => {
     logout();
     router.push('/');
   };
 
-  const completedJourneys = corporateJourneys.filter((j) => j.status === 'Completed');
+  useEffect(() => {
+    if (!user) {
+      router.replace('/corporate/login');
+      return;
+    }
+    if (user.role === Role.CORPORATE) return;
+    if (user.role === Role.ADMIN) {
+      router.replace('/admin/dashboard');
+      return;
+    }
+    if (user.role === Role.DRIVER) {
+      router.replace('/driver/dashboard');
+      return;
+    }
+    router.replace('/client/dashboard');
+  }, [router, user]);
 
+  const loadHistory = React.useCallback(async () => {
+    if (!user?.email) {
+      setJourneys([]);
+      setHistoryLoading(false);
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/corporate/history?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('history');
+      const data = (await res.json()) as { journeys: Journey[] };
+      setJourneys(Array.isArray(data.journeys) ? data.journeys : []);
+    } catch {
+      setJourneys([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [user?.email]);
+
+  const loadProfile = React.useCallback(async () => {
+    if (!user?.email) {
+      setProfile(null);
+      setProfileLoading(false);
+      return;
+    }
+    setProfileLoading(true);
+    try {
+      const res = await fetch(`/api/corporate/profile?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to load profile');
+      }
+      const data = await res.json();
+      setProfile(data as CorporateProfile);
+    } catch (err: any) {
+      showAlert(err?.message || 'Failed to load corporate profile.');
+      setProfile(null);
+    } finally {
+      setProfileLoading(false);
+    }
+  }, [showAlert, user?.email]);
+
+  useEffect(() => {
+    if (!user?.email || user.role !== Role.CORPORATE) {
+      setHistoryLoading(false);
+      setProfileLoading(false);
+      return;
+    }
+    loadHistory();
+    loadProfile();
+  }, [loadHistory, loadProfile, user?.email, user?.role]);
+
+  const handleSaveProfile = async (payload: {
+    companyName: string;
+    businessAddress: string;
+    companyRegNumber: string;
+    vatNumber: string;
+    businessType: string;
+    contactName: string;
+    contactTitle: string;
+    contactEmail: string;
+    contactPhone: string;
+    accountsName: string;
+    accountsEmail: string;
+    accountsPhone: string;
+    billingAddress: string;
+    invoiceMethod: string;
+    estimatedJourneys: string;
+    vehicleTypes: string;
+    serviceNotes: string;
+    paymentMethod: string;
+    poRequired: string;
+    invoiceEmail: string;
+    journeyTypes: string[];
+    newPassword?: string;
+  }) => {
+    if (!user?.email) return;
+    setProfileSaving(true);
+    try {
+      const res = await fetch('/api/corporate/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, email: user.email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to update profile');
+      }
+      showAlert('Corporate details updated.');
+      await loadProfile();
+    } catch (err: any) {
+      showAlert(err?.message || 'Failed to update corporate details.');
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const completedJourneys = useMemo(() => journeys.filter((j) => j.status === 'Completed'), [journeys]);
   const tabs = ['History', 'Complain', 'Review', 'Lost property', 'Update Details'];
 
   const renderContent = () => {
     switch (activeTab) {
       case 'History':
-        return <ClientHistory journeys={corporateJourneys} />;
+        return <ClientHistory journeys={journeys} loading={historyLoading} />;
       case 'Complain':
         return (
-            <DashboardContentWrapper title="Submit a Complaint">
-                <ClientComplain journeys={completedJourneys} isGuest />
-            </DashboardContentWrapper>
+          <DashboardContentWrapper title="Submit a Complaint">
+            <ClientComplain
+              isGuest
+              email={user?.email || ''}
+              userName={profile?.contactName || user?.name || ''}
+              userPhone={profile?.contactPhone || user?.phone || ''}
+              journeys={completedJourneys}
+              showSubjectInput={false}
+            />
+          </DashboardContentWrapper>
         );
       case 'Review':
         return (
           <DashboardContentWrapper title="Leave a Review">
-                <ClientReview journeys={completedJourneys} isGuest />
+            <ClientReview
+              isGuest
+              email={user?.email || ''}
+              userName={profile?.contactName || user?.name || ''}
+              journeys={completedJourneys}
+            />
           </DashboardContentWrapper>
         );
       case 'Lost property':
         return (
           <DashboardContentWrapper title="Report Lost Property">
-                <ClientLostProperty journeys={completedJourneys} isGuest />
+            <ClientLostProperty
+              isGuest
+              email={user?.email || ''}
+              userName={profile?.contactName || user?.name || ''}
+              userPhone={profile?.contactPhone || user?.phone || ''}
+              journeys={completedJourneys}
+            />
           </DashboardContentWrapper>
         );
       case 'Update Details':
         return (
           <DashboardContentWrapper title="Update Your Details">
-            <CorporateUpdateDetails />
+            {profileLoading ? (
+              <p className="text-sm text-gray-400">Loading profile...</p>
+            ) : (
+              <CorporateUpdateDetails
+                profile={{
+                  ...profile,
+                  contactEmail: user?.email || profile?.email || '',
+                }}
+                onSubmit={handleSaveProfile}
+                saving={profileSaving}
+              />
+            )}
           </DashboardContentWrapper>
         );
       default:
-        return <ClientHistory />;
+        return <ClientHistory journeys={journeys} loading={historyLoading} />;
     }
   };
 
@@ -103,7 +248,12 @@ const CorporateDashboardPage: React.FC = () => {
             <div className="flex flex-wrap justify-between items-center gap-4 pb-4 border-b border-gray-800">
               <div>
                 <h1 className="text-3xl font-bold font-display text-amber-400">Corporate Dashboard</h1>
-                <p className="text-gray-400">Welcome back, {user?.name}</p>
+                <p className="text-gray-400">Welcome back, {profile?.contactName || user?.name}</p>
+                {profile?.corporateStatus && profile.corporateStatus !== 'active' ? (
+                  <p className="text-xs text-amber-300 mt-1 uppercase tracking-[0.2em]">
+                    Account status: {profile.corporateStatus}
+                  </p>
+                ) : null}
               </div>
               <button
                 onClick={handleLogout}
@@ -135,7 +285,7 @@ const CorporateDashboardPage: React.FC = () => {
             </nav>
           </header>
 
-          <main>{renderContent()}</main>
+          <main>{user?.role === Role.CORPORATE ? renderContent() : null}</main>
         </div>
       </div>
     </PageShell>

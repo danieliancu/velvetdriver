@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import FormLayout from '@/components/FormLayout';
 import Input from '@/components/Input';
@@ -11,17 +11,59 @@ import { Role } from '@/types';
 
 export default function CorporateLoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, user } = useAuth();
   const [isRecoverModalOpen, setRecoverModalOpen] = useState(false);
   const [recoverEmail, setRecoverEmail] = useState('');
   const [recoverMessage, setRecoverMessage] = useState<string | null>(null);
   const [recoverLoading, setRecoverLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (event: FormEvent) => {
+  const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
-    login(Role.CLIENT);
-    router.push('/corporate/dashboard');
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, expectedRole: 'corporate' }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to sign in');
+      }
+      const data = await res.json();
+      if (data.role !== 'corporate') {
+        throw new Error('This account is not a corporate account.');
+      }
+      login(Role.CORPORATE, { id: data.id, name: data.name, email: data.email, phone: data.phone });
+      router.push('/corporate/dashboard');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to sign in');
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useEffect(() => {
+    if (!user) return;
+    if (user.role === Role.CORPORATE) {
+      router.replace('/corporate/dashboard');
+      return;
+    }
+    if (user.role === Role.ADMIN) {
+      router.replace('/admin/dashboard');
+      return;
+    }
+    if (user.role === Role.DRIVER) {
+      router.replace('/driver/dashboard');
+      return;
+    }
+    router.replace('/client/dashboard');
+  }, [router, user]);
 
   const handleRecoverSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -48,13 +90,15 @@ export default function CorporateLoginPage() {
   return (
     <FormLayout title="Corporate Sign In">
       <form onSubmit={handleLogin} className="space-y-6">
-        <Input id="email" label="Work Email Address" type="email" required />
-        <Input id="password" label="Password" type="password" required />
+        <Input id="email" label="Work Email Address" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input id="password" label="Password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+        {error && <p className="text-sm text-red-400">{error}</p>}
         <button
           type="submit"
+          disabled={loading}
           className="w-full px-8 py-3 text-lg font-semibold bg-amber-500 text-black rounded-md hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)]"
         >
-          Sign In
+          {loading ? 'Signing in...' : 'Sign In'}
         </button>
         <p className="text-center text-sm text-gray-400">
           Need a corporate account?{' '}

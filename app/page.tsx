@@ -49,14 +49,14 @@ export default function HomePage() {
           >
             Driver
           </Link>
-{/*
+
           <Link
             href="/corporate/login"
             className="w-full sm:w-48 px-8 py-3 text-lg font-semibold bg-white/10 border-2 border-white/50 text-white rounded-md hover:bg-white hover:text-black transition-all duration-300 transform hover:scale-105 text-center"
           >
             Corporate
           </Link>
-*/}
+
         </div>
       </div>
 

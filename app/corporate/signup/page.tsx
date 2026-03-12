@@ -26,6 +26,8 @@ export default function CorporateSignUpPage() {
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [journeyTypes, setJourneyTypes] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleFieldChange =
     (field: string) =>
@@ -39,15 +41,40 @@ export default function CorporateSignUpPage() {
 
   const goBack = () => setStep((prev) => Math.max(prev - 1, 1));
 
-  const handleSubmit = (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    setError(null);
     if (step < steps.length) {
       setStep((prev) => prev + 1);
       return;
     }
 
-    showAlert('Corporate account request submitted. The Velvet team will contact you shortly.');
-    router.push('/corporate/login');
+    if (formData.password !== formData.repeatPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/corporate/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...formData,
+          journeyTypes,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to submit corporate account request.');
+      }
+      showAlert(data?.message || 'Corporate account request submitted. The Velvet team will contact you shortly.');
+      router.push('/corporate/login');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to submit corporate account request.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const renderCompanyInfo = () => (
@@ -90,6 +117,22 @@ export default function CorporateSignUpPage() {
         required
         value={formData.contactPhone ?? ''}
         onChange={handleFieldChange('contactPhone')}
+      />
+      <Input
+        id="password"
+        label="Create Password"
+        type="password"
+        required
+        value={formData.password ?? ''}
+        onChange={handleFieldChange('password')}
+      />
+      <Input
+        id="repeatPassword"
+        label="Repeat Password"
+        type="password"
+        required
+        value={formData.repeatPassword ?? ''}
+        onChange={handleFieldChange('repeatPassword')}
       />
     </div>
   );
@@ -321,11 +364,17 @@ export default function CorporateSignUpPage() {
           )}
           <button
             type="submit"
+            disabled={loading}
             className="px-8 py-3 text-lg font-semibold bg-amber-500 text-black rounded-md hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)]"
           >
-            {step === steps.length ? 'Submit Corporate Account Request' : 'Continue'}
+            {loading
+              ? 'Submitting...'
+              : step === steps.length
+                ? 'Submit Corporate Account Request'
+                : 'Continue'}
           </button>
         </div>
+        {error && <p className="text-sm text-red-400">{error}</p>}
 
         {step === 1 && (
           <p className="text-center text-sm text-gray-400">

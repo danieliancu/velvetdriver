@@ -17,14 +17,23 @@ const Header = () => {
   const isLoggedIn = Boolean(user);
   const StatusIcon = isLoggedIn ? Lock : User;
   const statusLabel = isLoggedIn
-    ? user?.name || (user?.role === Role.DRIVER ? 'Driver' : user?.role === Role.ADMIN ? 'Administrator' : 'Client')
+    ? user?.name ||
+      (user?.role === Role.DRIVER
+        ? 'Driver'
+        : user?.role === Role.ADMIN
+          ? 'Administrator'
+          : user?.role === Role.CORPORATE
+            ? 'Corporate'
+            : 'Client')
     : 'Sign In';
   const href = isLoggedIn
     ? user?.role === Role.DRIVER
       ? '/driver/dashboard'
       : user?.role === Role.ADMIN
         ? '/admin/dashboard'
-        : '/client/dashboard'
+        : user?.role === Role.CORPORATE
+          ? '/corporate/dashboard'
+          : '/client/dashboard'
     : '/';
   const iconColor = isLoggedIn ? 'text-green-400' : 'text-amber-300';
 

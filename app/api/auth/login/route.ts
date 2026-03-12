@@ -29,6 +29,7 @@ export async function POST(request: Request) {
       driver_surname: string | null;
       corp_contact: string | null;
       corp_company: string | null;
+      corp_status: string | null;
     };
 
     const [rows] = await pool.query<UserRow[]>(
@@ -42,7 +43,8 @@ export async function POST(request: Request) {
               d.first_and_middle_name AS driver_first,
               d.surname AS driver_surname,
               corp.contact_name AS corp_contact,
-              corp.company_name AS corp_company
+              corp.company_name AS corp_company,
+              corp.status AS corp_status
        FROM users u
        JOIN roles r ON r.id = u.role_id
        LEFT JOIN clients c ON c.user_id = u.id
@@ -58,6 +60,26 @@ export async function POST(request: Request) {
     }
     if (user.role === 'driver' && user.status !== 'active') {
       return NextResponse.json({ error: 'Driver account not active.' }, { status: 403 });
+    }
+    if (user.role === 'corporate') {
+      if (user.status !== 'active') {
+        if (user.status === 'pending') {
+          return NextResponse.json(
+            { error: 'Corporate account pending approval. Please wait for confirmation.' },
+            { status: 403 }
+          );
+        }
+        return NextResponse.json({ error: 'Corporate account not active.' }, { status: 403 });
+      }
+      if (user.corp_status && user.corp_status !== 'active') {
+        if (user.corp_status === 'pending') {
+          return NextResponse.json(
+            { error: 'Corporate account pending approval. Please wait for confirmation.' },
+            { status: 403 }
+          );
+        }
+        return NextResponse.json({ error: 'Corporate account suspended.' }, { status: 403 });
+      }
     }
     if (expectedRole && user.role !== expectedRole) {
       return NextResponse.json(

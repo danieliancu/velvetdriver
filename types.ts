@@ -3,7 +3,8 @@ export enum Role {
   GUEST,
   CLIENT,
   DRIVER,
-  ADMIN
+  ADMIN,
+  CORPORATE
 }
 
 export interface User {

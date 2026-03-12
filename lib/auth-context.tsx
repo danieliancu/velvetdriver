@@ -27,7 +27,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = (role: Role, info?: Partial<User>) => {
     const fallbackName =
-      role === Role.ADMIN ? 'Administrator' : role === Role.DRIVER ? 'Driver' : 'Client';
+      role === Role.ADMIN
+        ? 'Administrator'
+        : role === Role.DRIVER
+          ? 'Driver'
+          : role === Role.CORPORATE
+            ? 'Corporate'
+            : 'Client';
     const fallbackEmail = info?.email || 'client@example.com';
     const payload: User = {
       id: info?.id,
