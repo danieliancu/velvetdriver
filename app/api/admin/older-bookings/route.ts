@@ -56,7 +56,7 @@ export async function GET() {
          LEFT JOIN users u ON cj.client_id = u.id
          LEFT JOIN admin_staff staff ON cj.booked_by_staff_id = staff.id
          LEFT JOIN pricing_vehicles pv ON pv.id = cj.vehicle_type_id
-        WHERE cj.status = 'Completed'
+        WHERE cj.status IN ('Completed', 'Cancelled')
         ORDER BY cj.journey_date DESC, cj.id DESC`
     );
 

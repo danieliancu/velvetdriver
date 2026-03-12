@@ -37,6 +37,8 @@ type LiveBooking = {
   updatedAt?: string | null;
   priceDetails: string;
   paymentMethod?: string;
+  isPaid?: boolean;
+  isRefundable?: boolean;
   bookedBy: string;
   bookedByStaffId?: number | null;
   drivers: string[];
@@ -66,6 +68,8 @@ type LiveBookingResponse = {
   updatedAt?: string | null;
   priceDetails: string;
   paymentMethod?: string;
+  isPaid?: boolean;
+  isRefundable?: boolean;
   bookedBy: string;
   bookedByStaffId?: number | null;
   vehicle?: string;
@@ -269,6 +273,8 @@ const AdminDashboardPage: React.FC = () => {
   const [vehicleLabelById, setVehicleLabelById] = useState<Record<number, string>>({});
   const [cancelAllocationBusy, setCancelAllocationBusy] = useState<Record<string, boolean>>({});
   const [completeAllocationBusy, setCompleteAllocationBusy] = useState<Record<string, boolean>>({});
+  const [refundBusy, setRefundBusy] = useState<Record<string, boolean>>({});
+  const [pendingRefundBooking, setPendingRefundBooking] = useState<LiveBooking | null>(null);
 
   const applyLiveBookingsResponse = useCallback((data: { bookings?: LiveBookingResponse[] }) => {
     const bookings: LiveBooking[] = (data.bookings || []).map((item: LiveBookingResponse) => ({
@@ -287,6 +293,8 @@ const AdminDashboardPage: React.FC = () => {
       updatedAt: item.updatedAt ?? null,
       priceDetails: item.priceDetails,
       paymentMethod: item.paymentMethod || '',
+      isPaid: Boolean(item.isPaid),
+      isRefundable: Boolean(item.isRefundable),
       bookedBy: item.bookedBy,
       bookedByStaffId: item.bookedByStaffId ?? null,
       vehicle: item.vehicle || 'Unknown',
@@ -805,6 +813,45 @@ const AdminDashboardPage: React.FC = () => {
     }
   };
 
+  const requestRefund = (booking: LiveBooking) => {
+    setPendingRefundBooking(booking);
+  };
+
+  const closeRefundModal = () => {
+    setPendingRefundBooking(null);
+  };
+
+  const confirmRefund = async () => {
+    if (!pendingRefundBooking?.journeyId) return;
+    const booking = pendingRefundBooking;
+    setRefundBusy((prev) => ({ ...prev, [booking.id]: true }));
+    try {
+      const res = await fetch('/api/admin/refund-booking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journeyId: booking.journeyId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to refund booking');
+      }
+      setLiveBookings((prev) => prev.filter((entry) => entry.id !== booking.id));
+      setAllocationSuccess(
+        data?.warning
+          ? `Refund completed. ${data.warning}`
+          : 'Refund completed and job removed from queue.'
+      );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event(LIVE_BOOKINGS_REFRESH_EVENT));
+      }
+      setPendingRefundBooking(null);
+    } catch (err: any) {
+      setAllocationWarning(err?.message || 'Failed to process refund.');
+    } finally {
+      setRefundBusy((prev) => ({ ...prev, [booking.id]: false }));
+    }
+  };
+
   const confirmCancelAllocation = async () => {
     if (!pendingCancelAllocation) return;
     await handleCancelAllocation(pendingCancelAllocation);
@@ -869,8 +916,18 @@ const AdminDashboardPage: React.FC = () => {
                       >
                         <div className="flex flex-col gap-6 lg:flex-column md:basis-1/2 md:min-w-[300px]">
                           <div className="flex-1 space-y-3">
-                            <p className="text-sm tracking-wide text-white flex items-center gap-3">
+                            <p className="text-sm tracking-wide text-white flex items-center gap-3 flex-wrap">
                               <span className="inline-flex h-6 items-center font-semibold">{booking.id}</span>
+                              {booking.isRefundable ? (
+                                <button
+                                  type="button"
+                                  onClick={() => requestRefund(booking)}
+                                  disabled={refundBusy[booking.id]}
+                                  className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {refundBusy[booking.id] ? 'Refunding...' : 'Refund'}
+                                </button>
+                              ) : null}
                               {bookingCreatedAt ? (
                                 <span className="inline-flex h-6 items-center rounded-full border border-white/25 px-3.5 text-xs font-normal text-gray-300">
                                   {bookingCreatedAt}
@@ -1202,6 +1259,16 @@ const AdminDashboardPage: React.FC = () => {
                             {booking.date} {booking.time}
                           </p>
                         </div>
+                        {booking.isRefundable ? (
+                          <button
+                            type="button"
+                            onClick={() => requestRefund(booking)}
+                            disabled={refundBusy[booking.id]}
+                            className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {refundBusy[booking.id] ? 'Refunding...' : 'Refund'}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => requestCancelAllocation(booking)}
@@ -1364,6 +1431,35 @@ const AdminDashboardPage: React.FC = () => {
                 className="rounded-full border border-red-400 bg-red-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-red-400"
               >
                 Yes, cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingRefundBooking && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-gray-900/90 p-6 shadow-2xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-300 mb-3">Refund booking</p>
+            <p className="text-lg text-white mb-2">Confirm full refund and cancellation for {pendingRefundBooking.id}?</p>
+            <p className="text-sm text-gray-300 mb-6">
+              The client will receive a refund email, the assigned driver will be notified, and the job will be removed from queue.
+            </p>
+            <div className="flex flex-wrap gap-3 justify-end">
+              <button
+                type="button"
+                onClick={closeRefundModal}
+                className="rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-gray-200 hover:border-white/40 transition"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={confirmRefund}
+                disabled={refundBusy[pendingRefundBooking.id]}
+                className="rounded-full border border-red-400 bg-red-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {refundBusy[pendingRefundBooking.id] ? 'Refunding...' : 'Yes, refund'}
               </button>
             </div>
           </div>
