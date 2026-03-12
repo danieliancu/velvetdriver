@@ -146,6 +146,8 @@ const ClientDashboardPage: React.FC = () => {
             onSelectSaved={(quoteId) => router.push(`/booking?saved=${quoteId}`)}
             onDeleteSaved={handleDeleteQuote}
             deletingSavedId={deletingQuoteId}
+            clientEmail={user?.email || ''}
+            onJourneyModified={loadHistory}
           />
         );
       case 'Complain':

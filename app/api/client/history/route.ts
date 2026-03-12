@@ -33,7 +33,9 @@ export async function GET(request: Request) {
               END AS plate_display,
               cj.status,
               cj.price,
-              cj.invoice_url
+              cj.invoice_url,
+              cj.booking_payload,
+              cj.updated_at
        FROM client_journeys cj
        INNER JOIN users u ON cj.client_id = u.id
        LEFT JOIN drivers d ON d.id = CAST(cj.driver_name AS UNSIGNED)
@@ -67,9 +69,25 @@ export async function GET(request: Request) {
         dateValue && !Number.isNaN(dateValue.getTime())
           ? dateValue.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
           : '-';
+      let payload: Record<string, any> = {};
+      if (row.booking_payload) {
+        try {
+          payload = typeof row.booking_payload === 'string' ? JSON.parse(row.booking_payload) : row.booking_payload;
+        } catch {
+          payload = {};
+        }
+      }
+      const modificationHistory = Array.isArray(payload?.modificationHistory) ? payload.modificationHistory : [];
+      const lastModifiedAtRaw = payload?.lastModifiedAt || (modificationHistory.length ? modificationHistory[modificationHistory.length - 1]?.timestamp : null);
+      const lastModifiedAt = lastModifiedAtRaw ? new Date(String(lastModifiedAtRaw)) : null;
+      const hasModifications = Boolean(lastModifiedAt && !Number.isNaN(lastModifiedAt.getTime()));
+      const diffMs = dateValue ? dateValue.getTime() - Date.now() : 0;
+      const canModify = row.status === 'Upcoming' && diffMs >= 6 * 60 * 60 * 1000;
+
       return {
         id: row.id,
         date: formattedDate,
+        journeyDateIso: dateValue && !Number.isNaN(dateValue.getTime()) ? dateValue.toISOString() : null,
         pickup: row.pickup,
         destination: row.destination,
         serviceType: row.service_type || 'Transfer',
@@ -77,7 +95,15 @@ export async function GET(request: Request) {
         car: row.car_display || '-',
         plate: row.plate_display || '-',
         status: row.status,
+        displayStatus: row.status === 'Upcoming' && hasModifications ? 'Modified' : null,
+        modifiedAt: hasModifications ? lastModifiedAt!.toISOString() : null,
+        canModify,
         price: Number(row.price),
+        flightNumber: String(payload?.flightNumber || '').trim(),
+        passengers: Math.max(0, Number(payload?.passengers) || 0),
+        specialRequests: [String(payload?.specialEvents || '').trim(), String(payload?.notes || '').trim()]
+          .filter(Boolean)
+          .join(' | '),
         invoiceUrl: row.invoice_url,
       };
     });

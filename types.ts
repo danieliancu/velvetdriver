@@ -18,6 +18,7 @@ export interface User {
 export interface Journey {
   id: number | string;
   date: string;
+  journeyDateIso?: string | null;
   pickup: string;
   destination: string;
   serviceType: 'Transfer' | 'Wait and Return' | 'As Directed';
@@ -25,7 +26,13 @@ export interface Journey {
   car: string;
   plate: string;
   status: 'Completed' | 'Upcoming' | 'Cancelled' | 'Saved';
+  displayStatus?: 'Modified' | null;
+  modifiedAt?: string | null;
+  canModify?: boolean;
   price: number;
+  flightNumber?: string;
+  passengers?: number;
+  specialRequests?: string;
   invoiceUrl?: string | null;
 }
 

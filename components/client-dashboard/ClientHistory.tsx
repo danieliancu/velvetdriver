@@ -2,14 +2,26 @@
 
 import React, { useMemo, useState } from 'react';
 import type { Journey, SavedQuote } from '@/types';
+import Modal from '@/components/Modal';
 
-const StatusBadge: React.FC<{ status: Journey['status'] }> = ({ status }) => {
+type RenderStatus = Journey['status'] | 'Modified';
+
+type PricePreview = {
+  oldPrice: number;
+  newPrice: number;
+  difference: number;
+  payNowAmount: number;
+  creditAmount: number;
+};
+
+const StatusBadge: React.FC<{ status: RenderStatus }> = ({ status }) => {
   const baseClasses = 'px-2 py-1 text-xs font-semibold rounded-full';
-  const statusClasses = {
+  const statusClasses: Record<RenderStatus, string> = {
     Completed: 'bg-green-500/20 text-green-300',
     Upcoming: 'bg-yellow-500/20 text-yellow-300',
     Cancelled: 'bg-red-500/20 text-red-300',
     Saved: 'bg-blue-500/20 text-blue-300',
+    Modified: 'bg-amber-500/20 text-amber-200 border border-amber-500/40',
   };
   return <span className={`${baseClasses} ${statusClasses[status]}`}>{status}</span>;
 };
@@ -24,7 +36,22 @@ interface Props {
   onSelectSaved?: (quoteId: SavedQuote['id']) => void;
   onDeleteSaved?: (quoteId: SavedQuote['id']) => void;
   deletingSavedId?: SavedQuote['id'] | null;
+  clientEmail?: string;
+  onJourneyModified?: () => Promise<void> | void;
 }
+
+const toDateTimeInputs = (iso?: string | null) => {
+  const parsed = iso ? new Date(iso) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    return { date: '', time: '' };
+  }
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  const hours = String(parsed.getHours()).padStart(2, '0');
+  const minutes = String(parsed.getMinutes()).padStart(2, '0');
+  return { date: `${year}-${month}-${day}`, time: `${hours}:${minutes}` };
+};
 
 const ClientHistory: React.FC<Props> = ({
   journeys = [],
@@ -34,9 +61,24 @@ const ClientHistory: React.FC<Props> = ({
   onSelectSaved,
   onDeleteSaved,
   deletingSavedId = null,
+  clientEmail,
+  onJourneyModified,
 }) => {
   const [filter, setFilter] = useState<FilterStatus>('Upcoming');
   const [query, setQuery] = useState('');
+  const [selectedJourney, setSelectedJourney] = useState<Journey | null>(null);
+  const [pickup, setPickup] = useState('');
+  const [dropOff, setDropOff] = useState('');
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
+  const [flightNumber, setFlightNumber] = useState('');
+  const [passengers, setPassengers] = useState('1');
+  const [specialRequests, setSpecialRequests] = useState('');
+  const [preview, setPreview] = useState<PricePreview | null>(null);
+  const [recalcLoading, setRecalcLoading] = useState(false);
+  const [recalcError, setRecalcError] = useState<string | null>(null);
+  const [submitLoading, setSubmitLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const filteredJourneys = useMemo(() => {
     return journeys.filter((journey) => {
@@ -50,6 +92,114 @@ const ClientHistory: React.FC<Props> = ({
       return matchesStatus && matchesQuery;
     });
   }, [journeys, filter, query]);
+
+  const canPreview = Boolean(selectedJourney && clientEmail && pickup && dropOff && date && time);
+
+  const fetchPreview = React.useCallback(async () => {
+    if (!selectedJourney || !clientEmail || !pickup || !dropOff || !date || !time) return;
+    setRecalcLoading(true);
+    setRecalcError(null);
+    try {
+      const response = await fetch('/api/client/bookings/modify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'preview',
+          email: clientEmail,
+          journeyId: selectedJourney.id,
+          pickup,
+          dropOff,
+          date,
+          time,
+          flightNumber,
+          passengers,
+          specialRequests,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || 'Unable to recalculate fare.');
+      }
+      setPreview({
+        oldPrice: Number(data.oldPrice || 0),
+        newPrice: Number(data.newPrice || 0),
+        difference: Number(data.difference || 0),
+        payNowAmount: Number(data.payNowAmount || 0),
+        creditAmount: Number(data.creditAmount || 0),
+      });
+    } catch (err: any) {
+      setPreview(null);
+      setRecalcError(err?.message || 'Unable to recalculate fare.');
+    } finally {
+      setRecalcLoading(false);
+    }
+  }, [selectedJourney, clientEmail, pickup, dropOff, date, time, flightNumber, passengers, specialRequests]);
+
+  React.useEffect(() => {
+    if (!canPreview) return;
+    const timer = window.setTimeout(() => {
+      fetchPreview();
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [canPreview, fetchPreview]);
+
+  const openModifyModal = (journey: Journey) => {
+    const dt = toDateTimeInputs(journey.journeyDateIso);
+    setSelectedJourney(journey);
+    setPickup(journey.pickup || '');
+    setDropOff(journey.destination || '');
+    setDate(dt.date);
+    setTime(dt.time);
+    setFlightNumber(journey.flightNumber || '');
+    setPassengers(String(journey.passengers || 1));
+    setSpecialRequests(journey.specialRequests || '');
+    setPreview(null);
+    setRecalcError(null);
+    setSuccessMessage(null);
+  };
+
+  const closeModifyModal = () => {
+    setSelectedJourney(null);
+    setPreview(null);
+    setRecalcError(null);
+    setSubmitLoading(false);
+    setSuccessMessage(null);
+  };
+
+  const handleConfirmChanges = async () => {
+    if (!selectedJourney || !clientEmail) return;
+    setSubmitLoading(true);
+    setRecalcError(null);
+    setSuccessMessage(null);
+    try {
+      const response = await fetch('/api/client/bookings/modify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'confirm',
+          email: clientEmail,
+          journeyId: selectedJourney.id,
+          pickup,
+          dropOff,
+          date,
+          time,
+          flightNumber,
+          passengers,
+          specialRequests,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || 'Unable to update booking.');
+      }
+      setSuccessMessage('Your booking has been successfully updated. Your chauffeur will be informed accordingly.');
+      await onJourneyModified?.();
+    } catch (err: any) {
+      setRecalcError(err?.message || 'Unable to update booking.');
+    } finally {
+      setSubmitLoading(false);
+    }
+  };
 
   const FilterButton: React.FC<{ status: FilterStatus }> = ({ status }) => (
     <button
@@ -81,16 +231,16 @@ const ClientHistory: React.FC<Props> = ({
       <div className="space-y-3">
         {savedQuotes.map((quote) => {
           const payload = quote.payload || {};
-          const pickup = payload.pickup || 'Pickup TBD';
+          const pickupSaved = payload.pickup || 'Pickup TBD';
           const dropOffs: string[] = Array.isArray(payload.dropOffs) ? payload.dropOffs.filter(Boolean) : payload.dropOff ? [payload.dropOff] : [];
           const primaryDrop = dropOffs[dropOffs.length - 1] || 'Drop-off TBD';
           const intermediateStops = dropOffs.slice(0, -1);
           const iso = payload.date && payload.time ? `${payload.date}T${payload.time}` : payload.date;
           let formatted: string | null = null;
           if (iso) {
-            const date = new Date(iso);
-            if (!Number.isNaN(date.getTime())) {
-              formatted = date.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const dateSaved = new Date(iso);
+            if (!Number.isNaN(dateSaved.getTime())) {
+              formatted = dateSaved.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
             }
           } else if (quote.createdAt) {
             const created = new Date(quote.createdAt);
@@ -115,7 +265,7 @@ const ClientHistory: React.FC<Props> = ({
             <div key={quote.id} className="rounded-2xl border border-amber-900/40 bg-gray-900/40 px-4 py-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-base font-semibold text-amber-200">{quote.label || `${pickup} -> ${primaryDrop}`}</p>
+                  <p className="text-base font-semibold text-amber-200">{quote.label || `${pickupSaved} -> ${primaryDrop}`}</p>
                   {formatted ? <p className="text-xs text-gray-400">{formatted}</p> : null}
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -138,7 +288,7 @@ const ClientHistory: React.FC<Props> = ({
                 </div>
               </div>
               <div className="text-sm text-gray-300">
-                {pickup} <span className="text-gray-500">-&gt;</span> {primaryDrop}
+                {pickupSaved} <span className="text-gray-500">-&gt;</span> {primaryDrop}
                 {intermediateStops.length > 0 ? (
                   <div className="mt-1 text-xs text-gray-400">
                     {intermediateStops.map((stop, idx) => (
@@ -171,6 +321,8 @@ const ClientHistory: React.FC<Props> = ({
       </div>
     );
   };
+
+  const selectedJourneyCanModify = selectedJourney?.canModify !== false;
 
   return (
     <div>
@@ -218,17 +370,20 @@ const ClientHistory: React.FC<Props> = ({
                 <th className="p-4">Status</th>
                 <th className="p-4 text-right">Price</th>
                 <th className="p-4">Invoice</th>
+                <th className="p-4">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={11} className="text-center p-8 text-gray-400">
+                  <td colSpan={12} className="text-center p-8 text-gray-400">
                     Loading journeys...
                   </td>
                 </tr>
               ) : filteredJourneys.length > 0 ? (
-                filteredJourneys.map((journey, index) => (
+                filteredJourneys.map((journey, index) => {
+                  const statusLabel: RenderStatus = journey.displayStatus === 'Modified' ? 'Modified' : journey.status;
+                  return (
                   <tr key={journey.id} className={`border-t border-gray-800 ${index % 2 === 0 ? 'bg-black/20' : ''}`}>
                     <td className="p-4 align-top font-semibold text-amber-200">VD_{journey.id}</td>
                     <td className="p-4 align-top">{journey.date}</td>
@@ -243,9 +398,19 @@ const ClientHistory: React.FC<Props> = ({
                     <td className="p-4 align-top">{journey.car}</td>
                     <td className="p-4 align-top">{journey.plate}</td>
                     <td className="p-4 align-top">
-                      <StatusBadge status={journey.status} />
+                      <StatusBadge status={statusLabel} />
+                      {journey.modifiedAt ? (
+                        <p className="mt-1 text-[10px] text-gray-500">
+                          {new Date(journey.modifiedAt).toLocaleString('en-GB', {
+                            day: '2-digit',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </p>
+                      ) : null}
                     </td>
-                    <td className="p-4 align-top text-right font-semibold">£{journey.price.toFixed(2)}</td>
+                    <td className="p-4 align-top text-right font-semibold">GBP {journey.price.toFixed(2)}</td>
                     <td className="p-4 align-top">
                       {journey.invoiceUrl ? (
                         <a
@@ -260,11 +425,25 @@ const ClientHistory: React.FC<Props> = ({
                         <span className="text-xs text-gray-500">Not available</span>
                       )}
                     </td>
+                    <td className="p-4 align-top">
+                      {journey.status === 'Upcoming' ? (
+                        <button
+                          type="button"
+                          onClick={() => openModifyModal(journey)}
+                          className="px-3 py-1 text-xs font-semibold rounded-md border border-amber-400/60 text-amber-200 hover:bg-amber-400/10 transition-colors"
+                        >
+                          Modify Booking
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-500">-</span>
+                      )}
+                    </td>
                   </tr>
-                ))
+                );
+              })
               ) : (
                 <tr>
-                  <td colSpan={11} className="text-center p-8 text-gray-400">
+                  <td colSpan={12} className="text-center p-8 text-gray-400">
                     No {filter.toLowerCase()} journeys found.
                   </td>
                 </tr>
@@ -274,6 +453,146 @@ const ClientHistory: React.FC<Props> = ({
         </div>
       </div>
       )}
+
+      <Modal
+        isOpen={Boolean(selectedJourney)}
+        onClose={closeModifyModal}
+        title="Modify Booking"
+      >
+        <div className="space-y-5">
+          <div className="rounded-xl border border-amber-900/40 bg-black/30 p-4 text-sm text-amber-100/90 space-y-1">
+            <p>Changes are complimentary up to 6 hours before pickup.</p>
+            <p>Within 6 hours, please contact our team directly.</p>
+          </div>
+
+          <div className="rounded-xl border border-gray-700/70 bg-black/20 p-4 text-sm text-gray-300 space-y-1">
+            <p className="text-amber-200 font-semibold">What you can modify</p>
+            <p>Pickup time</p>
+            <p>Pickup address</p>
+            <p>Drop-off address</p>
+            <p>Flight number</p>
+            <p>Passenger count</p>
+            <p>Special requests</p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="text-xs uppercase tracking-wide text-amber-200/70">
+              Pickup address
+              <input
+                value={pickup}
+                onChange={(e) => setPickup(e.target.value)}
+                disabled={!selectedJourneyCanModify || submitLoading}
+                className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs uppercase tracking-wide text-amber-200/70">
+              Drop-off address
+              <input
+                value={dropOff}
+                onChange={(e) => setDropOff(e.target.value)}
+                disabled={!selectedJourneyCanModify || submitLoading}
+                className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs uppercase tracking-wide text-amber-200/70">
+              Pickup date
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                disabled={!selectedJourneyCanModify || submitLoading}
+                className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs uppercase tracking-wide text-amber-200/70">
+              Pickup time
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                disabled={!selectedJourneyCanModify || submitLoading}
+                className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs uppercase tracking-wide text-amber-200/70">
+              Flight number
+              <input
+                value={flightNumber}
+                onChange={(e) => setFlightNumber(e.target.value.toUpperCase())}
+                disabled={!selectedJourneyCanModify || submitLoading}
+                className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs uppercase tracking-wide text-amber-200/70">
+              Passenger count
+              <input
+                type="number"
+                min={1}
+                max={9}
+                value={passengers}
+                onChange={(e) => setPassengers(e.target.value)}
+                disabled={!selectedJourneyCanModify || submitLoading}
+                className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </label>
+          </div>
+
+          <label className="block text-xs uppercase tracking-wide text-amber-200/70">
+            Special requests
+            <textarea
+              rows={3}
+              value={specialRequests}
+              onChange={(e) => setSpecialRequests(e.target.value)}
+              disabled={!selectedJourneyCanModify || submitLoading}
+              className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+            />
+          </label>
+
+          {recalcLoading ? <p className="text-xs text-gray-400">Recalculating fare...</p> : null}
+          {preview ? (
+            <div className="rounded-xl border border-gray-700/70 bg-black/30 p-4 text-sm text-gray-300 space-y-1">
+              <p>Current fare: GBP {preview.oldPrice.toFixed(2)}</p>
+              <p>Updated fare: GBP {preview.newPrice.toFixed(2)}</p>
+              {preview.difference > 0 ? (
+                <p className="text-amber-200 font-semibold">Pay GBP {preview.payNowAmount.toFixed(2)} to confirm changes.</p>
+              ) : preview.difference < 0 ? (
+                <p className="text-green-300">Credit will be applied to your next booking.</p>
+              ) : (
+                <p className="text-gray-300">No price change.</p>
+              )}
+            </div>
+          ) : null}
+
+          {!selectedJourneyCanModify ? (
+            <p className="text-sm text-amber-200">Within 6 hours, please contact our team directly to amend this journey.</p>
+          ) : null}
+
+          {recalcError ? <p className="text-sm text-red-300">{recalcError}</p> : null}
+          {successMessage ? <p className="text-sm text-green-300">{successMessage}</p> : null}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={closeModifyModal}
+              className="px-4 py-2 text-sm rounded-md border border-gray-600 text-gray-300 hover:bg-gray-800/50 transition-colors"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmChanges}
+              disabled={!selectedJourneyCanModify || submitLoading || !canPreview}
+              className="px-4 py-2 text-sm rounded-md bg-amber-500 text-black font-semibold hover:bg-amber-400 transition-colors disabled:opacity-50"
+            >
+              {submitLoading
+                ? 'Updating...'
+                : preview && preview.difference > 0
+                  ? `Pay GBP ${preview.payNowAmount.toFixed(2)} to confirm changes`
+                  : 'Confirm changes'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };
