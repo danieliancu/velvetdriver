@@ -82,7 +82,7 @@ const openWhatsAppBookingNotification = (payload: {
         `Pickup: ${payload.pickup}`,
         `Drop-off: ${payload.destination}`,
         `Amount paid: GBP ${payload.totalFare.toFixed(2)}`,
-    ].join('\\n');
+    ].join('\n');
 
     const params = new URLSearchParams();
     params.set('text', text);
