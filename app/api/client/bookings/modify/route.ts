@@ -21,6 +21,8 @@ type JourneyRow = mysql.RowDataPacket & {
   passenger_email: string | null;
   passenger_name: string | null;
   driver_name: string | null;
+  driver_commission_applied: number | string | null;
+  driver_price: number | string | null;
 };
 
 type PricingVehicle = {
@@ -76,6 +78,15 @@ const formatDateTime = (value: string) => {
     date: date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }),
     time: date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
   };
+};
+
+const getDriverNetAmount = (fare: number, commissionApplied?: number | string | null, existingDriverPrice?: number | string | null) => {
+  const commission = Number(commissionApplied);
+  if (Number.isFinite(commission) && commission >= 0) {
+    return Math.round(fare * (1 - commission / 100) * 100) / 100;
+  }
+  const fallback = Number(existingDriverPrice);
+  return Number.isFinite(fallback) ? fallback : fare;
 };
 
 async function sendEmail(input: {
@@ -141,6 +152,9 @@ async function sendModificationEmails(input: {
   passengerName: string;
   oldPrice: number;
   newPrice: number;
+  oldDriverPrice: number;
+  newDriverPrice: number;
+  driverCommissionApplied: number | null;
   difference: number;
   previousState: {
     journeyDate: string;
@@ -175,6 +189,12 @@ async function sendModificationEmails(input: {
       : input.difference < 0
         ? `Credit due GBP ${Math.abs(input.difference).toFixed(2)}`
         : 'No fare change';
+  const driverChangeLine =
+    input.newDriverPrice > input.oldDriverPrice
+      ? `Your amount increased by GBP ${(input.newDriverPrice - input.oldDriverPrice).toFixed(2)}`
+      : input.newDriverPrice < input.oldDriverPrice
+        ? `Your amount decreased by GBP ${(input.oldDriverPrice - input.newDriverPrice).toFixed(2)}`
+        : 'No payable change';
 
   const summaryRows = `
     <tr><td style="padding:6px 0;font-weight:700;">Reference</td><td style="padding:6px 0;">${escapeHtml(bookingCode)}</td></tr>
@@ -236,7 +256,13 @@ async function sendModificationEmails(input: {
   <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:24px;">
     <h2 style="margin:0 0 16px;">Assigned booking updated</h2>
     <p style="margin:0 0 16px;">Hello ${escapeHtml(assignedDriver.name)}, booking ${escapeHtml(bookingCode)} assigned to you was modified by the client.</p>
-    <table role="presentation" style="width:100%;border-collapse:collapse;">${summaryRows}</table>
+    <table role="presentation" style="width:100%;border-collapse:collapse;">
+      ${summaryRows}
+      <tr><td style="padding:6px 0;font-weight:700;">Commission applied</td><td style="padding:6px 0;">${input.driverCommissionApplied != null ? `${input.driverCommissionApplied.toFixed(2)}%` : '-'}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:700;">Old your amount</td><td style="padding:6px 0;">GBP ${input.oldDriverPrice.toFixed(2)}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:700;">New your amount</td><td style="padding:6px 0;">GBP ${input.newDriverPrice.toFixed(2)}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:700;">Your change</td><td style="padding:6px 0;">${escapeHtml(driverChangeLine)}</td></tr>
+    </table>
   </div>
 </body>
 </html>`;
@@ -246,7 +272,10 @@ async function sendModificationEmails(input: {
       `New pickup: ${input.nextState.pickup}`,
       `New destination: ${input.nextState.destination}`,
       `New date/time: ${after.date} ${after.time}`,
-      `Change: ${changeLine}`,
+      `Commission applied: ${input.driverCommissionApplied != null ? `${input.driverCommissionApplied.toFixed(2)}%` : '-'}`,
+      `Old your amount: GBP ${input.oldDriverPrice.toFixed(2)}`,
+      `New your amount: GBP ${input.newDriverPrice.toFixed(2)}`,
+      `Your change: ${driverChangeLine}`,
     ].join('\n');
 
     try {
@@ -435,7 +464,7 @@ export async function POST(request: Request) {
     }
 
     const [rows] = await pool.query<JourneyRow[]>(
-      `SELECT id, client_id, journey_date, pickup, destination, service_type, vehicle_type_id, price, status, booking_payload, passenger_email, passenger_name, driver_name
+      `SELECT id, client_id, journey_date, pickup, destination, service_type, vehicle_type_id, price, status, booking_payload, passenger_email, passenger_name, driver_name, driver_commission_applied, driver_price
        FROM client_journeys
        WHERE id = ? AND client_id = ?
        LIMIT 1`,
@@ -511,6 +540,9 @@ export async function POST(request: Request) {
 
     const oldPrice = Number(journey.price || 0);
     const newPrice = Math.round(recalculatedFare * 100) / 100;
+    const commissionAppliedRaw = journey.driver_commission_applied != null ? Number(journey.driver_commission_applied) : null;
+    const oldDriverPrice = getDriverNetAmount(oldPrice, commissionAppliedRaw, journey.driver_price);
+    const newDriverPrice = getDriverNetAmount(newPrice, commissionAppliedRaw, journey.driver_price);
     const difference = Math.round((newPrice - oldPrice) * 100) / 100;
 
     if (action !== 'confirm') {
@@ -601,7 +633,7 @@ export async function POST(request: Request) {
 
     await pool.execute(
       `UPDATE client_journeys
-       SET journey_date = ?, pickup = ?, destination = ?, price = ?, booking_payload = ?, updated_at = NOW()
+       SET journey_date = ?, pickup = ?, destination = ?, price = ?, driver_price = ?, booking_payload = ?, updated_at = NOW()
        WHERE id = ? AND client_id = ?
        LIMIT 1`,
       [
@@ -609,6 +641,7 @@ export async function POST(request: Request) {
         pickup,
         buildDestination(dropOff),
         newPrice,
+        newDriverPrice,
         JSON.stringify(updatedPayload),
         journeyId,
         clientId,
@@ -645,6 +678,9 @@ export async function POST(request: Request) {
       passengerName: String(journey.passenger_name || payload.passengerName || 'Client').trim(),
       oldPrice,
       newPrice,
+      oldDriverPrice,
+      newDriverPrice,
+      driverCommissionApplied: commissionAppliedRaw,
       difference,
       previousState,
       nextState: {
