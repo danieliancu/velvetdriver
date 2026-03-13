@@ -4,7 +4,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PlusCircle, XCircle } from 'lucide-react';
-import { Elements, PaymentElement, PaymentRequestButtonElement, useElements, useStripe } from '@stripe/react-stripe-js';
+import { Elements } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
 import PageShell from '@/components/PageShell';
 import BookingInput from '@/components/BookingInput';
@@ -13,6 +13,7 @@ import BookingTextArea from '@/components/BookingTextArea';
 import Modal from '@/components/Modal';
 import { useAlert } from '@/components/AlertProvider';
 import { useAuth } from '@/lib/auth-context';
+import StripePaymentForm from '@/components/payments/StripePaymentForm';
 import {
     AIRPORTS,
     buildDefaultAirportSurcharges,
@@ -160,6 +161,7 @@ const BookingPageInner = () => {
     const [paymentOption, setPaymentOption] = useState<'pay_now' | 'pay_driver' | 'invoice'>('pay_now');
     const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
     const [clientJourneyCount, setClientJourneyCount] = useState<number | null>(null);
+    const [clientCreditBalance, setClientCreditBalance] = useState(0);
     const [discountCodeInput, setDiscountCodeInput] = useState('');
     const [discountData, setDiscountData] = useState<{
         code: string;
@@ -491,6 +493,7 @@ const BookingPageInner = () => {
     useEffect(() => {
         if (!user?.email) {
             setClientJourneyCount(null);
+            setClientCreditBalance(0);
             return;
         }
         let cancelled = false;
@@ -503,6 +506,26 @@ const BookingPageInner = () => {
             })
             .catch(() => {
                 if (!cancelled) setClientJourneyCount(0);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [user?.email]);
+
+    useEffect(() => {
+        if (!user?.email) {
+            setClientCreditBalance(0);
+            return;
+        }
+        let cancelled = false;
+        fetch(`/api/client/credit?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' })
+            .then(async (res) => {
+                if (!res.ok) throw new Error('credit');
+                const data = await res.json();
+                if (!cancelled) setClientCreditBalance(Number(data?.balance ?? 0) || 0);
+            })
+            .catch(() => {
+                if (!cancelled) setClientCreditBalance(0);
             });
         return () => {
             cancelled = true;
@@ -1238,6 +1261,8 @@ const BookingPageInner = () => {
         return Math.round(capped * 100) / 100;
     }, [discountData, baseTotalFare]);
     const totalFareFinal = Math.max(0, Math.round((baseTotalFare - discountAmount) * 100) / 100);
+    const appliedCreditAmount = user?.email ? Math.min(totalFareFinal, clientCreditBalance) : 0;
+    const amountDueNow = Math.max(0, Math.round((totalFareFinal - appliedCreditAmount) * 100) / 100);
     const minimumFareForVehicle = Number(selectedVehicle?.minPrice ?? 0);
 
     const zoneIds = legBreakdown
@@ -1469,6 +1494,10 @@ const BookingPageInner = () => {
             showAlert('Unable to calculate fare for checkout.');
             return;
         }
+        if (amountDueNow <= 0) {
+            await finalizeBookingUsingCredit();
+            return;
+        }
         setCheckoutActive(true);
         setStripeClientSecret(null);
         setStripePublishableKey(null);
@@ -1477,7 +1506,7 @@ const BookingPageInner = () => {
     };
 
     const createPaymentIntent = async () => {
-        if (!pendingBookingPayload?.totalFare || paymentIntentLoading || stripeClientSecret) return;
+        if (!pendingBookingPayload?.totalFare || paymentIntentLoading || stripeClientSecret || amountDueNow <= 0) return;
         setPaymentIntentLoading(true);
         setPaymentError(null);
         try {
@@ -1485,7 +1514,7 @@ const BookingPageInner = () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    amount: Number(totalFareFinal),
+                    amount: Number(amountDueNow),
                     currency: 'gbp',
                     passengerName: pendingBookingPayload.passengerName,
                     passengerEmail: pendingBookingPayload.passengerEmail,
@@ -1530,8 +1559,9 @@ const BookingPageInner = () => {
                     paymentIntentId: paymentIntent.id,
                     paymentStatus: paymentIntent.status,
                     paymentMethod: 'Card',
-                    paymentAmount: Number(totalFareFinal),
+                    paymentAmount: Number(amountDueNow),
                     paymentCurrency: 'GBP',
+                    appliedCreditAmount: Number(appliedCreditAmount),
                 }),
             });
             if (!response.ok) {
@@ -1555,7 +1585,7 @@ const BookingPageInner = () => {
                 passengerPhone: pendingBookingPayload?.passengerPhone || '',
                 pickup: pendingBookingPayload?.pickup || '',
                 destination: destinationText,
-                totalFare: Number(totalFareFinal),
+                totalFare: Number(amountDueNow || totalFareFinal),
             });
             setShowVerificationModal(false);
             setCheckoutActive(false);
@@ -1595,8 +1625,9 @@ const BookingPageInner = () => {
                     paymentIntentId: null,
                     paymentStatus: 'pending',
                     paymentMethod: method,
-                    paymentAmount: Number(totalFareFinal),
+                    paymentAmount: Number(amountDueNow),
                     paymentCurrency: 'GBP',
+                    appliedCreditAmount: Number(appliedCreditAmount),
                 }),
             });
             if (!response.ok) {
@@ -1606,6 +1637,48 @@ const BookingPageInner = () => {
             setShowVerificationModal(false);
             setCheckoutActive(false);
             showAlert('Booking request sent. Payment will be arranged separately.');
+            router.push(user ? '/client/dashboard' : '/');
+        } catch (err: any) {
+            showAlert(err?.message || 'Failed to submit booking.');
+        } finally {
+            setBookingSubmitting(false);
+        }
+    };
+
+    const finalizeBookingUsingCredit = async () => {
+        setBookingSubmitting(true);
+        try {
+            const response = await fetch('/api/booking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...pendingBookingPayload,
+                    totalFare: totalFareFinal,
+                    originalTotalFare: baseTotalFare,
+                    discount: discountData
+                        ? {
+                            code: discountData.code,
+                            name: discountData.name,
+                            type: discountData.type,
+                            amount: discountData.amount,
+                            appliedAmount: discountAmount,
+                        }
+                        : null,
+                    paymentIntentId: null,
+                    paymentStatus: 'succeeded',
+                    paymentMethod: 'Credit',
+                    paymentAmount: 0,
+                    paymentCurrency: 'GBP',
+                    appliedCreditAmount: Number(appliedCreditAmount),
+                }),
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data?.error || 'Failed to submit booking');
+            }
+            setShowVerificationModal(false);
+            setCheckoutActive(false);
+            showAlert('Booking confirmed using your available credit.');
             router.push(user ? '/client/dashboard' : '/');
         } catch (err: any) {
             showAlert(err?.message || 'Failed to submit booking.');
@@ -1628,7 +1701,7 @@ const BookingPageInner = () => {
         if (!checkoutActive) return;
         if (paymentOption !== 'pay_now') return;
         createPaymentIntent();
-    }, [checkoutActive, paymentOption, stripeClientSecret, totalFareFinal]);
+    }, [checkoutActive, paymentOption, stripeClientSecret, amountDueNow]);
 
     useEffect(() => {
         if (!checkoutActive || paymentOption !== 'pay_now') return;
@@ -2038,6 +2111,18 @@ const BookingPageInner = () => {
                                             <span className="text-gray-400">Total fare:</span>
                                             <span className="font-semibold text-amber-100">GBP{totalFareFinal.toFixed(2)}</span>
                                         </div>
+                                        {appliedCreditAmount > 0 ? (
+                                            <div className="flex flex-col items-start gap-1">
+                                                <span className="text-gray-400">Credit applied:</span>
+                                                <span className="font-semibold text-green-300">-GBP{appliedCreditAmount.toFixed(2)}</span>
+                                            </div>
+                                        ) : null}
+                                        {user?.email ? (
+                                            <div className="flex flex-col items-start gap-1">
+                                                <span className="text-gray-400">Amount due now:</span>
+                                                <span className="font-semibold text-amber-100">GBP{amountDueNow.toFixed(2)}</span>
+                                            </div>
+                                        ) : null}
                                         {extrasForDisplay.length ? (
                                             <div className="pt-3 border-t border-amber-900/30 space-y-2">
                                                 <p className="text-xs uppercase tracking-wider text-amber-300/80">Extras applied</p>
@@ -2114,6 +2199,10 @@ const BookingPageInner = () => {
                                 {user && (
                                     <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
                                         <p className="text-sm text-gray-300">Choose payment method</p>
+                                        <p className="text-xs text-gray-400">
+                                            Available credit: GBP{clientCreditBalance.toFixed(2)}
+                                            {appliedCreditAmount > 0 ? ` | Applying GBP${appliedCreditAmount.toFixed(2)} to this booking` : ''}
+                                        </p>
                                         {firstFivePrepayRequired ? (
                                             <p className="text-xs text-amber-300">
                                                 Registered clients can use only advance card payment for the first 5 journeys.
@@ -2144,7 +2233,21 @@ const BookingPageInner = () => {
                                     </div>
                                 )}
                                 {paymentOption === 'pay_now' ? (
-                                    stripePromise && stripeClientSecret ? (
+                                    amountDueNow <= 0 ? (
+                                        <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
+                                            <p className="text-sm text-gray-300">
+                                                This booking is fully covered by your account credit.
+                                            </p>
+                                            <button
+                                                type="button"
+                                                disabled={bookingSubmitting}
+                                                onClick={finalizeBookingUsingCredit}
+                                                className="w-full px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 disabled:opacity-60"
+                                            >
+                                                {bookingSubmitting ? 'Submitting...' : 'Confirm booking using credit'}
+                                            </button>
+                                        </div>
+                                    ) : stripePromise && stripeClientSecret ? (
                                         <Elements
                                             stripe={stripePromise}
                                             options={{
@@ -2152,8 +2255,8 @@ const BookingPageInner = () => {
                                                 appearance: { theme: 'stripe' },
                                             }}
                                         >
-                                            <PaymentForm
-                                                amount={Number(totalFareFinal ?? 0)}
+                                            <StripePaymentForm
+                                                amount={Number(amountDueNow ?? 0)}
                                                 clientSecret={stripeClientSecret}
                                                 onSuccess={finalizeBooking}
                                                 onError={setPaymentError}
@@ -2187,129 +2290,6 @@ const BookingPageInner = () => {
                     </div>
                 </Modal>
         </PageShell>
-    );
-};
-
-type PaymentFormProps = {
-    amount: number;
-    clientSecret: string;
-    disabled: boolean;
-    onSuccess: (paymentIntent: { id: string; status: string }) => void;
-    onError: (message: string) => void;
-};
-
-const PaymentForm = ({ amount, clientSecret, disabled, onSuccess, onError }: PaymentFormProps) => {
-    const stripe = useStripe();
-    const elements = useElements();
-    const [submitting, setSubmitting] = useState(false);
-    const [paymentRequest, setPaymentRequest] = useState<any>(null);
-
-    const handleSubmit = async (event: FormEvent) => {
-        event.preventDefault();
-        if (!stripe || !elements) return;
-        setSubmitting(true);
-        onError('');
-        try {
-            const { error, paymentIntent } = await stripe.confirmPayment({
-                elements,
-                redirect: 'if_required',
-                confirmParams: {
-                    return_url: window.location.href,
-                },
-            });
-
-            if (error) {
-                onError(error.message || 'Payment failed.');
-                return;
-            }
-
-            if (!paymentIntent || paymentIntent.status !== 'succeeded') {
-                onError('Payment not completed. Please try again.');
-                return;
-            }
-
-            onSuccess({ id: paymentIntent.id, status: paymentIntent.status });
-        } finally {
-            setSubmitting(false);
-        }
-    };
-
-    useEffect(() => {
-        if (!stripe || !clientSecret) return;
-        const pr = stripe.paymentRequest({
-            country: 'GB',
-            currency: 'gbp',
-            total: {
-                label: 'Velvet Drivers',
-                amount: Math.round(amount * 100),
-            },
-            requestPayerName: true,
-            requestPayerEmail: true,
-        });
-        pr.canMakePayment().then((result) => {
-            if (result) setPaymentRequest(pr);
-        });
-        pr.on('paymentmethod', async (event: any) => {
-            try {
-                const { error: confirmError, paymentIntent } = await stripe.confirmCardPayment(
-                    clientSecret,
-                    { payment_method: event.paymentMethod.id },
-                    { handleActions: false }
-                );
-                if (confirmError || !paymentIntent) {
-                    event.complete('fail');
-                    onError(confirmError?.message || 'Payment failed.');
-                    return;
-                }
-                event.complete('success');
-                if (paymentIntent.status === 'requires_action') {
-                    const { error: actionError, paymentIntent: finalIntent } = await stripe.confirmCardPayment(clientSecret);
-                    if (actionError || !finalIntent) {
-                        onError(actionError?.message || 'Payment failed.');
-                        return;
-                    }
-                    if (finalIntent.status === 'succeeded') {
-                        onSuccess({ id: finalIntent.id, status: finalIntent.status });
-                        return;
-                    }
-                }
-                if (paymentIntent.status === 'succeeded') {
-                    onSuccess({ id: paymentIntent.id, status: paymentIntent.status });
-                    return;
-                }
-                onError('Payment not completed. Please try again.');
-            } catch (err: any) {
-                onError(err?.message || 'Payment failed.');
-            }
-        });
-        return () => {
-            pr.off('paymentmethod');
-        };
-    }, [stripe, clientSecret, amount, onError, onSuccess]);
-
-    return (
-        <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="rounded-lg border border-white/10 bg-black/30 p-4">
-                <p className="text-sm text-gray-300">Amount due</p>
-                <p className="text-2xl font-semibold text-amber-200">GBP{amount.toFixed(2)}</p>
-            </div>
-            {paymentRequest && (
-                <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-2">
-                    <p className="text-xs uppercase tracking-wider text-amber-300/80">Express checkout</p>
-                    <PaymentRequestButtonElement options={{ paymentRequest }} />
-                </div>
-            )}
-            <div className="rounded-lg border border-white/10 bg-black/30 p-4">
-                <PaymentElement />
-            </div>
-            <button
-                type="submit"
-                disabled={!stripe || !elements || submitting || disabled}
-                className="w-full px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 disabled:opacity-60"
-            >
-                {submitting ? 'Processing payment...' : 'Pay now'}
-            </button>
-        </form>
     );
 };
 

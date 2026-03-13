@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
 import { createOrUpdatePaidInvoice } from '@/lib/client-invoices';
+import { consumeClientCredit, getClientCreditBalance } from '@/lib/client-credit';
 
 const pool = getDbPool();
 const BOOKING_PAYMENT_NOTIFICATION_RECIPIENTS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
@@ -31,6 +32,8 @@ const sendPaymentEmail = async (payload: {
   passengerName: string;
   passengerEmail: string;
   totalFare: number;
+  amountPaid: number;
+  creditApplied?: number;
   paymentIntentId?: string;
   paymentMethod?: string;
   invoiceAttachmentBase64?: string;
@@ -93,8 +96,13 @@ const sendPaymentEmail = async (payload: {
                   <td style="padding:4px 0;">${escapeHtml(payload.destination)}</td>
                 </tr>
                 <tr>
-                  <td style="padding:4px 0; font-weight:bold;">Amount Paid:</td>
+                  <td style="padding:4px 0; font-weight:bold;">Journey Fare:</td>
                   <td style="padding:4px 0;">&pound;${payload.totalFare.toFixed(2)}</td>
+                </tr>
+                ${payload.creditApplied ? `<tr><td style="padding:4px 0; font-weight:bold;">Credit Applied:</td><td style="padding:4px 0;">&pound;${payload.creditApplied.toFixed(2)}</td></tr>` : ''}
+                <tr>
+                  <td style="padding:4px 0; font-weight:bold;">Amount Paid Now:</td>
+                  <td style="padding:4px 0;">&pound;${payload.amountPaid.toFixed(2)}</td>
                 </tr>
                 <tr>
                   <td style="padding:4px 0; font-weight:bold;">Payment Method:</td>
@@ -135,7 +143,7 @@ const sendPaymentEmail = async (payload: {
       to: payload.passengerEmail,
       subject,
       html,
-      text: `Payment received for booking ${code}. Amount GBP${payload.totalFare.toFixed(2)}.`,
+      text: `Payment received for booking ${code}. Fare GBP${payload.totalFare.toFixed(2)}. Amount paid now GBP${payload.amountPaid.toFixed(2)}.`,
       attachments:
         payload.invoiceAttachmentBase64 && payload.invoiceFileName
           ? [
@@ -160,6 +168,8 @@ const sendInternalPaymentNotification = async (payload: {
   passengerEmail: string;
   passengerPhone: string;
   totalFare: number;
+  amountPaid: number;
+  creditApplied?: number;
   paymentIntentId?: string;
   paymentMethod?: string;
 }) => {
@@ -179,7 +189,9 @@ const sendInternalPaymentNotification = async (payload: {
     <p><strong>Phone:</strong> ${escapeHtml(payload.passengerPhone)}</p>
     <p><strong>Pickup:</strong> ${escapeHtml(payload.pickup)}</p>
     <p><strong>Destination:</strong> ${escapeHtml(payload.destination)}</p>
-    <p><strong>Amount paid:</strong> GBP ${payload.totalFare.toFixed(2)}</p>
+    <p><strong>Journey fare:</strong> GBP ${payload.totalFare.toFixed(2)}</p>
+    ${payload.creditApplied ? `<p><strong>Credit applied:</strong> GBP ${payload.creditApplied.toFixed(2)}</p>` : ''}
+    <p><strong>Amount paid now:</strong> GBP ${payload.amountPaid.toFixed(2)}</p>
     <p><strong>Payment method:</strong> ${escapeHtml(payload.paymentMethod || 'Card')}</p>
     <p><strong>Payment ref:</strong> ${escapeHtml(payload.paymentIntentId || '-')}</p>
   `;
@@ -191,7 +203,9 @@ const sendInternalPaymentNotification = async (payload: {
     `Phone: ${payload.passengerPhone}`,
     `Pickup: ${payload.pickup}`,
     `Destination: ${payload.destination}`,
-    `Amount paid: GBP ${payload.totalFare.toFixed(2)}`,
+    `Journey fare: GBP ${payload.totalFare.toFixed(2)}`,
+    ...(payload.creditApplied ? [`Credit applied: GBP ${payload.creditApplied.toFixed(2)}`] : []),
+    `Amount paid now: GBP ${payload.amountPaid.toFixed(2)}`,
     `Payment method: ${payload.paymentMethod || 'Card'}`,
     `Payment ref: ${payload.paymentIntentId || '-'}`,
   ].join('\n');
@@ -227,6 +241,8 @@ export async function POST(request: Request) {
     const paymentStatus = String(body.paymentStatus ?? '').trim().toLowerCase();
     const paymentMethodRaw = String(body.paymentMethod ?? '').trim();
     const paymentMethod = paymentMethodRaw.toLowerCase();
+    const totalFare = Math.max(0, Number(body.totalFare ?? 0));
+    const requestedAppliedCredit = Math.max(0, Number(body.appliedCreditAmount ?? 0));
 
     if (!pickup || !dropOffs.length || !date || !time || !passengerName || !passengerEmail || !passengerPhone) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -245,20 +261,31 @@ export async function POST(request: Request) {
       if (user) clientId = Number(user.id);
     }
 
+    let appliedCreditAmount = 0;
     if (clientId) {
+      const availableCredit = await getClientCreditBalance(pool, clientId);
+      appliedCreditAmount = Math.min(totalFare, availableCredit, requestedAppliedCredit);
+
       const [countRows] = await pool.query<mysql.RowDataPacket[]>(
         'SELECT COUNT(*) AS total FROM client_journeys WHERE client_id = ?',
         [clientId]
       );
       const previousJourneys = Number(countRows[0]?.total ?? 0);
       const inFirstFiveJourneys = previousJourneys < 5;
+      const amountDueNow = Math.max(0, Math.round((totalFare - appliedCreditAmount) * 100) / 100);
       const isAdvanceCardPayment = paymentStatus === 'succeeded' && paymentMethod === 'card';
-      if (inFirstFiveJourneys && !isAdvanceCardPayment) {
+      const isCoveredByCredit = amountDueNow <= 0;
+      if (inFirstFiveJourneys && !isAdvanceCardPayment && !isCoveredByCredit) {
         return NextResponse.json(
           { error: 'Registered clients must pay in advance by card for their first 5 journeys.' },
           { status: 403 }
         );
       }
+    }
+
+    const amountDueNow = Math.max(0, Math.round((totalFare - appliedCreditAmount) * 100) / 100);
+    if (amountDueNow > 0 && paymentStatus !== 'succeeded' && paymentMethod === 'credit') {
+      return NextResponse.json({ error: 'Credit does not fully cover this booking.' }, { status: 400 });
     }
 
     const destination = dropOffs
@@ -271,6 +298,9 @@ export async function POST(request: Request) {
       ...body,
       pickup,
       dropOffs,
+      totalFare,
+      appliedCreditAmount,
+      amountDueNow,
     };
 
     const [result] = await pool.execute<mysql.ResultSetHeader>(
@@ -283,7 +313,7 @@ export async function POST(request: Request) {
         pickup,
         destination,
         String(body.serviceType ?? 'Transfer'),
-        Number(body.totalFare ?? 0),
+        totalFare,
         passengerName,
         passengerEmail,
         passengerPhone,
@@ -293,6 +323,20 @@ export async function POST(request: Request) {
     );
 
     const journeyId = Number(result.insertId);
+    if (journeyId && clientId && appliedCreditAmount > 0) {
+      await consumeClientCredit(pool, {
+        clientId,
+        journeyId,
+        amount: appliedCreditAmount,
+        reason: 'Applied to new booking',
+        metadata: {
+          source: 'booking',
+          totalFare,
+          amountDueNow,
+        },
+      });
+    }
+
     if (journeyId && paymentStatus === 'succeeded') {
       let invoiceAttachmentBase64: string | undefined;
       let invoiceFileName: string | undefined;
@@ -306,7 +350,9 @@ export async function POST(request: Request) {
           passengerPhone,
           pickup,
           destination,
-          totalFare: Number(body.totalFare ?? 0),
+          totalFare,
+          amountPaid: Number(body.paymentAmount ?? amountDueNow),
+          creditApplied: appliedCreditAmount > 0 ? appliedCreditAmount : undefined,
           paymentIntentId: body.paymentIntentId ? String(body.paymentIntentId) : undefined,
           paymentMethod: paymentMethodRaw || undefined,
         });
@@ -324,7 +370,9 @@ export async function POST(request: Request) {
         passengerName,
         passengerEmail,
         passengerPhone,
-        totalFare: Number(body.totalFare ?? 0),
+        totalFare,
+        amountPaid: Number(body.paymentAmount ?? amountDueNow),
+        creditApplied: appliedCreditAmount > 0 ? appliedCreditAmount : undefined,
         paymentIntentId: body.paymentIntentId ? String(body.paymentIntentId) : undefined,
         paymentMethod: paymentMethodRaw || undefined,
         invoiceAttachmentBase64,

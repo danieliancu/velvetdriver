@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise';
 import { detectAirportCodeFromText, type AirportCode, buildDefaultAirportSurcharges, AIRPORTS } from '@/lib/airports';
 import { getDbPool } from '@/lib/db';
 import { computeGoogleRoute } from '@/lib/google-routes';
+import { addClientCredit } from '@/lib/client-credit';
 
 const pool = getDbPool();
 
@@ -18,6 +19,8 @@ type JourneyRow = mysql.RowDataPacket & {
   status: string;
   booking_payload: unknown;
   passenger_email: string | null;
+  passenger_name: string | null;
+  driver_name: string | null;
 };
 
 type PricingVehicle = {
@@ -33,6 +36,10 @@ type PricingVehicleRow = mysql.RowDataPacket & PricingVehicle;
 
 type SurchargeRuleRow = mysql.RowDataPacket & { code: string; amount: number };
 type SettingsRow = mysql.RowDataPacket & { night_surcharge: number };
+type DriverRecipientRow = mysql.RowDataPacket & {
+  driver_email: string | null;
+  driver_name_display: string | null;
+};
 
 const defaultVehiclePricing = {
   id: 1,
@@ -51,6 +58,246 @@ const detectDropAirportCodes = (dropOff: string): AirportCode[] => {
   const code = detectAirportCodeFromText(dropOff);
   return code ? [code] : [];
 };
+
+const ADMIN_BOOKING_MODIFY_EMAILS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const formatDateTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return { date: '-', time: '-' };
+  return {
+    date: date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    time: date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
+  };
+};
+
+async function sendEmail(input: {
+  to: string | string[];
+  subject: string;
+  html: string;
+  text: string;
+}) {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.EMAIL_FROM;
+  if (!resendApiKey || !emailFrom) {
+    throw new Error('Email service is not configured');
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: emailFrom,
+      to: input.to,
+      subject: input.subject,
+      html: input.html,
+      text: input.text,
+    }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data?.message || `Resend error ${response.status}`);
+  }
+}
+
+async function resolveAssignedDriverRecipient(journeyId: number): Promise<{ email: string | null; name: string }> {
+  const [rows] = await pool.query<DriverRecipientRow[]>(
+    `SELECT u.email AS driver_email,
+            COALESCE(NULLIF(TRIM(CONCAT_WS(' ', d.first_and_middle_name, d.surname)), ''), cj.driver_name) AS driver_name_display
+       FROM client_journeys cj
+       LEFT JOIN drivers d
+         ON d.id = CASE
+                     WHEN cj.driver_name REGEXP '^[0-9]+$' THEN CAST(cj.driver_name AS UNSIGNED)
+                     ELSE NULL
+                   END
+       LEFT JOIN users u ON u.id = d.user_id
+      WHERE cj.id = ?
+      LIMIT 1`,
+    [journeyId]
+  );
+
+  const row = rows[0];
+  return {
+    email: row?.driver_email ? String(row.driver_email).trim().toLowerCase() : null,
+    name: String(row?.driver_name_display || 'Chauffeur').trim() || 'Chauffeur',
+  };
+}
+
+async function sendModificationEmails(input: {
+  journeyId: number;
+  clientEmail: string;
+  clientName: string;
+  passengerName: string;
+  oldPrice: number;
+  newPrice: number;
+  difference: number;
+  previousState: {
+    journeyDate: string;
+    pickup: string;
+    destination: string;
+    flightNumber: string;
+    passengers: number;
+    specialRequests: string;
+  };
+  nextState: {
+    journeyDate: string;
+    pickup: string;
+    destination: string;
+    flightNumber: string;
+    passengers: number;
+    specialRequests: string;
+  };
+}) {
+  const warnings: string[] = [];
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.EMAIL_FROM;
+  if (!resendApiKey || !emailFrom) {
+    return ['Booking updated, but email service is not configured.'];
+  }
+
+  const bookingCode = `VD-${String(input.journeyId).padStart(4, '0')}`;
+  const before = formatDateTime(input.previousState.journeyDate);
+  const after = formatDateTime(input.nextState.journeyDate);
+  const changeLine =
+    input.difference > 0
+      ? `Fare increased by GBP ${input.difference.toFixed(2)}`
+      : input.difference < 0
+        ? `Credit due GBP ${Math.abs(input.difference).toFixed(2)}`
+        : 'No fare change';
+
+  const summaryRows = `
+    <tr><td style="padding:6px 0;font-weight:700;">Reference</td><td style="padding:6px 0;">${escapeHtml(bookingCode)}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">Old pickup</td><td style="padding:6px 0;">${escapeHtml(input.previousState.pickup)}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">New pickup</td><td style="padding:6px 0;">${escapeHtml(input.nextState.pickup)}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">Old destination</td><td style="padding:6px 0;">${escapeHtml(input.previousState.destination)}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">New destination</td><td style="padding:6px 0;">${escapeHtml(input.nextState.destination)}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">Old date/time</td><td style="padding:6px 0;">${escapeHtml(`${before.date} ${before.time}`)}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">New date/time</td><td style="padding:6px 0;">${escapeHtml(`${after.date} ${after.time}`)}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">Old flight</td><td style="padding:6px 0;">${escapeHtml(input.previousState.flightNumber || '-')}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">New flight</td><td style="padding:6px 0;">${escapeHtml(input.nextState.flightNumber || '-')}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">Old passengers</td><td style="padding:6px 0;">${input.previousState.passengers}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">New passengers</td><td style="padding:6px 0;">${input.nextState.passengers}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">Old requests</td><td style="padding:6px 0;">${escapeHtml(input.previousState.specialRequests || '-')}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">New requests</td><td style="padding:6px 0;">${escapeHtml(input.nextState.specialRequests || '-')}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">Old fare</td><td style="padding:6px 0;">GBP ${input.oldPrice.toFixed(2)}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">New fare</td><td style="padding:6px 0;">GBP ${input.newPrice.toFixed(2)}</td></tr>
+    <tr><td style="padding:6px 0;font-weight:700;">Change</td><td style="padding:6px 0;">${escapeHtml(changeLine)}</td></tr>
+  `;
+
+  const clientHtml = `<!DOCTYPE html>
+<html lang="en">
+<body style="margin:0;padding:24px;background:#f5f5f5;font-family:Arial,sans-serif;color:#111827;">
+  <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:24px;">
+    <h2 style="margin:0 0 16px;">Booking updated</h2>
+    <p style="margin:0 0 16px;">Hello ${escapeHtml(input.clientName || input.passengerName || 'Client')}, your booking has been updated successfully.</p>
+    <table role="presentation" style="width:100%;border-collapse:collapse;">${summaryRows}</table>
+  </div>
+</body>
+</html>`;
+  const clientText = [
+    `Booking updated: ${bookingCode}`,
+    `Old pickup: ${input.previousState.pickup}`,
+    `New pickup: ${input.nextState.pickup}`,
+    `Old destination: ${input.previousState.destination}`,
+    `New destination: ${input.nextState.destination}`,
+    `Old date/time: ${before.date} ${before.time}`,
+    `New date/time: ${after.date} ${after.time}`,
+    `Change: ${changeLine}`,
+  ].join('\n');
+
+  try {
+    await sendEmail({
+      to: input.clientEmail,
+      subject: `Velvet Drivers - Booking updated ${bookingCode}`,
+      html: clientHtml,
+      text: clientText,
+    });
+  } catch (err) {
+    console.error('Client modification email error', err);
+    warnings.push('Booking updated, but client email could not be sent.');
+  }
+
+  const assignedDriver = await resolveAssignedDriverRecipient(input.journeyId);
+  if (assignedDriver.email) {
+    const driverHtml = `<!DOCTYPE html>
+<html lang="en">
+<body style="margin:0;padding:24px;background:#f5f5f5;font-family:Arial,sans-serif;color:#111827;">
+  <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:24px;">
+    <h2 style="margin:0 0 16px;">Assigned booking updated</h2>
+    <p style="margin:0 0 16px;">Hello ${escapeHtml(assignedDriver.name)}, booking ${escapeHtml(bookingCode)} assigned to you was modified by the client.</p>
+    <table role="presentation" style="width:100%;border-collapse:collapse;">${summaryRows}</table>
+  </div>
+</body>
+</html>`;
+    const driverText = [
+      `Assigned booking updated: ${bookingCode}`,
+      `Passenger: ${input.passengerName}`,
+      `New pickup: ${input.nextState.pickup}`,
+      `New destination: ${input.nextState.destination}`,
+      `New date/time: ${after.date} ${after.time}`,
+      `Change: ${changeLine}`,
+    ].join('\n');
+
+    try {
+      await sendEmail({
+        to: assignedDriver.email,
+        subject: `Velvet Drivers - Booking updated ${bookingCode}`,
+        html: driverHtml,
+        text: driverText,
+      });
+    } catch (err) {
+      console.error('Driver modification email error', err);
+      warnings.push('Booking updated, but driver email could not be sent.');
+    }
+  } else {
+    warnings.push('Booking updated, but no allocated driver email was found.');
+  }
+
+  const adminHtml = `<!DOCTYPE html>
+<html lang="en">
+<body style="margin:0;padding:24px;background:#f5f5f5;font-family:Arial,sans-serif;color:#111827;">
+  <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:24px;">
+    <h2 style="margin:0 0 16px;">Booking modified by client</h2>
+    <p style="margin:0 0 16px;">Client ${escapeHtml(input.clientEmail)} modified booking ${escapeHtml(bookingCode)}.</p>
+    <table role="presentation" style="width:100%;border-collapse:collapse;">${summaryRows}</table>
+  </div>
+</body>
+</html>`;
+  const adminText = [
+    `Booking modified by client: ${bookingCode}`,
+    `Client: ${input.clientEmail}`,
+    `Passenger: ${input.passengerName}`,
+    `New pickup: ${input.nextState.pickup}`,
+    `New destination: ${input.nextState.destination}`,
+    `New date/time: ${after.date} ${after.time}`,
+    `Change: ${changeLine}`,
+  ].join('\n');
+
+  try {
+    await sendEmail({
+      to: ADMIN_BOOKING_MODIFY_EMAILS,
+      subject: `Velvet Drivers Admin - Booking updated ${bookingCode}`,
+      html: adminHtml,
+      text: adminText,
+    });
+  } catch (err) {
+    console.error('Admin modification email error', err);
+    warnings.push('Booking updated, but admin email could not be sent.');
+  }
+
+  return warnings;
+}
 
 const getRate = (vehicle: PricingVehicle, miles: number) => {
   if (miles <= 10) return Number(vehicle.tier1_rate);
@@ -171,6 +418,9 @@ export async function POST(request: Request) {
     const flightNumber = String(body.flightNumber ?? '').trim().toUpperCase();
     const passengers = Math.max(1, Number(body.passengers) || 1);
     const specialRequests = String(body.specialRequests ?? '').trim();
+    const paymentIntentId = String(body.paymentIntentId ?? '').trim();
+    const paymentStatus = String(body.paymentStatus ?? '').trim().toLowerCase();
+    const paymentMethod = String(body.paymentMethod ?? '').trim();
 
     if (!email || !journeyId) {
       return NextResponse.json({ error: 'Missing journey reference' }, { status: 400 });
@@ -185,7 +435,7 @@ export async function POST(request: Request) {
     }
 
     const [rows] = await pool.query<JourneyRow[]>(
-      `SELECT id, client_id, journey_date, pickup, destination, service_type, vehicle_type_id, price, status, booking_payload, passenger_email
+      `SELECT id, client_id, journey_date, pickup, destination, service_type, vehicle_type_id, price, status, booking_payload, passenger_email, passenger_name, driver_name
        FROM client_journeys
        WHERE id = ? AND client_id = ?
        LIMIT 1`,
@@ -279,6 +529,12 @@ export async function POST(request: Request) {
     if (Number.isNaN(journeyDate.getTime())) {
       return NextResponse.json({ error: 'Invalid pickup time.' }, { status: 400 });
     }
+    if (difference > 0 && paymentStatus !== 'succeeded') {
+      return NextResponse.json(
+        { error: 'Additional payment is required before the booking can be updated.', requiresPayment: true, amountDue: difference },
+        { status: 402 }
+      );
+    }
 
     const nowIso = new Date().toISOString();
     const previousState = {
@@ -331,9 +587,15 @@ export async function POST(request: Request) {
       modificationHistory: [...history, historyEntry],
       modificationPayment:
         difference > 0
-          ? { status: 'pending', amount: difference, requiredMessage: `Pay GBP ${difference.toFixed(2)} to confirm changes.` }
+          ? {
+              status: 'succeeded',
+              amount: difference,
+              paymentIntentId: paymentIntentId || null,
+              paymentMethod: paymentMethod || 'Card',
+              paidAt: nowIso,
+            }
           : difference < 0
-            ? { status: 'credit', amount: Math.abs(difference), note: 'Credit will be applied to your next booking.' }
+            ? { status: 'credit', amount: Math.abs(difference), note: 'Credit will be applied to your next booking.', createdAt: nowIso }
             : { status: 'none', amount: 0 },
     };
 
@@ -362,6 +624,39 @@ export async function POST(request: Request) {
       journeyDateIso: journeyDate.toISOString(),
     });
 
+    if (difference < 0) {
+      await addClientCredit(pool, {
+        clientId,
+        journeyId,
+        amount: Math.abs(difference),
+        reason: 'Credit from booking modification',
+        metadata: {
+          source: 'modify-booking',
+          oldPrice,
+          newPrice,
+        },
+      });
+    }
+
+    const emailWarnings = await sendModificationEmails({
+      journeyId,
+      clientEmail: email,
+      clientName: String(payload.passengerName || journey.passenger_name || '').trim(),
+      passengerName: String(journey.passenger_name || payload.passengerName || 'Client').trim(),
+      oldPrice,
+      newPrice,
+      difference,
+      previousState,
+      nextState: {
+        journeyDate: journeyDate.toISOString(),
+        pickup,
+        destination: dropOff,
+        flightNumber,
+        passengers,
+        specialRequests,
+      },
+    });
+
     return NextResponse.json({
       ok: true,
       updated: true,
@@ -369,6 +664,8 @@ export async function POST(request: Request) {
       newPrice,
       difference,
       withinSixHours: isLockedByWindow,
+      warnings: emailWarnings,
+      creditIssued: difference < 0 ? Math.abs(difference) : 0,
     });
   } catch (err) {
     console.error('Modify booking error', err);

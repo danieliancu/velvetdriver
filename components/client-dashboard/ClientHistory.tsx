@@ -1,8 +1,11 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
+import { Elements } from '@stripe/react-stripe-js';
+import { loadStripe } from '@stripe/stripe-js';
 import type { Journey, SavedQuote } from '@/types';
 import Modal from '@/components/Modal';
+import StripePaymentForm from '@/components/payments/StripePaymentForm';
 
 type RenderStatus = Journey['status'] | 'Modified';
 
@@ -79,6 +82,14 @@ const ClientHistory: React.FC<Props> = ({
   const [recalcError, setRecalcError] = useState<string | null>(null);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
+  const [stripeClientSecret, setStripeClientSecret] = useState<string | null>(null);
+  const [stripePublishableKey, setStripePublishableKey] = useState<string | null>(null);
+  const stripePromise = useMemo(
+    () => (stripePublishableKey ? loadStripe(stripePublishableKey) : null),
+    [stripePublishableKey]
+  );
 
   const filteredJourneys = useMemo(() => {
     return journeys.filter((journey) => {
@@ -99,6 +110,9 @@ const ClientHistory: React.FC<Props> = ({
     if (!selectedJourney || !clientEmail || !pickup || !dropOff || !date || !time) return;
     setRecalcLoading(true);
     setRecalcError(null);
+    setShowPaymentForm(false);
+    setStripeClientSecret(null);
+    setStripePublishableKey(null);
     try {
       const response = await fetch('/api/client/bookings/modify', {
         method: 'POST',
@@ -156,6 +170,9 @@ const ClientHistory: React.FC<Props> = ({
     setPreview(null);
     setRecalcError(null);
     setSuccessMessage(null);
+    setShowPaymentForm(false);
+    setStripeClientSecret(null);
+    setStripePublishableKey(null);
   };
 
   const closeModifyModal = () => {
@@ -164,9 +181,12 @@ const ClientHistory: React.FC<Props> = ({
     setRecalcError(null);
     setSubmitLoading(false);
     setSuccessMessage(null);
+    setShowPaymentForm(false);
+    setStripeClientSecret(null);
+    setStripePublishableKey(null);
   };
 
-  const handleConfirmChanges = async () => {
+  const submitModification = async (payment?: { id: string; status: string; method?: string }) => {
     if (!selectedJourney || !clientEmail) return;
     setSubmitLoading(true);
     setRecalcError(null);
@@ -186,19 +206,64 @@ const ClientHistory: React.FC<Props> = ({
           flightNumber,
           passengers,
           specialRequests,
+          paymentIntentId: payment?.id,
+          paymentStatus: payment?.status,
+          paymentMethod: payment?.method || 'Card',
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data?.error || 'Unable to update booking.');
       }
-      setSuccessMessage('Your booking has been successfully updated. Your chauffeur will be informed accordingly.');
+      setShowPaymentForm(false);
+      setStripeClientSecret(null);
+      setStripePublishableKey(null);
+      setSuccessMessage(
+        data?.creditIssued
+          ? `Your booking has been successfully updated. GBP ${Number(data.creditIssued).toFixed(2)} credit has been added to your account.`
+          : 'Your booking has been successfully updated. Your chauffeur will be informed accordingly.'
+      );
       await onJourneyModified?.();
     } catch (err: any) {
       setRecalcError(err?.message || 'Unable to update booking.');
     } finally {
       setSubmitLoading(false);
     }
+  };
+
+  const handleConfirmChanges = async () => {
+    if (!selectedJourney || !clientEmail || !preview) return;
+    if (preview.difference > 0) {
+      setPaymentIntentLoading(true);
+      setRecalcError(null);
+      try {
+        const response = await fetch('/api/stripe/create-payment-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: Number(preview.payNowAmount),
+            currency: 'gbp',
+            passengerName: 'Client',
+            passengerEmail: clientEmail,
+            pickup,
+            dropOffs: [dropOff],
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.error || 'Failed to start payment.');
+        }
+        setStripeClientSecret(data?.clientSecret ?? null);
+        setStripePublishableKey(data?.publishableKey ?? null);
+        setShowPaymentForm(true);
+      } catch (err: any) {
+        setRecalcError(err?.message || 'Failed to start payment.');
+      } finally {
+        setPaymentIntentLoading(false);
+      }
+      return;
+    }
+    await submitModification();
   };
 
   const FilterButton: React.FC<{ status: FilterStatus }> = ({ status }) => (
@@ -569,6 +634,24 @@ const ClientHistory: React.FC<Props> = ({
 
           {recalcError ? <p className="text-sm text-red-300">{recalcError}</p> : null}
           {successMessage ? <p className="text-sm text-green-300">{successMessage}</p> : null}
+          {showPaymentForm && stripePromise && stripeClientSecret ? (
+            <Elements
+              stripe={stripePromise}
+              options={{
+                clientSecret: stripeClientSecret,
+                appearance: { theme: 'stripe' },
+              }}
+            >
+              <StripePaymentForm
+                amount={Number(preview?.payNowAmount ?? 0)}
+                clientSecret={stripeClientSecret}
+                onSuccess={(paymentIntent) => submitModification({ ...paymentIntent, method: 'Card' })}
+                onError={setRecalcError}
+                disabled={submitLoading}
+                buttonLabel="Pay and confirm changes"
+              />
+            </Elements>
+          ) : null}
 
           <div className="flex justify-end gap-3 pt-2">
             <button
@@ -578,18 +661,22 @@ const ClientHistory: React.FC<Props> = ({
             >
               Close
             </button>
-            <button
-              type="button"
-              onClick={handleConfirmChanges}
-              disabled={!selectedJourneyCanModify || submitLoading || !canPreview}
-              className="px-4 py-2 text-sm rounded-md bg-amber-500 text-black font-semibold hover:bg-amber-400 transition-colors disabled:opacity-50"
-            >
-              {submitLoading
-                ? 'Updating...'
-                : preview && preview.difference > 0
-                  ? `Pay GBP ${preview.payNowAmount.toFixed(2)} to confirm changes`
-                  : 'Confirm changes'}
-            </button>
+            {!successMessage ? (
+              <button
+                type="button"
+                onClick={handleConfirmChanges}
+                disabled={!selectedJourneyCanModify || submitLoading || !canPreview || paymentIntentLoading || showPaymentForm}
+                className="px-4 py-2 text-sm rounded-md bg-amber-500 text-black font-semibold hover:bg-amber-400 transition-colors disabled:opacity-50"
+              >
+                {paymentIntentLoading
+                  ? 'Opening payment...'
+                  : submitLoading
+                  ? 'Updating...'
+                  : preview && preview.difference > 0
+                    ? `Proceed to payment: GBP ${preview.payNowAmount.toFixed(2)}`
+                    : 'Confirm changes'}
+              </button>
+            ) : null}
           </div>
         </div>
       </Modal>

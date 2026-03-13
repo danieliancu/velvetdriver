@@ -12,6 +12,8 @@ export type PaidInvoicePayload = {
   pickup: string;
   destination: string;
   totalFare: number;
+  amountPaid?: number;
+  creditApplied?: number;
   paymentMethod?: string;
   paymentIntentId?: string;
 };
@@ -60,9 +62,11 @@ async function buildInvoicePdfBytes(payload: PaidInvoicePayload) {
     ['Journey date', formatDate(payload.journeyDateIso)],
     ['Pickup', escapeText(payload.pickup)],
     ['Destination', escapeText(payload.destination)],
+    ['Journey fare', `GBP ${payload.totalFare.toFixed(2)}`],
+    ...(payload.creditApplied ? [['Credit applied', `GBP ${payload.creditApplied.toFixed(2)}`] as [string, string]] : []),
     ['Payment method', escapeText(payload.paymentMethod || 'Card')],
     ['Payment ref', escapeText(payload.paymentIntentId || '-')],
-    ['Amount paid', `GBP ${payload.totalFare.toFixed(2)}`],
+    ['Amount paid now', `GBP ${(payload.amountPaid ?? payload.totalFare).toFixed(2)}`],
   ];
 
   const labelWidth = 150;
