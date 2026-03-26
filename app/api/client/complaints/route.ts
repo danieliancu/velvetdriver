@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
+import { sendInternalFormNotificationEmail } from '@/lib/internal-form-notifications';
 
 const pool = getDbPool();
 
@@ -79,6 +80,48 @@ async function logAdminNotification(payload: {
   }
 }
 
+async function sendComplaintNotificationEmail(input: {
+  journeyRef: string | null;
+  bookingDateTime: string | null;
+  fullName: string;
+  email: string;
+  phone: string;
+  address: string;
+  subject: string;
+  details: string;
+  source: string;
+}) {
+  const subject = `New complaint received${input.journeyRef ? ` (${input.journeyRef})` : ''}`;
+  await sendInternalFormNotificationEmail({
+    type: 'complaint',
+    subject,
+    errorLabel: 'Complaint notification email error',
+    lines: [
+      'New complaint received',
+      `Reference: ${input.journeyRef || 'N/A'}`,
+      `Booking date/time: ${input.bookingDateTime || 'N/A'}`,
+      `Name: ${input.fullName}`,
+      `Email: ${input.email || 'N/A'}`,
+      `Phone: ${input.phone}`,
+      `Address: ${input.address}`,
+      `Subject: ${input.subject}`,
+      `Source: ${input.source}`,
+      `Details: ${input.details}`,
+    ],
+    htmlLines: [
+      { label: 'Reference', value: input.journeyRef || 'N/A' },
+      { label: 'Booking date/time', value: input.bookingDateTime || 'N/A' },
+      { label: 'Name', value: input.fullName },
+      { label: 'Email', value: input.email || 'N/A' },
+      { label: 'Phone', value: input.phone },
+      { label: 'Address', value: input.address },
+      { label: 'Subject', value: input.subject },
+      { label: 'Source', value: input.source },
+      { label: 'Details', value: input.details },
+    ],
+  });
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -149,6 +192,18 @@ export async function POST(request: Request) {
         phone,
         source,
       },
+    });
+
+    await sendComplaintNotificationEmail({
+      journeyRef,
+      bookingDateTime,
+      fullName,
+      email: email || '',
+      phone,
+      address,
+      subject,
+      details,
+      source,
     });
 
     return NextResponse.json({ ok: true, id: result.insertId });

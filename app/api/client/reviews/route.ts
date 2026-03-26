@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
+import { sendInternalFormNotificationEmail } from '@/lib/internal-form-notifications';
 
 const pool = getDbPool();
 
@@ -51,6 +52,39 @@ async function logAdminNotification(payload: {
   } catch (err) {
     console.error('Admin notification insert failed', err);
   }
+}
+
+async function sendReviewNotificationEmail(input: {
+  journeyRef: string | null;
+  reviewerName: string;
+  reviewerEmail: string;
+  rating: number;
+  review: string;
+  source: string;
+}) {
+  const subject = `New review received${input.journeyRef ? ` (${input.journeyRef})` : ''}`;
+  await sendInternalFormNotificationEmail({
+    type: 'review',
+    subject,
+    errorLabel: 'Review notification email error',
+    lines: [
+      'New review received',
+      `Reference: ${input.journeyRef || 'N/A'}`,
+      `Name: ${input.reviewerName || 'Anonymous'}`,
+      `Email: ${input.reviewerEmail || 'N/A'}`,
+      `Rating: ${input.rating}/5`,
+      `Source: ${input.source}`,
+      `Review: ${input.review}`,
+    ],
+    htmlLines: [
+      { label: 'Reference', value: input.journeyRef || 'N/A' },
+      { label: 'Name', value: input.reviewerName || 'Anonymous' },
+      { label: 'Email', value: input.reviewerEmail || 'N/A' },
+      { label: 'Rating', value: `${input.rating}/5` },
+      { label: 'Source', value: input.source },
+      { label: 'Review', value: input.review },
+    ],
+  });
 }
 
 export async function POST(request: Request) {
@@ -114,6 +148,15 @@ export async function POST(request: Request) {
         reviewer: reviewerName || 'n/a',
         email: email || 'n/a',
       },
+    });
+
+    await sendReviewNotificationEmail({
+      journeyRef,
+      reviewerName: reviewerName || 'Anonymous',
+      reviewerEmail: email || '',
+      rating,
+      review,
+      source,
     });
 
     return NextResponse.json({ ok: true, id: result.insertId });

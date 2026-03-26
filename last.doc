@@ -1,0 +1,155 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0\froman Times New Roman;}{\f1\fmodern Courier New;}}
+\fs24
+\b Audit tehnic aplicatie VelvetDriver\b0\par
+\par
+\b 1. Rezumat executiv\b0\par
+Verdict general: \b Risc critic\b0. Aplicatia are probleme sistemice de autentificare, autorizare si validare server-side. In forma actuala, un actor neautorizat poate accesa sau modifica date sensibile, poate obtine documente/PII, iar anumite fluxuri financiare pot fi manipulate din input-ul clientului.\par
+\par
+Top 5 riscuri de business:\par
+1. Bypass complet de acces admin prin UI si sesiune doar client-side.\par
+2. Endpoint-uri admin, client si driver fara protectie server-side, accesibile pe baza de email sau ID.\par
+3. Fluxuri Stripe si booking care au incredere in suma si statusul trimise de client.\par
+4. Expunere de secrete/credentiale DVLA in frontend, inclusiv fallback hardcoded.\par
+5. Management defectuos al credentialelor admin, inclusiv parole in clar in DB/API.\par
+\par
+Prioritate recomandata:\par
+- Critical: auth/autorizare, refund, booking/payment verification, secret exposure.\par
+- High: password storage/admin staff exposure, PII endpoints, SSL hardening.\par
+- Medium: type safety, build reproducibility, documentatie, observabilitate.\par
+\par
+\b 2. Context si suprafata auditata\b0\par
+Stack confirmat: Next.js 14 App Router, React 18, MySQL, Stripe, Resend, Cloudinary, DVLA, Google Maps.\par
+Suprafata auditata: pagini publice si dashboard-uri, auth/signup/reset-password, booking, Stripe, refund, endpoint-uri admin si profile/document flows. Repo-ul contine 85 route handlers in app/api, plus api/[...path].ts si server.js.\par
+\par
+Observatii operationale:\par
+- package.json contine doar scripturile dev/build/start, fara lint/test/check: package.json:6-10.\par
+- README.md este depasit si descrie alt produs, inclusiv AI Studio si GEMINI_API_KEY: README.md:5-20.\par
+- Nu exista middleware.ts in repo, deci nu exista un strat central vizibil de protectie pentru dashboard-uri sau API.\par
+- .env.local nu pare versionat; .gitignore ignora corect fisierele locale de mediu: .gitignore:20-24.\par
+\par
+\b 3. Findings tehnice\b0\par
+\par
+\b [CRITICAL] F1. Admin login bypass in UI\b0\par
+Impact: orice utilizator care cunoaste credentialele hardcodate poate intra in dashboard-ul admin fara verificare server-side.\par
+Evidenta:\par
+- app/admin/page.tsx:17-22 accepta direct username=admin si password=admin.\par
+- app/admin/page.tsx:21-22 creeaza sesiunea local si redirecteaza direct catre /admin/dashboard.\par
+Scenariu de risc: acces neautorizat la ecrane admin, apoi apelarea directa a endpoint-urilor admin neprotejate.\par
+Recomandare: eliminare completa a credentialelor hardcodate, autentificare server-side cu sesiune HttpOnly si verificare pe fiecare request admin.\par
+\par
+\b [CRITICAL] F2. Sesiunea este tinuta doar in localStorage, deci poate fi fabricata\b0\par
+Impact: rolurile si identitatea pot fi falsificate local, fara token semnat sau cookie securizat.\par
+Evidenta:\par
+- lib/auth-context.tsx:23, 45-48, 58-77 stocheaza si restaureaza userul din localStorage sub cheia velvet-auth.\par
+- app/client/dashboard/page.tsx:39-43 foloseste doar existenta userului local pentru redirect.\par
+Scenariu de risc: un atacator poate injecta manual un obiect User cu rol admin/driver/corporate in localStorage si debloca UI-ul aferent.\par
+Recomandare: inlocuire cu sesiune server-side semnata, cookie HttpOnly, expirare, invalidare si guard server-side pentru dashboard/API.\par
+\par
+\b [CRITICAL] F3. Endpoint-urile admin nu au autorizare server-side\b0\par
+Impact: datele si actiunile administrative sunt expuse oricui poate apela endpoint-urile direct.\par
+Evidenta:\par
+- app/api/admin/drivers/route.ts:96-118 executa GET direct pe datele soferilor fara nicio verificare de identitate/rol.\par
+- app/api/admin/refund-booking/route.ts:106-169 porneste refund Stripe doar pe baza lui journeyId, fara autentificare.\par
+- app/api/admin/staff/route.ts:71-79 returneaza lista de staff direct, fara guard.\par
+Scenariu de risc: extragere date sensibile, modificari operationale, refund-uri neautorizate.\par
+Recomandare: toate rutele admin trebuie protejate cu verificare server-side de sesiune si rol, ideal intr-un helper comun sau middleware dedicat.\par
+\par
+\b [CRITICAL] F4. PII si documente accesibile dupa email sau ID, fara autentificare\b0\par
+Impact: expunere de profiluri, istoric curse, documente sofer si posibil update neautorizat asupra conturilor.\par
+Evidenta:\par
+- app/api/client/profile/route.ts:8-22 returneaza profilul unui client doar pe baza parametrului email.\par
+- app/api/client/profile/route.ts:29-71 permite update profil/parola doar pe baza emailului trimis in body.\par
+- app/api/client/history/route.ts:7-65 returneaza istoricul curselor pentru orice email.\par
+- app/api/driver/profile/route.ts:77-137 returneaza date si documente ale soferului pe baza emailului.\par
+- app/api/driver/documents/route.ts:70-96 identifica soferul dupa email si permite upload documente fara sesiune.\par
+Scenariu de risc: enumerare email-uri, scraping PII, alterare date, inlocuire documente.\par
+Recomandare: folosirea identitatii din sesiunea server-side, nu din query/body; validare ownership pe fiecare resursa.\par
+\par
+\b [CRITICAL] F5. Fluxurile de plata si booking au incredere in input-ul clientului\b0\par
+Impact: subplata, booking-uri marcate ca platite fara verificare reala, raportare financiara eronata.\par
+Evidenta:\par
+- app/api/stripe/create-payment-intent/route.ts:17-33 creeaza PaymentIntent pentru amount primit direct din request.\par
+- app/api/booking/route.ts:241-245 citeste totalFare si payment status direct din body.\par
+- app/api/booking/route.ts:297-323 persista totalFare in booking_payload si in coloana price fara recalcul server-side.\par
+- app/api/booking/route.ts:340-384 trateaza paymentStatus=succeeded din body ca baza pentru invoice/email, fara confirmare la Stripe.\par
+Scenariu de risc: clientul poate trimite o suma mai mica catre Stripe si apoi poate posta booking cu totalFare/status manipulate.\par
+Recomandare: pretul trebuie calculat exclusiv server-side; confirmarea platii trebuie facuta prin Stripe webhook sau retrieve pe PaymentIntent, cu verificare amount/currency/status.\par
+\par
+\b [CRITICAL] F6. Secrete si credentiale DVLA expuse in frontend\b0\par
+Impact: compromitere cont DVLA, abuz de quota, costuri si risc de blocare a integrarii.\par
+Evidenta:\par
+- app/driver/dashboard/page.tsx:1235-1248 foloseste NEXT_PUBLIC_DVLA_USERNAME si NEXT_PUBLIC_DVLA_PASSWORD in browser.\par
+- app/driver/dashboard/page.tsx:1271 foloseste NEXT_PUBLIC_DVLA_API_KEY si include un fallback hardcoded.\par
+- app/driver/dashboard/page.tsx:1287-1293 trimite cheia si token-ul din client.\par
+Scenariu de risc: orice utilizator poate extrage credentialele din bundle sau runtime devtools si le poate folosi in afara aplicatiei.\par
+Recomandare: mutarea completa a integrarii DVLA in route handler server-side, rotirea cheilor compromise, eliminarea fallback-ului hardcoded.\par
+\par
+\b [HIGH] F7. Credentiale admin stocate si comparate in clar\b0\par
+Impact: compromitere usoara a conturilor admin si imposibilitate de aliniere la practici minime de securitate.\par
+Evidenta:\par
+- app/api/admin/login/route.ts:24-30 face query cu WHERE username = ? AND password = ?.\par
+- app/api/admin/staff/route.ts:12, 18-27, 73-79, 99-101 expune si persista campul password in clar.\par
+Scenariu de risc: orice dump DB, log sau raspuns API expune credentialele admin direct reutilizabile.\par
+Recomandare: hash cu bcrypt/argon2, eliminarea campului password din toate raspunsurile API, reset fortat credentiale existente.\par
+\par
+\b [HIGH] F8. Refund endpoint permite operatiune financiara neautorizata\b0\par
+Impact: pierdere financiara directa.\par
+Evidenta:\par
+- app/api/admin/refund-booking/route.ts:112-169 accepta doar journeyId, gaseste PaymentIntent din DB si ruleaza stripe.refunds.create.\par
+- Nu exista niciun control de sesiune/rol in fisier.\par
+Scenariu de risc: iterare de ID-uri pana la gasirea unui booking eligibil si refund complet initiat de un actor anonim.\par
+Recomandare: blocare imediata in spatele autentificarii admin si audit trail obligatoriu cu identitatea operatorului.\par
+\par
+\b [HIGH] F9. Hardening TLS slab pentru MySQL\b0\par
+Impact: conexiuni DB susceptibile la MITM in medii in care TLS este activat, dar certificatul nu este validat.\par
+Evidenta:\par
+- lib/db.ts:28 foloseste rejectUnauthorized: false.\par
+Recomandare: validare de certificat activa si configurare explicita CA/cert dupa infrastructura.\par
+\par
+\b [MEDIUM] F10. Type safety si mentenabilitate slabe\b0\par
+Impact: regresii mai greu de prins, API contracts fragile, cost mare de schimbare.\par
+Evidenta:\par
+- tsconfig.json:9-12 seteaza allowJs=true si strict=false.\par
+- codul contine aproximativ 185 aparitii ale any sau Record<string, any> in app/lib/components/types.ts.\par
+- Exista fisiere foarte mari cu responsabilitati amestecate, de exemplu app/driver/dashboard/page.tsx si app/booking/page.tsx.\par
+Recomandare: activare treptata strict mode, tipare shared pentru payload-uri API, reducerea any-urilor, extragerea logicii pe module.\par
+\par
+\b [MEDIUM] F11. Igiena operationala si build reproducibility insuficiente\b0\par
+Impact: lansari greu de validat si debugging costisitor.\par
+Evidenta:\par
+- package.json:6-10 nu are lint/test/typecheck dedicate.\par
+- README.md:5-20 documenteaza un alt proiect.\par
+- build-ul local nu a oferit un rezultat stabil: o rulare a esuat cu EPERM pe .next/trace, alta a expirat dupa aproximativ 124s.\par
+Recomandare: scripturi CI minime (lint, typecheck, build), actualizare README, reproducerea si stabilizarea build-ului pe mediu curat.\par
+\par
+\b 4. Observatii pozitive\b0\par
+- Fluxurile de signup client si driver folosesc bcrypt pentru parolele utilizatorilor non-admin: app/api/auth/signup/route.ts:46-51 si app/api/driver/signup/route.ts:194-199.\par
+- Resetarea parolei pentru userii standard foloseste token hash-uit cu sha256 si expirare in DB: app/api/auth/forgot-password/route.ts si app/api/auth/reset-password/route.ts.\par
+- .env.local nu este versionat, ceea ce reduce riscul de expunere accidentala prin Git.\par
+\par
+\b 5. Roadmap de remediere\b0\par
+Faza 1 - blocante imediate (0-2 zile):\par
+1. Dezactivare acces admin hardcodat din UI.\par
+2. Blocare temporara a tuturor endpoint-urilor admin in spatele unui guard server-side.\par
+3. Oprire/refactor pentru refund-booking pana la introducerea autorizarii.\par
+4. Rotire chei/credentiale DVLA si eliminare NEXT_PUBLIC_DVLA_USERNAME, NEXT_PUBLIC_DVLA_PASSWORD si fallback-ul hardcoded.\par
+5. Eliminare expunere parola admin din API si reset fortat credentiale staff.\par
+\par
+Faza 2 - corectitudine si securizare fluxuri critice (3-7 zile):\par
+1. Introducere autentificare server-side cu cookie HttpOnly si roluri.\par
+2. Refactor pentru toate endpoint-urile client/driver/corporate/admin sa derive identitatea din sesiune, nu din email primit in request.\par
+3. Mutare calcul pret pe server si verificare plati exclusiv prin Stripe webhook/retrieve.\par
+4. Adaugare audit trail real pentru actiuni sensibile: refund, status updates, document uploads, profile updates.\par
+\par
+Faza 3 - hardening si cleanup (1-3 saptamani):\par
+1. Activare treptata TypeScript strict si reducere any.\par
+2. Separare a logicii de business din paginile foarte mari in servicii/utilitare.\par
+3. TLS hardening pentru DB, logging/monitoring minim, scripturi CI, README actualizat.\par
+\par
+\b 6. Limitari ale auditului\b0\par
+Auditul a fost facut pe codul local si pe verificari non-destructive. Nu am facut pen-test extern, nu am validat infrastructura de productie si nu am executat migrari sau modificari de cod in aplicatie. Concluziile sunt totusi suficient de ferme pentru a trata punctele F1-F8 ca remediere urgenta.\par
+\par
+\b 7. Concluzie\b0\par
+Aplicatia nu este pregatita pentru operare sigura in forma actuala. Cea mai importanta problema nu este una izolata, ci absenta unui model coerent de autentificare si autorizare server-side. Pana la introducerea acelui strat, orice remediere punctuala ramane incompleta.\par
+}

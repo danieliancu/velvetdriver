@@ -17,6 +17,20 @@ type PricePreview = {
   creditAmount: number;
 };
 
+const BOOKING_DRAFT_KEY = 'velvetdriver.booking.draft';
+
+const stripStopLabel = (value: string) => value.replace(/^Stop\s+\d+:\s*/i, '').trim();
+
+const parseDestinationStops = (destination: string) => {
+  const raw = String(destination || '').trim();
+  if (!raw) return [''];
+  if (!raw.includes('Stop ')) return [raw];
+  return raw
+    .split(', ')
+    .map((part) => stripStopLabel(part))
+    .filter(Boolean);
+};
+
 const StatusBadge: React.FC<{ status: RenderStatus }> = ({ status }) => {
   const baseClasses = 'px-2 py-1 text-xs font-semibold rounded-full';
   const statusClasses: Record<RenderStatus, string> = {
@@ -90,6 +104,35 @@ const ClientHistory: React.FC<Props> = ({
     () => (stripePublishableKey ? loadStripe(stripePublishableKey) : null),
     [stripePublishableKey]
   );
+
+  const handleBookAgain = (journey: Journey) => {
+    const nextDateTime = toDateTimeInputs(journey.journeyDateIso);
+    const dropOffs = parseDestinationStops(journey.destination);
+    const draft = {
+      pickupAddress: journey.pickup || '',
+      pickupDisplay: journey.pickup || '',
+      dropOffAddresses: dropOffs,
+      dropOffDisplays: dropOffs,
+      date: nextDateTime.date,
+      time: nextDateTime.time,
+      serviceType: journey.serviceType || 'Transfer',
+      passengers: String(journey.passengers || 1),
+      passengerEmail: clientEmail || '',
+      flightNumber: journey.flightNumber || '',
+      notes: journey.specialRequests || '',
+    };
+
+    try {
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(BOOKING_DRAFT_KEY, JSON.stringify(draft));
+        window.location.assign('/booking');
+      }
+    } catch {
+      if (typeof window !== 'undefined') {
+        window.location.assign('/booking');
+      }
+    }
+  };
 
   const filteredJourneys = useMemo(() => {
     return journeys.filter((journey) => {
@@ -498,6 +541,14 @@ const ClientHistory: React.FC<Props> = ({
                           className="px-3 py-1 text-xs font-semibold rounded-md border border-amber-400/60 text-amber-200 hover:bg-amber-400/10 transition-colors"
                         >
                           Modify Booking
+                        </button>
+                      ) : journey.status === 'Completed' ? (
+                        <button
+                          type="button"
+                          onClick={() => handleBookAgain(journey)}
+                          className="px-3 py-1 text-xs font-semibold rounded-md border border-emerald-400/60 text-emerald-200 hover:bg-emerald-400/10 transition-colors"
+                        >
+                          Book again
                         </button>
                       ) : (
                         <span className="text-xs text-gray-500">-</span>

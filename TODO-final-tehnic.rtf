@@ -1,0 +1,120 @@
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang2057{\fonttbl{\f0\fnil\fcharset0 Calibri;}{\f1\fnil\fcharset238 Calibri;}}
+{\*\generator Riched20 10.0.19041}\viewkind4\uc1 
+\pard\sa200\sl276\slmult1\f0\fs22\lang9 Rezumat\par
+Am verificat cerin\f1\u539?ele din TODO-final.doc fa\u539?\'e3 de implementarea actual\'e3. Statusul general este mixt: c\f0\'e2teva puncte sunt deja implementate, c\'e2teva sunt clar par\f1\u539?iale, iar c\f0\'e2teva par s\f1\'e3 fie \f0\'eenc\f1\'e3 lips\'e3 sau bug-uri reale.\par
+\b\par
+Ce e important:\par
+\b0 exist\'e3 deja lucru consistent pe corporate signup, reviews, complaints, lost property, statements \u537?i payment method \f0\'een live bookings\par
+lipsesc \'eenc\f1\'e3 func\u539?ii cerute direct \f0\'een TODO, mai ales edit live booking \f1\u537?i manual booking\par
+exist\'e3 \u537?i puncte unde codul sugereaz\'e3 c\'e3 feature-ul exist\'e3, dar simptomul din TODO indic\'e3 bug de logic\'e3 sau de date\par
+\par
+\b Auth / Corporate\par
+\b0\i Nu poti crea cont de client daca esti inregistrat ca sofer\par
+\i0 Verdict: implementat\par
+Dovezi: app/api/auth/signup/route.ts (line 24) blocheaz\'e3 signup dac\'e3 emailul exist\'e3 deja pe alt rol \u537?i returneaz\'e3 explicit eroarea cu rolul detectat la app/api/auth/signup/route.ts (line 32).\par
+Interpretare: cerin\u539?a exist\'e3 \f0\'een backend.\par
+Impact: bun, evit\f1\'e3 coliziunea client/driver.\par
+\par
+\i Daca esti logat ca si client si dai click pe corporate, te baga automat in client\par
+\i0 Verdict: implementat, dar probabil nedorit\par
+Dovezi: app/corporate/login/page.tsx (line 51) redirec\u539?ioneaz\'e3 automat userul deja logat; dac\'e3 rolul este client ajunge la app/corporate/login/page.tsx (line 65).\par
+Interpretare: comportamentul din TODO este chiar codificat.\par
+Impact: UX gre\u537?it pentru cine vrea s\'e3 cear\'e3 acces corporate separat.\par
+\par
+\i La corporate sa avem bifa/operator + operator no/license authority\par
+\i0 Verdict: par\u539?ial\par
+Dovezi: signup-ul corporate are multe c\f0\'e2mpuri la app/corporate/signup/page.tsx (line 10), dar nu am g\f1\'e3sit c\f0\'e2mpuri explicite pentru operator, operator no, license authority. Backend-ul salveaz\f1\'e3 meta general\'e3 la app/api/corporate/signup/route.ts (line 140), \f0\'eens\f1\'e3 nu aceste date specifice.\par
+Interpretare: formularul exist\'e3 \u537?i e extins, dar cerin\u539?a exact\'e3 nu pare implementat\'e3.\par
+Impact: datele de operator cerute \f0\'een TODO nu sunt colectate explicit.\par
+\par
+\i Nu primim approval request pentru corporate account request\par
+\i0 Verdict: par\f1\u539?ial / probabil lips\'e3 pe flux admin\par
+Dovezi: corporate signup creeaz\'e3 user pending la app/api/corporate/signup/route.ts (line 133) \u537?i corporate status pending la app/api/corporate/signup/route.ts (line 148). \f0\'cen schimb, zona admin awaiting din app/admin/awaiting/page.tsx (line 43) \f1\u537?i app/api/admin/awaiting/route.ts (line 230) trateaz\'e3 doar \u537?oferi, nu corporate.\par
+Interpretare: request-ul se salveaz\'e3, dar nu exist\'e3 dovad\'e3 c\'e3 apare \f0\'eentr-un inbox/approval flow pentru corporate.\par
+Impact: cererea poate r\f1\'e3m\f0\'e2ne \'een DB f\f1\'e3r\'e3 proces opera\u539?ional vizibil.\par
+\par
+\b WhatsApp / Live Admin\par
+\b0\i Mesajele pe WhatsApp nu se deschid cand contactezi soferul\par
+\i0 Verdict: implementat, dar probabil bug de runtime/environment\par
+Dovezi: deschiderea WhatsApp exist\'e3 \f0\'een app/admin/dashboard/page.tsx (line 641), cu fallback wa.me \f1\u537?i whatsapp:// la app/admin/dashboard/page.tsx (line 662).\par
+Interpretare: feature-ul este implementat. Dac\'e3 nu func\u539?ioneaz\'e3, problema pare mai degrab\'e3 de popup blocker, format telefon sau device/browser.\par
+Impact: simptom real posibil, dar nu pare lips\'e3 de implementare.\par
+\par
+\i Buton de Edit pentru live jobs\par
+\i0 Verdict: neimplementat\par
+Dovezi: live bookings afi\u537?eaz\'e3 \u537?i aloc\'e3 \u537?oferi \f0\'een app/admin/dashboard/page.tsx (line 883), iar API-ul live doar cite\f1\u537?te \u537?i actualizeaz\'e3 booked_by_staff_id \f0\'een app/api/admin/live-bookings/route.ts (line 129). Nu exist\f1\'e3 flux de editare pickup/dropoff/date/price pentru admin.\par
+Interpretare: cerin\u539?a lipse\u537?te.\par
+Impact: adminul nu poate modifica rapid o curs\'e3 live c\f0\'e2nd sun\f1\'e3 clientul.\par
+\par
+\i Buton de manual booking cu super access / manual pricing\par
+\i0 Verdict: neimplementat\par
+Dovezi: butonul exist\'e3 doar comentat \f0\'een app/admin/dashboard/page.tsx (line 871). Nu am g\f1\'e3sit flux activ de manual booking din admin.\par
+Interpretare: cerin\u539?a a fost \f0\'eenceput\f1\'e3 conceptual, dar nu este livrat\'e3.\par
+Impact: lipse\u537?te un workflow important pentru booking-uri telefonice \u537?i override de pre\u539?.\par
+\par
+\i Sa avem info cu modalitatea de plata in live bookings si mesajul catre sofer\par
+\i0 Verdict: implementat\par
+Dovezi: API-ul live expune paymentMethod la app/api/admin/live-bookings/route.ts (line 79) \u537?i \f0\'eel include \'een r\f1\'e3spuns la app/api/admin/live-bookings/route.ts (line 103). Dashboard-ul mapeaz\'e3 PAYED / ACCOUNT / CASH/CARD \f0\'een app/admin/dashboard/page.tsx (line 146) \f1\u537?i \f0\'eel injecteaz\f1\'e3 \f0\'een mesajul WhatsApp la app/admin/dashboard/page.tsx (line 156).\par
+Interpretare: cerin\f1\u539?a este prezent\'e3 \f0\'een cod.\par
+Impact: bun; pare acoperit\f1\'e3.\par
+\par
+\b Job Completion / Statements\par
+\b0\i Job completed da eroare, dispare din live, nu apare in admin history\par
+\i0 Verdict: probabil bug\par
+Dovezi: endpoint-ul de complete schimb\'e3 statusul la Completed imediat la app/api/admin/complete-booking/route.ts (line 16). Dac\'e3 nu g\'e3se\u537?te \u537?oferul sau nu poate genera statement, tot r\'e3spunde ok: true cu warning la app/api/admin/complete-booking/route.ts (line 87) \u537?i app/api/admin/complete-booking/route.ts (line 134). Older/history admin cite\u537?te separat din Completed/Cancelled \f0\'een app/api/admin/older-bookings/route.ts (line 59).\par
+Interpretare: cursa iese corect din live imediat, dar dac\f1\'e3 UI-ul de history nu o arat\'e3, problema pare de integrare UI/date, nu c\'e3 endpoint-ul nu o marcheaz\'e3.\par
+Impact: risc de inconsisten\u539?\'e3 opera\u539?ional\'e3 \u537?i \f0\'eencredere sc\f1\'e3zut\'e3 \f0\'een dashboard.\par
+\par
+\i Nu avem statements in niciun cont\par
+\i0 Verdict: implementat, dar posibil bug de date/generare\par
+Dovezi: admin statements exist\f1\'e3 \f0\'een app/admin/statements/page.tsx (line 35) \f1\u537?i sunt servite de app/api/admin/statements/route.ts. Driver statements exist\'e3 \f0\'een app/driver/dashboard/page.tsx (line 1839) \f1\u537?i \f0\'een app/api/driver/statements/route.ts (line 15). Generarea lor se face la complete-booking prin app/api/admin/complete-booking/route.ts (line 113).\par
+Interpretare: feature-ul exist\f1\'e3, dar dac\'e3 statements nu apar, problema este probabil \f0\'een datele necesare pentru generare sau \'een execu\f1\u539?ia upsertDriverStatementForAllocation.\par
+Impact: pare bug real, nu lips\'e3 total\'e3 de implementare.\par
+\par
+\b Client History / Reviews / Notifications\par
+\b0\i La client history completed jobs nu mai apare butonul book again\par
+\i0 Verdict: probabil bug sau neimplementat \f0\'een UI curent\par
+Dovezi: componenta de istoric client are logic\f1\'e3 pentru filter, modify \u537?i saved quotes \f0\'een components/client-dashboard/ClientHistory.tsx (line 58), dar \'een por\f1\u539?iunea verificat\'e3 nu am g\'e3sit eviden\u539?\'e3 clar\'e3 a unui buton Book again.\par
+Interpretare: cerin\u539?a nu este confirmat\'e3 \f0\'een codul inspectat; cel mai sigur status este c\f1\'e3 lipse\u537?te sau a regresat.\par
+Impact: scade conversia pe repeat booking.\par
+\par
+\b Am dat un review si nu apare nicaieri\par
+\b0 Verdict: implementat\par
+Dovezi: review-ul se salveaz\'e3 \f0\'een app/api/client/reviews/route.ts (line 88) \f1\u537?i logheaz\'e3 notificare admin la app/api/client/reviews/route.ts (line 105). Admin reviews le listeaz\'e3 prin app/api/admin/reviews/route.ts (line 19) \u537?i UI-ul exist\'e3 \f0\'een app/admin/reviews/page.tsx (line 29).\par
+Interpretare: feature-ul exist\f1\'e3 cap-coad\'e3. Dac\'e3 review-ul \ldblquote nu apare\rdblquote , probabil e problem\'e3 de date, filtrare sau acces, nu lips\'e3 de implementare.\par
+Impact: bug posibil, dar nu gap func\u539?ional clar.\par
+\par
+\i Nu avem notificari la complaint, lost property\par
+\i0 Verdict: implementat\par
+Dovezi: complaints insereaz\'e3 notificare admin la app/api/client/complaints/route.ts (line 141), iar lost property la app/api/client/lost-property/route.ts (line 114).\par
+Interpretare: backend-ul pentru notific\'e3ri exist\'e3.\par
+Impact: dac\'e3 nu se v\'e3d \f0\'een UI, problema este probabil \'een listare/filtrare, nu \'een submit.\par
+\par
+\b Rezumat Executiv\par
+\par
+Deja acoperite:\b0\par
+blocarea signup client pe email existent cu alt rol\par
+corporate signup complex cu status pending\par
+reviews, complaints \f1\u537?i lost property cu salvare \u537?i notific\'e3ri\par
+statements admin/driver \u537?i generare la complete-booking\par
+payment method \u537?i mesaj WhatsApp pentru \u537?ofer \f0\'een live bookings\par
+\par
+\b Par\f1\u539?iale sau probabil defecte:\par
+\b0 redirect-ul corporate pentru client logat este implementat, dar exact acesta produce comportamentul reclamat\par
+corporate approval exist\'e3 \f0\'een DB, dar nu are workflow admin clar\par
+job completed \f1\u537?i statements par implementate, dar au simptome de bug/inconsisten\u539?\'e3\par
+WhatsApp exist\'e3 \f0\'een cod, dar poate e fragil \'een runtime\par
+\par
+\b Lips\f1\'e3 clar\'e3:\par
+\b0 edit live booking din admin\par
+manual booking cu super access/manual pricing\par
+dovad\'e3 clar\'e3 pentru book again \f0\'een completed jobs\par
+\par
+\b Prioritate recomandat\f1\'e3:\par
+\b0 manual booking \u537?i edit live booking\par
+corporate approval flow \f0\'een admin\par
+bug-ul de complete-booking + statements/history\par
+validare UI pentru book again \f1\u537?i robustez\'e3 WhatsApp\par
+\f0\par
+}
+ 

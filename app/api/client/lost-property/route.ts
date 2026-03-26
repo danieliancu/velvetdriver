@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
+import { sendInternalFormNotificationEmail } from '@/lib/internal-form-notifications';
 
 const pool = getDbPool();
 
@@ -51,6 +52,48 @@ async function logAdminNotification(payload: {
   } catch (err) {
     console.error('Admin notification insert failed', err);
   }
+}
+
+async function sendLostPropertyNotificationEmail(input: {
+  journeyRef: string | null;
+  bookingDateTime: string | null;
+  fullName: string;
+  email: string;
+  phone: string;
+  description: string;
+  details: string;
+  representative: string;
+  source: string;
+}) {
+  const subject = `Lost property reported${input.journeyRef ? ` (${input.journeyRef})` : ''}`;
+  await sendInternalFormNotificationEmail({
+    type: 'lost_property',
+    subject,
+    errorLabel: 'Lost property notification email error',
+    lines: [
+      'Lost property reported',
+      `Reference: ${input.journeyRef || 'N/A'}`,
+      `Booking date/time: ${input.bookingDateTime || 'N/A'}`,
+      `Name: ${input.fullName}`,
+      `Email: ${input.email || 'N/A'}`,
+      `Phone: ${input.phone}`,
+      `Item: ${input.description}`,
+      `Representative: ${input.representative || 'N/A'}`,
+      `Source: ${input.source}`,
+      `Details: ${input.details}`,
+    ],
+    htmlLines: [
+      { label: 'Reference', value: input.journeyRef || 'N/A' },
+      { label: 'Booking date/time', value: input.bookingDateTime || 'N/A' },
+      { label: 'Name', value: input.fullName },
+      { label: 'Email', value: input.email || 'N/A' },
+      { label: 'Phone', value: input.phone },
+      { label: 'Item', value: input.description },
+      { label: 'Representative', value: input.representative || 'N/A' },
+      { label: 'Source', value: input.source },
+      { label: 'Details', value: input.details },
+    ],
+  });
 }
 
 export async function POST(request: Request) {
@@ -122,6 +165,18 @@ export async function POST(request: Request) {
         representative: representativeTag || 'n/a',
         source,
       },
+    });
+
+    await sendLostPropertyNotificationEmail({
+      journeyRef,
+      bookingDateTime: bookingDateTime || null,
+      fullName,
+      email: email || '',
+      phone,
+      description,
+      details,
+      representative: representativeTag || '',
+      source,
     });
 
     return NextResponse.json({ ok: true, id: resultSet.insertId });
