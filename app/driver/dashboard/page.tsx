@@ -834,16 +834,17 @@ const MonthlyStatement: React.FC = () => {
                             <th className="p-3 text-sm font-semibold text-amber-400 uppercase tracking-wider">Miles</th>
                             <th className="p-3 text-sm font-semibold text-amber-400 uppercase tracking-wider">Wait</th>
                             <th className="p-3 text-sm font-semibold text-amber-400 uppercase tracking-wider text-right">Fare (GBP)</th>
+                            <th className="p-3 text-sm font-semibold text-amber-400 uppercase tracking-wider text-right">PDF</th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading ? (
                             <tr>
-                                <td colSpan={8} className="p-3 text-gray-400">Loading statement rows...</td>
+                                <td colSpan={9} className="p-3 text-gray-400">Loading statement rows...</td>
                             </tr>
                         ) : rows.length === 0 ? (
                             <tr>
-                                <td colSpan={8} className="p-3 text-gray-400">No statement rows yet.</td>
+                                <td colSpan={9} className="p-3 text-gray-400">No statement rows yet.</td>
                             </tr>
                         ) : rows.map((row) => (
                             <tr key={row.ref} className="border-b border-amber-900/40">
@@ -855,6 +856,20 @@ const MonthlyStatement: React.FC = () => {
                                 <td className="p-3 text-white/90">{row.miles}</td>
                                 <td className="p-3 text-white/90">{row.wait}</td>
                                 <td className="p-3 text-amber-400 font-semibold text-right">GBP {row.fare.toFixed(2)}</td>
+                                <td className="p-3 text-right">
+                                    {row.pdfUrl ? (
+                                        <a
+                                            href={row.pdfUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="rounded-full border border-amber-500/60 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-300 transition hover:border-amber-400 hover:bg-amber-400 hover:text-black"
+                                        >
+                                            View PDF
+                                        </a>
+                                    ) : (
+                                        <span className="text-xs text-gray-500">Missing</span>
+                                    )}
+                                </td>
                             </tr>
                         ))}
                     </tbody>

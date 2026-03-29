@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool, DbRow } from '@/lib/db';
+import { ensureDriverStatementsTable } from '@/lib/driver-statements';
 
 const pool = getDbPool();
 
@@ -53,6 +54,18 @@ type CarDocRow = DbRow<{
   file_url: string;
   format: string | null;
   file_name: string | null;
+}>;
+
+type StatementRow = DbRow<{
+  driver_id: number;
+  booking_ref: string;
+  journey_date: string | null;
+  collection: string | null;
+  destination: string | null;
+  vehicle_type: string | null;
+  fare_quoted: number | null;
+  status: 'Paid' | 'Unpaid' | null;
+  statement_pdf_url: string | null;
 }>;
 
 const DOC_LABELS: Record<string, string> = {
@@ -121,6 +134,7 @@ export async function GET() {
     let documentsByDriver: Record<number, Array<{ name: string; url: string; type: string }>> = {};
     let profilePhotoByDriver: Record<number, string> = {};
     let carsByDriver: Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; status: string; vehicleTypeId: number | null; vehicleTypeLabel: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>> = {};
+    let statementsByDriver: Record<number, Array<{ date: string; ref: string; pickup: string; dropoff: string; vehicle: string; miles: number; wait: number; fare: number; status: 'Paid' | 'Unpaid'; pdfUrl: string | null }>> = {};
     let pricingVehicles: Array<{ id: number; label: string }> = [];
     if (driverIds.length) {
       const [docs] = await queryWithRetry<DocumentRow[]>(
@@ -208,6 +222,39 @@ export async function GET() {
         `SELECT id, label FROM pricing_vehicles ORDER BY id`
       );
       pricingVehicles = pricingRows.map((row) => ({ id: row.id, label: row.label }));
+
+      await ensureDriverStatementsTable(pool);
+      const [statementRows] = await queryWithRetry<StatementRow[]>(
+        `SELECT driver_id,
+                booking_ref,
+                journey_date,
+                collection,
+                destination,
+                vehicle_type,
+                fare_quoted,
+                status,
+                statement_pdf_url
+           FROM driver_statements
+          WHERE driver_id IN (${driverIds.map(() => '?').join(',')})
+          ORDER BY journey_date DESC, id DESC`,
+        driverIds
+      );
+      statementsByDriver = statementRows.reduce((acc, row) => {
+        if (!acc[row.driver_id]) acc[row.driver_id] = [];
+        acc[row.driver_id].push({
+          date: row.journey_date || '-',
+          ref: row.booking_ref || '',
+          pickup: row.collection || '-',
+          dropoff: row.destination || '-',
+          vehicle: row.vehicle_type || '-',
+          miles: 0,
+          wait: 0,
+          fare: Number(row.fare_quoted ?? 0) || 0,
+          status: (row.status || 'Unpaid') as 'Paid' | 'Unpaid',
+          pdfUrl: row.statement_pdf_url || null,
+        });
+        return acc;
+      }, {} as Record<number, Array<{ date: string; ref: string; pickup: string; dropoff: string; vehicle: string; miles: number; wait: number; fare: number; status: 'Paid' | 'Unpaid'; pdfUrl: string | null }>>);
     }
 
     const drivers = rows.map((row) => ({
@@ -225,6 +272,7 @@ export async function GET() {
       documents: documentsByDriver[row.driver_id] || [],
       profilePhotoUrl: profilePhotoByDriver[row.driver_id] || null,
       carDetails: carsByDriver[row.driver_id] || [],
+      statementRows: statementsByDriver[row.driver_id] || [],
     }));
 
     return NextResponse.json({ drivers, pricingVehicles });

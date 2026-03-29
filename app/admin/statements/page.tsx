@@ -1,11 +1,13 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import AdminPageHeader from '@/components/AdminPageHeader';
 
 type StatementRow = {
   id: number;
   ref: string;
+  issuedAt?: string | null;
   personAccepting: string;
   bookingDate: string;
   journeyDate: string;
@@ -24,13 +26,192 @@ type StatementRow = {
   pdfUrl: string | null;
 };
 
+const formatIssuedDate = (value?: string | null) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
+};
+
+const formatCurrency = (value: number) => `GBP ${value.toFixed(2)}`;
+
+const StatementPage = ({
+  row,
+  isSelected,
+  onToggleSelect,
+  expanded,
+  onToggleExpanded,
+}: {
+  row: StatementRow;
+  isSelected: boolean;
+  onToggleSelect: () => void;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+}) => (
+  <article className="rounded-[28px] border border-amber-200/20 bg-gradient-to-br from-[#f8f0db] via-[#fffaf0] to-[#efe0ba] text-[#2c2115] shadow-[0_30px_80px_rgba(0,0,0,0.35)] overflow-hidden">
+    <div className="border-b border-[#d6c39a] bg-gradient-to-r from-[#2e180f] via-[#51301c] to-[#2e180f] px-6 py-6 text-white sm:px-8">
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-amber-100/90">
+        <div className="flex flex-wrap items-center gap-3">
+          <span>{row.ref}</span>
+          <span>Issued: {formatIssuedDate(row.issuedAt)}</span>
+          <span>{formatCurrency(row.fare)}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={onToggleExpanded}
+            className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] transition hover:bg-white/15"
+          >
+            {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            {expanded ? 'Collapse' : 'Expand'}
+          </button>
+          <label className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em]">
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={onToggleSelect}
+              className="h-4 w-4 accent-amber-400"
+              aria-label={`Select ${row.ref} for download`}
+            />
+            Select
+          </label>
+          {row.pdfUrl ? (
+            <a
+              href={row.pdfUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center rounded-full bg-amber-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-[#2a1808] transition hover:bg-amber-200"
+            >
+              Open PDF
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </div>
+
+    {expanded ? (
+    <div className="space-y-6 px-6 py-6 sm:px-8 sm:py-8">
+      <div className="grid gap-4 md:grid-cols-[1.25fr_1fr]">
+        <div className="rounded-2xl border border-[#d8c49b] bg-white/70 p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[#8a6a34]">Statement No</p>
+          <p className="mt-2 text-3xl font-semibold tracking-[0.08em] text-[#3a2616]">{row.ref}</p>
+        </div>
+        <div className="rounded-2xl border border-[#d8c49b] bg-white/70 p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[#8a6a34]">Date Issued</p>
+          <p className="mt-2 text-2xl font-semibold text-[#3a2616]">{formatIssuedDate(row.issuedAt)}</p>
+        </div>
+      </div>
+
+      <section className="rounded-[24px] border border-[#d8c49b] bg-white/65 p-5">
+        <h3 className="text-sm font-semibold uppercase tracking-[0.28em] text-[#8a6a34]">Booking Details</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Booking accepted by</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.personAccepting}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Date of booking</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.bookingDate}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4 md:col-span-2">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Date of journey</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.journeyDate}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-[24px] border border-[#d8c49b] bg-white/65 p-5">
+        <h3 className="text-sm font-semibold uppercase tracking-[0.28em] text-[#8a6a34]">Customer Details</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Customer name</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.customerName}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Phone number</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.phoneNumber}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-[24px] border border-[#d8c49b] bg-white/65 p-5">
+        <h3 className="text-sm font-semibold uppercase tracking-[0.28em] text-[#8a6a34]">Journey Details</h3>
+        <div className="mt-4 grid gap-4">
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Collection address</p>
+            <p className="mt-2 text-lg font-medium leading-relaxed text-[#2f2418]">{row.collection}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Destination</p>
+            <p className="mt-2 text-lg font-medium leading-relaxed text-[#2f2418]">{row.destination}</p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+              <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Fare quoted</p>
+              <p className="mt-2 text-2xl font-semibold text-[#2f2418]">{formatCurrency(row.fare)}</p>
+            </div>
+            <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+              <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Status</p>
+              <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.status}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-[24px] border border-[#d8c49b] bg-white/65 p-5">
+        <h3 className="text-sm font-semibold uppercase tracking-[0.28em] text-[#8a6a34]">Driver &amp; Vehicle Details</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Dispatching operator</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.despatcher}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Driver full name</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.driverName}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">PCO licence number</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.driverLicenseNo}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Vehicle registration</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.vehicleReg}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Subcontract operator number</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.subletOperatorNo}</p>
+          </div>
+          <div className="rounded-2xl border border-[#eadfbe] bg-[#fffdf8] p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8b7242]">Subcontract operator name</p>
+            <p className="mt-2 text-lg font-medium text-[#2f2418]">{row.subletOperatorName}</p>
+          </div>
+        </div>
+      </section>
+
+      <footer className="rounded-2xl border border-[#d8c49b] bg-[#f4ead0] px-5 py-4 text-center text-sm text-[#6a5430]">
+        Velvet Drivers Limited | Private Hire Operator | This statement was generated for record purposes.
+      </footer>
+    </div>
+    ) : null}
+  </article>
+);
+
 const AdminStatementsPage: React.FC = () => {
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [rows, setRows] = useState<StatementRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [regenerateBusy, setRegenerateBusy] = useState(false);
+  const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -53,6 +234,7 @@ const AdminStatementsPage: React.FC = () => {
         const data = await res.json();
         setRows((data.statements || []) as StatementRow[]);
         setSelected({});
+        setExpanded({});
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
         setError(err?.message || 'Failed to load statements');
@@ -64,13 +246,18 @@ const AdminStatementsPage: React.FC = () => {
 
     loadStatements();
     return () => controller.abort();
-  }, [startDate, endDate]);
+  }, [startDate, endDate, refreshKey]);
 
   const toggleSelect = (key: string) => {
     setSelected((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const toggleExpanded = (key: string) => {
+    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const allSelected = useMemo(() => rows.length > 0 && rows.every((row) => selected[String(row.id)]), [rows, selected]);
+  const allExpanded = useMemo(() => rows.length > 0 && rows.every((row) => expanded[String(row.id)]), [rows, expanded]);
 
   const toggleSelectAll = () => {
     const next = rows.reduce<Record<string, boolean>>((acc, row) => {
@@ -78,6 +265,14 @@ const AdminStatementsPage: React.FC = () => {
       return acc;
     }, {});
     setSelected(next);
+  };
+
+  const toggleExpandAll = () => {
+    const next = rows.reduce<Record<string, boolean>>((acc, row) => {
+      acc[String(row.id)] = !allExpanded;
+      return acc;
+    }, {});
+    setExpanded(next);
   };
 
   const handleDownload = () => {
@@ -100,6 +295,56 @@ const AdminStatementsPage: React.FC = () => {
       link.click();
       document.body.removeChild(link);
     });
+  };
+
+  const handleBackfill = async () => {
+    setBackfillBusy(true);
+    setBackfillMessage(null);
+    try {
+      const res = await fetch('/api/admin/statements/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 100 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to backfill statements');
+      }
+
+      setBackfillMessage(
+        `Backfill finished. Generated ${Number(data?.generatedCount || 0)}, skipped ${Number(data?.skippedCount || 0)}, failed ${Number(data?.failedCount || 0)}.`
+      );
+      setRefreshKey((prev) => prev + 1);
+    } catch (err: any) {
+      setBackfillMessage(err?.message || 'Failed to backfill statements');
+    } finally {
+      setBackfillBusy(false);
+    }
+  };
+
+  const handleRegenerate = async () => {
+    setRegenerateBusy(true);
+    setBackfillMessage(null);
+    try {
+      const res = await fetch('/api/admin/statements/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 100, force: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to regenerate PDFs');
+      }
+
+      setBackfillMessage(
+        `PDF regeneration finished. Generated ${Number(data?.generatedCount || 0)}, skipped ${Number(data?.skippedCount || 0)}, failed ${Number(data?.failedCount || 0)}.`
+      );
+      setRefreshKey((prev) => prev + 1);
+    } catch (err: any) {
+      setBackfillMessage(err?.message || 'Failed to regenerate PDFs');
+    } finally {
+      setRegenerateBusy(false);
+    }
   };
 
   return (
@@ -126,101 +371,89 @@ const AdminStatementsPage: React.FC = () => {
                   className="rounded-md border border-white/10 bg-[#111]/70 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                 />
               </div>
-              <button
-                type="button"
-                onClick={handleDownload}
-                className="inline-flex items-center gap-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400 transition-colors disabled:opacity-60"
-                disabled={!rows.some((row) => selected[String(row.id)])}
-              >
-                Download selected
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleBackfill}
+                  className="inline-flex items-center gap-2 rounded-md border border-amber-500 px-4 py-2 text-sm font-semibold text-amber-300 hover:bg-amber-500 hover:text-black transition-colors disabled:opacity-60"
+                  disabled={backfillBusy}
+                >
+                  {backfillBusy ? 'Generating...' : 'Generate missing'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRegenerate}
+                  className="inline-flex items-center gap-2 rounded-md border border-white/20 px-4 py-2 text-sm font-semibold text-white hover:bg-white hover:text-black transition-colors disabled:opacity-60"
+                  disabled={regenerateBusy}
+                >
+                  {regenerateBusy ? 'Refreshing PDFs...' : 'Regenerate PDFs'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  className="inline-flex items-center gap-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400 transition-colors disabled:opacity-60"
+                  disabled={!rows.some((row) => selected[String(row.id)])}
+                >
+                  Download selected
+                </button>
+              </div>
             </div>
 
             {error ? (
               <div className="rounded-2xl border border-red-500/50 bg-red-950/40 p-4 text-red-200">{error}</div>
             ) : null}
+            {backfillMessage ? (
+              <div className="rounded-2xl border border-amber-500/40 bg-amber-950/20 p-4 text-amber-100">{backfillMessage}</div>
+            ) : null}
 
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm text-gray-100">
-                <thead className="text-xs uppercase tracking-[0.2em] text-amber-300">
-                  <tr className="border-b border-white/10">
-                    <th className="px-3 py-3 text-left">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={allSelected}
-                          onChange={toggleSelectAll}
-                          className="h-4 w-4 accent-amber-500"
-                          aria-label="Select all statements"
-                        />
-                        <span className="text-[10px] uppercase tracking-[0.2em] text-amber-300">Download</span>
-                      </div>
-                    </th>
-                    <th className="px-3 py-3 text-left">Person accepting booking</th>
-                    <th className="px-3 py-3 text-left">Date of booking</th>
-                    <th className="px-3 py-3 text-left">Date of journey</th>
-                    <th className="px-3 py-3 text-left">Customer name</th>
-                    <th className="px-3 py-3 text-left">Phone number</th>
-                    <th className="px-3 py-3 text-left">Place of collection</th>
-                    <th className="px-3 py-3 text-left">Main destination</th>
-                    <th className="px-3 py-3 text-left">Fare quoted</th>
-                    <th className="px-3 py-3 text-left">Person despatching booking</th>
-                    <th className="px-3 py-3 text-left">Driver Full Name</th>
-                    <th className="px-3 py-3 text-left">Driver PHP License Number</th>
-                    <th className="px-3 py-3 text-left">Vehcle Reg Number</th>
-                    <th className="px-3 py-3 text-left">Sublet Operator No.</th>
-                    <th className="px-3 py-3 text-left">Sublet Operator Name</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td className="px-3 py-5 text-gray-400" colSpan={15}>
-                        Loading statements...
-                      </td>
-                    </tr>
-                  ) : rows.length === 0 ? (
-                    <tr>
-                      <td className="px-3 py-5 text-gray-400" colSpan={15}>
-                        No statements found for this date range.
-                      </td>
-                    </tr>
-                  ) : (
-                    rows.map((row) => {
-                      const key = String(row.id);
-                      const isSelected = selected[key] ?? false;
-                      return (
-                        <tr key={key} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                          <td className="px-3 py-3">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleSelect(key)}
-                              className="h-4 w-4 accent-amber-500"
-                              aria-label={`Select ${row.ref} for download`}
-                            />
-                          </td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.personAccepting}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.bookingDate}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.journeyDate}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.customerName}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.phoneNumber}</td>
-                          <td className="px-3 py-3">{row.collection}</td>
-                          <td className="px-3 py-3">{row.destination}</td>
-                          <td className="px-3 py-3 font-semibold text-amber-200">GBP {row.fare.toFixed(2)}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.despatcher}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.driverName}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.driverLicenseNo}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.vehicleReg}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.subletOperatorNo}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">{row.subletOperatorName}</td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+            <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-[#120c0a]/80 px-4 py-3 text-sm text-gray-300">
+              <span>{rows.length} statement(s)</span>
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  type="button"
+                  onClick={toggleExpandAll}
+                  className="text-xs uppercase tracking-[0.22em] text-amber-300 transition hover:text-amber-200"
+                >
+                  {allExpanded ? 'Collapse all' : 'Expand all'}
+                </button>
+                <label className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-amber-300">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 accent-amber-500"
+                    aria-label="Select all statements"
+                  />
+                  Select all
+                </label>
+              </div>
             </div>
+
+            {loading ? (
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-6 text-sm text-gray-400">
+                Loading statements...
+              </div>
+            ) : rows.length === 0 ? (
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-6 text-sm text-gray-400">
+                No statements found for this date range.
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {rows.map((row) => {
+                  const key = String(row.id);
+                  return (
+                    <StatementPage
+                      key={key}
+                      row={row}
+                      isSelected={selected[key] ?? false}
+                      onToggleSelect={() => toggleSelect(key)}
+                      expanded={expanded[key] ?? false}
+                      onToggleExpanded={() => toggleExpanded(key)}
+                    />
+                  );
+                })}
+              </div>
+            )}
           </main>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import mysql from 'mysql2/promise';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { uploadRawToCloudinary } from '@/lib/cloudinary';
+import { uploadRawToCloudinary } from './cloudinary';
 
 export type StatementAllocationPayload = {
   journeyId: number;
@@ -52,99 +52,197 @@ const toMySqlDateTime = (value: string | Date | null) => {
 
 async function buildStatementPdfBytes(payload: StatementAllocationPayload) {
   const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const left = 38;
+  const right = A4_WIDTH - 38;
+  const top = A4_HEIGHT - 30;
+  const bottom = 28;
+  const colors = {
+    paper: rgb(0.985, 0.965, 0.92),
+    card: rgb(1, 0.992, 0.97),
+    border: rgb(0.85, 0.77, 0.6),
+    brown: rgb(0.18, 0.09, 0.06),
+    brownSoft: rgb(0.36, 0.2, 0.11),
+    label: rgb(0.54, 0.42, 0.2),
+    text: rgb(0.18, 0.13, 0.09),
+    footer: rgb(0.96, 0.92, 0.82),
+  };
 
-  const left = 50;
-  const right = A4_WIDTH - 50;
-  let y = A4_HEIGHT - 56;
-
-  page.drawText('Velvet Drivers Statement', {
-    x: left,
-    y,
-    size: 18,
-    font: bold,
-    color: rgb(0.2, 0.12, 0.12),
-  });
-  y -= 26;
-
-  page.drawText(`Reference: ${payload.bookingRef}`, {
-    x: left,
-    y,
-    size: 12,
-    font: bold,
-    color: rgb(0, 0, 0),
-  });
-  y -= 22;
-
-  const rows: Array<[string, string]> = [
-    ['Person accepting booking', payload.personAccepting],
-    ['Date of booking', formatDate(payload.bookingDate)],
-    ['Date of journey', formatDate(payload.journeyDate)],
-    ['Customer name', payload.customerName],
-    ['Phone number', payload.phoneNumber],
-    ['Place of collection', payload.collection],
-    ['Main destination', payload.destination],
-    ['Fare quoted', `GBP ${payload.fareQuoted.toFixed(2)}`],
-    ['Person dispatching booking', payload.personDispatching],
-    ['Driver full name', payload.driverName],
-    ['Driver PCO licence number', payload.driverLicenseNo],
-    ['Vehicle reg number', payload.vehicleReg],
-    ['Vehicle type', payload.vehicleType],
-    ['Sublet operator no.', payload.subletOperatorNo],
-    ['Sublet operator name', payload.subletOperatorName],
-  ];
-
-  const maxLineWidth = right - (left + 200);
-  const wrapText = (text: string, usedFont: any, size: number) => {
-    const words = text.split(/\s+/).filter(Boolean);
+  const wrapText = (text: string, usedFont: any, size: number, maxWidth: number) => {
+    const words = String(text || '-').split(/\s+/).filter(Boolean);
     if (!words.length) return ['-'];
     const lines: string[] = [];
     let current = '';
-    words.forEach((word) => {
+    for (const word of words) {
       const next = current ? `${current} ${word}` : word;
-      const width = usedFont.widthOfTextAtSize(next, size);
-      if (width <= maxLineWidth) {
+      if (usedFont.widthOfTextAtSize(next, size) <= maxWidth) {
         current = next;
       } else {
         if (current) lines.push(current);
         current = word;
       }
-    });
+    }
     if (current) lines.push(current);
     return lines;
   };
 
-  rows.forEach(([label, value]) => {
-    page.drawText(`${label}:`, {
-      x: left,
-      y,
-      size: 11,
-      font: bold,
-      color: rgb(0, 0, 0),
+  let page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
+  let y = top;
+  const resetPageBackground = () => {
+    page.drawRectangle({
+      x: 0,
+      y: 0,
+      width: A4_WIDTH,
+      height: A4_HEIGHT,
+      color: colors.paper,
     });
+  };
+  resetPageBackground();
 
-    const lines = wrapText(value || '-', font, 11);
-    lines.forEach((line, idx) => {
+  const ensureSpace = (needed: number) => {
+    if (y - needed >= bottom) return;
+    page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
+    resetPageBackground();
+    y = top;
+  };
+
+  const drawTextLines = (
+    x: number,
+    yTop: number,
+    lines: string[],
+    size: number,
+    usedFont: any,
+    color = colors.text,
+    lineGap = 12
+  ) => {
+    lines.forEach((line, index) => {
       page.drawText(line, {
-        x: left + 200,
-        y: y - idx * 15,
-        size: 11,
-        font,
-        color: rgb(0, 0, 0),
+        x,
+        y: yTop - index * lineGap,
+        size,
+        font: usedFont,
+        color,
       });
     });
+  };
 
-    y -= Math.max(20, lines.length * 15 + 5);
-  });
+  const drawField = (x: number, yTop: number, width: number, label: string, value: string, minHeight = 56) => {
+    const labelSize = 7.5;
+    const valueSize = 11;
+    const textWidth = width - 20;
+    const valueLines = wrapText(value, font, valueSize, textWidth);
+    const height = Math.max(minHeight, 18 + valueLines.length * 12 + 12);
+    page.drawRectangle({
+      x,
+      y: yTop - height,
+      width,
+      height,
+      color: colors.card,
+      borderColor: colors.border,
+      borderWidth: 1,
+    });
+    page.drawText(label.toUpperCase(), {
+      x: x + 10,
+      y: yTop - 14,
+      size: labelSize,
+      font: bold,
+      color: colors.label,
+    });
+    drawTextLines(x + 10, yTop - 28, valueLines, valueSize, font, colors.text, 12);
+    return height;
+  };
 
-  page.drawText('Generated automatically at completion time.', {
+  const drawSectionTitle = (title: string) => {
+    page.drawText(title.toUpperCase(), {
+      x: left + 4,
+      y,
+      size: 9,
+      font: bold,
+      color: colors.label,
+    });
+    y -= 13;
+  };
+
+  const drawSingleField = (label: string, value: string, minHeight = 48) => {
+    const height = drawField(left, y, right - left, label, value, minHeight);
+    y -= height + 8;
+  };
+
+  const drawTwoFields = (leftField: [string, string], rightField: [string, string], minHeight = 48) => {
+    const gap = 10;
+    const width = (right - left - gap) / 2;
+    const leftHeight = drawField(left, y, width, leftField[0], leftField[1], minHeight);
+    const rightHeight = drawField(left + width + gap, y, width, rightField[0], rightField[1], minHeight);
+    y -= Math.max(leftHeight, rightHeight) + 8;
+  };
+
+  const drawHeader = () => {
+    page.drawRectangle({
+      x: left,
+      y: y - 58,
+      width: right - left,
+      height: 58,
+      color: colors.brown,
+    });
+    page.drawText('VELVET DRIVERS LIMITED', {
+      x: left + 18,
+      y: y - 18,
+      size: 8.5,
+      font: bold,
+      color: rgb(0.95, 0.86, 0.66),
+    });
+    page.drawText('Journey Statement', {
+      x: left + 18,
+      y: y - 38,
+      size: 18,
+      font: bold,
+      color: rgb(1, 1, 1),
+    });
+    y -= 68;
+  };
+
+  drawHeader();
+  ensureSpace(64);
+  drawTwoFields(['Statement No', payload.bookingRef], ['Date Issued', formatDate(new Date())], 48);
+
+  ensureSpace(128);
+  drawSectionTitle('Booking Details');
+  drawTwoFields(['Booking accepted by', payload.personAccepting], ['Date of booking', formatDate(payload.bookingDate)]);
+  drawSingleField('Date of journey', formatDate(payload.journeyDate));
+
+  ensureSpace(96);
+  drawSectionTitle('Customer Details');
+  drawTwoFields(['Customer name', payload.customerName], ['Phone number', payload.phoneNumber]);
+
+  ensureSpace(180);
+  drawSectionTitle('Journey Details');
+  drawSingleField('Collection address', payload.collection, 58);
+  drawSingleField('Destination', payload.destination, 58);
+  drawTwoFields(['Fare quoted', `GBP ${payload.fareQuoted.toFixed(2)}`], ['Vehicle type', payload.vehicleType]);
+
+  ensureSpace(180);
+  drawSectionTitle('Driver & Vehicle Details');
+  drawTwoFields(['Dispatching operator', payload.personDispatching], ['Driver full name', payload.driverName]);
+  drawTwoFields(['PCO licence number', payload.driverLicenseNo], ['Vehicle registration', payload.vehicleReg]);
+  drawTwoFields(['Subcontract operator number', payload.subletOperatorNo], ['Subcontract operator name', payload.subletOperatorName], 52);
+
+  ensureSpace(32);
+  page.drawRectangle({
     x: left,
-    y: 40,
-    size: 9,
+    y: y - 22,
+    width: right - left,
+    height: 22,
+    color: colors.footer,
+    borderColor: colors.border,
+    borderWidth: 1,
+  });
+  page.drawText('Velvet Drivers Limited | Private Hire Operator | This statement was generated for record purposes.', {
+    x: left + 12,
+    y: y - 14,
+    size: 7.2,
     font,
-    color: rgb(0.35, 0.35, 0.35),
+    color: colors.brownSoft,
   });
 
   return new Uint8Array(await pdfDoc.save());

@@ -802,7 +802,12 @@ const AdminDashboardPage: React.FC = () => {
       }
 
       setLiveBookings((prev) => prev.filter((entry) => entry.id !== booking.id));
-      setAllocationSuccess('Job marked as completed.');
+      if (data?.warning) {
+        setAllocationWarning(String(data.warning));
+        setAllocationSuccess('Job marked as completed.');
+      } else {
+        setAllocationSuccess('Job marked as completed and statement generated.');
+      }
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event(LIVE_BOOKINGS_REFRESH_EVENT));
       }

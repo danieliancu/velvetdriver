@@ -44,6 +44,7 @@ type StatementRow = {
   wait: number;
   fare: number;
   status: 'Paid' | 'Unpaid';
+  pdfUrl?: string | null;
 };
 
 type DocumentRow = {
@@ -792,6 +793,7 @@ const AdminDriversPage: React.FC = () => {
                     <th className="py-2 px-3">Vehicle</th>
                     <th className="py-2 px-3 text-right">Fare (£)</th>
                     <th className="py-2 px-3 text-right">Status</th>
+                    <th className="py-2 px-3 text-right">PDF</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -815,6 +817,20 @@ const AdminDriversPage: React.FC = () => {
                         >
                           {row.status}
                         </button>
+                      </td>
+                      <td className="py-2 px-3 text-right">
+                        {row.pdfUrl ? (
+                          <a
+                            href={row.pdfUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-full border border-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-white transition hover:border-amber-400 hover:text-amber-300"
+                          >
+                            View
+                          </a>
+                        ) : (
+                          <span className="text-xs text-gray-500">Missing</span>
+                        )}
                       </td>
                     </tr>
                   ))}

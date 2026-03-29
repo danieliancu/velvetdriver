@@ -64,6 +64,7 @@ export async function GET(request: Request) {
     const statements = rows.map((row) => ({
       id: Number(row.id),
       ref: String(row.booking_ref || ''),
+      issuedAt: row.created_at ? String(row.created_at) : null,
       personAccepting: String(row.person_accepting || '-'),
       bookingDate: formatDate(row.booking_date ? String(row.booking_date) : null),
       journeyDate: formatDate(row.journey_date ? String(row.journey_date) : null),

@@ -47,7 +47,7 @@ export default async function FleetDetailPage({ params }: { params: { slug: stri
           <img
             src={primaryImage || 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1400&q=80'}
             alt={item.label}
-            className="w-full h-[360px] object-cover"
+            className="w-full h-full object-cover"
           />
         </div>
 

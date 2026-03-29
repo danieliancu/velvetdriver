@@ -50,21 +50,7 @@ export default async function FleetPage() {
                     <div className="p-5 space-y-3">
                       <h3 className="text-xl font-semibold text-white">{item.label}</h3>
                       <p className="text-sm text-gray-300 leading-relaxed">{item.summary}</p>
-                      {secondaryImages.length ? (
-                        <div className="flex items-center gap-2 overflow-x-auto">
-                          {secondaryImages.map((imageUrl) => (
-                            <img
-                              key={`${item.slug}-${imageUrl}`}
-                              src={imageUrl}
-                              alt={item.label}
-                              className="h-12 w-16 rounded-lg border border-white/10 object-cover"
-                            />
-                          ))}
-                          <span className="text-xs text-gray-400 whitespace-nowrap">{images.length} images</span>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-500">1 image</p>
-                      )}
+
                       <span className="text-sm font-semibold text-amber-300 group-hover:text-amber-200 transition-colors">
                         View details {'>'}
                       </span>

@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth-context';
 type NavItem = {
   id:
     | 'live'
+    | 'clients'
     | 'older'
     | 'drivers'
     | 'blog'
@@ -48,6 +49,11 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
       label: 'Live Bookings',
       to: '/admin/dashboard',
       badge: computedLiveBadge
+    },
+    {
+      id: 'clients',
+      label: 'Clients',
+      to: '/admin/clients'
     },
     {
       id: 'staff',
