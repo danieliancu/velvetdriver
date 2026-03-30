@@ -76,6 +76,7 @@ export async function generateStatementForJourney(
 ): Promise<StatementGenerationResult> {
   const [bookingRows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT cj.id,
+            cj.status,
             cj.journey_date,
             cj.created_at,
             cj.pickup,
@@ -103,6 +104,15 @@ export async function generateStatementForJourney(
       journeyId,
       bookingRef,
       reason: 'Booking not found.',
+    };
+  }
+
+  if (String(booking.status || '').trim() !== 'Completed') {
+    return {
+      status: 'skipped',
+      journeyId,
+      bookingRef,
+      reason: 'Statement can only be generated after the journey is completed.',
     };
   }
 

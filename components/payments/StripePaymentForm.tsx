@@ -10,13 +10,23 @@ type Props = {
   onSuccess: (paymentIntent: { id: string; status: string }) => void;
   onError: (message: string) => void;
   buttonLabel?: string;
+  mode?: 'payment' | 'authorization';
 };
 
-const StripePaymentForm = ({ amount, clientSecret, disabled, onSuccess, onError, buttonLabel = 'Pay now' }: Props) => {
+const StripePaymentForm = ({
+  amount,
+  clientSecret,
+  disabled,
+  onSuccess,
+  onError,
+  buttonLabel = 'Pay now',
+  mode = 'payment',
+}: Props) => {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
   const [paymentRequest, setPaymentRequest] = useState<any>(null);
+  const successfulStatus = mode === 'authorization' ? 'requires_capture' : 'succeeded';
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -37,8 +47,8 @@ const StripePaymentForm = ({ amount, clientSecret, disabled, onSuccess, onError,
         return;
       }
 
-      if (!paymentIntent || paymentIntent.status !== 'succeeded') {
-        onError('Payment not completed. Please try again.');
+      if (!paymentIntent || paymentIntent.status !== successfulStatus) {
+        onError(mode === 'authorization' ? 'Card hold was not authorized. Please try again.' : 'Payment not completed. Please try again.');
         return;
       }
 
@@ -82,16 +92,16 @@ const StripePaymentForm = ({ amount, clientSecret, disabled, onSuccess, onError,
             onError(actionError?.message || 'Payment failed.');
             return;
           }
-          if (finalIntent.status === 'succeeded') {
+          if (finalIntent.status === successfulStatus) {
             onSuccess({ id: finalIntent.id, status: finalIntent.status });
             return;
           }
         }
-        if (paymentIntent.status === 'succeeded') {
+        if (paymentIntent.status === successfulStatus) {
           onSuccess({ id: paymentIntent.id, status: paymentIntent.status });
           return;
         }
-        onError('Payment not completed. Please try again.');
+        onError(mode === 'authorization' ? 'Card hold was not authorized. Please try again.' : 'Payment not completed. Please try again.');
       } catch (err: any) {
         onError(err?.message || 'Payment failed.');
       }
@@ -99,7 +109,7 @@ const StripePaymentForm = ({ amount, clientSecret, disabled, onSuccess, onError,
     return () => {
       pr.off('paymentmethod');
     };
-  }, [stripe, clientSecret, amount, onError, onSuccess]);
+  }, [stripe, clientSecret, amount, onError, onSuccess, successfulStatus, mode]);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">

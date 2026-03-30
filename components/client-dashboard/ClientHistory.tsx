@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Elements } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
 import type { Journey, SavedQuote } from '@/types';
 import Modal from '@/components/Modal';
 import StripePaymentForm from '@/components/payments/StripePaymentForm';
+import { attachGooglePlacesAutocomplete, loadGoogleMapsPlaces } from '@/lib/google-places-autocomplete';
 
 type RenderStatus = Journey['status'] | 'Modified';
 
@@ -18,7 +19,6 @@ type PricePreview = {
 };
 
 const BOOKING_DRAFT_KEY = 'velvetdriver.booking.draft';
-
 const stripStopLabel = (value: string) => value.replace(/^Stop\s+\d+:\s*/i, '').trim();
 
 const parseDestinationStops = (destination: string) => {
@@ -70,6 +70,8 @@ const toDateTimeInputs = (iso?: string | null) => {
   return { date: `${year}-${month}-${day}`, time: `${hours}:${minutes}` };
 };
 
+const selectedTimeCanBeEdited = (journey?: Journey | null) => journey?.canEditTime !== false;
+
 const ClientHistory: React.FC<Props> = ({
   journeys = [],
   loading = false,
@@ -85,7 +87,7 @@ const ClientHistory: React.FC<Props> = ({
   const [query, setQuery] = useState('');
   const [selectedJourney, setSelectedJourney] = useState<Journey | null>(null);
   const [pickup, setPickup] = useState('');
-  const [dropOff, setDropOff] = useState('');
+  const [dropOffs, setDropOffs] = useState<string[]>(['']);
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [flightNumber, setFlightNumber] = useState('');
@@ -100,6 +102,8 @@ const ClientHistory: React.FC<Props> = ({
   const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
   const [stripeClientSecret, setStripeClientSecret] = useState<string | null>(null);
   const [stripePublishableKey, setStripePublishableKey] = useState<string | null>(null);
+  const pickupInputRef = useRef<HTMLInputElement | null>(null);
+  const dropOffInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const stripePromise = useMemo(
     () => (stripePublishableKey ? loadStripe(stripePublishableKey) : null),
     [stripePublishableKey]
@@ -147,10 +151,18 @@ const ClientHistory: React.FC<Props> = ({
     });
   }, [journeys, filter, query]);
 
-  const canPreview = Boolean(selectedJourney && clientEmail && pickup && dropOff && date && time);
+  const canPreview = Boolean(
+    selectedJourney &&
+      clientEmail &&
+      pickup.trim() &&
+      date &&
+      time &&
+      dropOffs.length &&
+      dropOffs.every((stop) => stop.trim())
+  );
 
   const fetchPreview = React.useCallback(async () => {
-    if (!selectedJourney || !clientEmail || !pickup || !dropOff || !date || !time) return;
+    if (!selectedJourney || !clientEmail || !pickup.trim() || !date || !time || !dropOffs.length || dropOffs.some((stop) => !stop.trim())) return;
     setRecalcLoading(true);
     setRecalcError(null);
     setShowPaymentForm(false);
@@ -165,7 +177,7 @@ const ClientHistory: React.FC<Props> = ({
           email: clientEmail,
           journeyId: selectedJourney.id,
           pickup,
-          dropOff,
+          dropOffs,
           date,
           time,
           flightNumber,
@@ -190,9 +202,9 @@ const ClientHistory: React.FC<Props> = ({
     } finally {
       setRecalcLoading(false);
     }
-  }, [selectedJourney, clientEmail, pickup, dropOff, date, time, flightNumber, passengers, specialRequests]);
+  }, [selectedJourney, clientEmail, pickup, dropOffs, date, time, flightNumber, passengers, specialRequests]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!canPreview) return;
     const timer = window.setTimeout(() => {
       fetchPreview();
@@ -200,11 +212,48 @@ const ClientHistory: React.FC<Props> = ({
     return () => window.clearTimeout(timer);
   }, [canPreview, fetchPreview]);
 
+  useEffect(() => {
+    if (!selectedJourney) return;
+    let cleanupFns: Array<() => void> = [];
+    let cancelled = false;
+
+    loadGoogleMapsPlaces()
+      .then(() => {
+        if (cancelled) return;
+        if (pickupInputRef.current) {
+          cleanupFns.push(
+            attachGooglePlacesAutocomplete(pickupInputRef.current, (value) => {
+              setPickup(value);
+            })
+          );
+        }
+        dropOffInputRefs.current.forEach((input, index) => {
+          if (!input) return;
+          cleanupFns.push(
+            attachGooglePlacesAutocomplete(input, (value) => {
+              setDropOffs((prev) => prev.map((stop, stopIndex) => (stopIndex === index ? value : stop)));
+            })
+          );
+        });
+      })
+      .catch((err) => console.error('Failed to load Google Maps Places', err));
+
+    return () => {
+      cancelled = true;
+      cleanupFns.forEach((fn) => fn());
+      cleanupFns = [];
+    };
+  }, [selectedJourney, dropOffs.length]);
+
   const openModifyModal = (journey: Journey) => {
     const dt = toDateTimeInputs(journey.journeyDateIso);
     setSelectedJourney(journey);
     setPickup(journey.pickup || '');
-    setDropOff(journey.destination || '');
+    setDropOffs(
+      Array.isArray(journey.dropOffs) && journey.dropOffs.length
+        ? journey.dropOffs
+        : parseDestinationStops(journey.destination || '')
+    );
     setDate(dt.date);
     setTime(dt.time);
     setFlightNumber(journey.flightNumber || '');
@@ -216,6 +265,21 @@ const ClientHistory: React.FC<Props> = ({
     setShowPaymentForm(false);
     setStripeClientSecret(null);
     setStripePublishableKey(null);
+  };
+
+  const updateDropOff = (index: number, value: string) => {
+    setDropOffs((prev) => prev.map((stop, stopIndex) => (stopIndex === index ? value : stop)));
+  };
+
+  const addStop = () => {
+    setDropOffs((prev) => [...prev, '']);
+  };
+
+  const removeStop = (index: number) => {
+    setDropOffs((prev) => {
+      if (prev.length === 1) return [''];
+      return prev.filter((_, stopIndex) => stopIndex !== index);
+    });
   };
 
   const closeModifyModal = () => {
@@ -243,7 +307,7 @@ const ClientHistory: React.FC<Props> = ({
           email: clientEmail,
           journeyId: selectedJourney.id,
           pickup,
-          dropOff,
+          dropOffs,
           date,
           time,
           flightNumber,
@@ -251,7 +315,7 @@ const ClientHistory: React.FC<Props> = ({
           specialRequests,
           paymentIntentId: payment?.id,
           paymentStatus: payment?.status,
-          paymentMethod: payment?.method || 'Card',
+          paymentMethod: payment?.method || 'Card authorization',
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -261,10 +325,11 @@ const ClientHistory: React.FC<Props> = ({
       setShowPaymentForm(false);
       setStripeClientSecret(null);
       setStripePublishableKey(null);
+      const warningText = Array.isArray(data?.warnings) ? data.warnings.join(' ') : '';
       setSuccessMessage(
         data?.creditIssued
-          ? `Your booking has been successfully updated. GBP ${Number(data.creditIssued).toFixed(2)} credit has been added to your account.`
-          : 'Your booking has been successfully updated. Your chauffeur will be informed accordingly.'
+          ? `Your booking has been successfully updated. GBP ${Number(data.creditIssued).toFixed(2)} credit has been added to your account.${warningText ? ` ${warningText}` : ''}`
+          : `Your booking has been successfully updated. Your chauffeur will be informed accordingly.${warningText ? ` ${warningText}` : ''}`
       );
       await onJourneyModified?.();
     } catch (err: any) {
@@ -289,7 +354,7 @@ const ClientHistory: React.FC<Props> = ({
             passengerName: 'Client',
             passengerEmail: clientEmail,
             pickup,
-            dropOffs: [dropOff],
+            dropOffs,
           }),
         });
         const data = await response.json().catch(() => ({}));
@@ -431,6 +496,7 @@ const ClientHistory: React.FC<Props> = ({
   };
 
   const selectedJourneyCanModify = selectedJourney?.canModify !== false;
+  const selectedJourneyCanEditTime = selectedTimeCanBeEdited(selectedJourney);
 
   return (
     <div>
@@ -579,13 +645,14 @@ const ClientHistory: React.FC<Props> = ({
           <div className="rounded-xl border border-amber-900/40 bg-black/30 p-4 text-sm text-amber-100/90 space-y-1">
             <p>Changes are complimentary up to 6 hours before pickup.</p>
             <p>Within 6 hours, please contact our team directly.</p>
+            <p>Pickup time can only be changed up to 2 hours before the journey.</p>
           </div>
 
           <div className="rounded-xl border border-gray-700/70 bg-black/20 p-4 text-sm text-gray-300 space-y-1">
             <p className="text-amber-200 font-semibold">What you can modify</p>
             <p>Pickup time</p>
             <p>Pickup address</p>
-            <p>Drop-off address</p>
+            <p>Add, remove, or edit stops</p>
             <p>Flight number</p>
             <p>Passenger count</p>
             <p>Special requests</p>
@@ -595,20 +662,13 @@ const ClientHistory: React.FC<Props> = ({
             <label className="text-xs uppercase tracking-wide text-amber-200/70">
               Pickup address
               <input
+                ref={pickupInputRef}
                 value={pickup}
                 onChange={(e) => setPickup(e.target.value)}
                 disabled={!selectedJourneyCanModify || submitLoading}
                 className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
               />
-            </label>
-            <label className="text-xs uppercase tracking-wide text-amber-200/70">
-              Drop-off address
-              <input
-                value={dropOff}
-                onChange={(e) => setDropOff(e.target.value)}
-                disabled={!selectedJourneyCanModify || submitLoading}
-                className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
-              />
+              <p className="mt-1 text-[11px] normal-case tracking-normal text-gray-400">Start typing to search with Google Maps.</p>
             </label>
             <label className="text-xs uppercase tracking-wide text-amber-200/70">
               Pickup date
@@ -626,7 +686,7 @@ const ClientHistory: React.FC<Props> = ({
                 type="time"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
-                disabled={!selectedJourneyCanModify || submitLoading}
+                disabled={!selectedJourneyCanModify || !selectedJourneyCanEditTime || submitLoading}
                 className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
               />
             </label>
@@ -651,6 +711,43 @@ const ClientHistory: React.FC<Props> = ({
                 className="mt-1 w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
               />
             </label>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-wide text-amber-200/70">Stops and final destination</p>
+              <button
+                type="button"
+                onClick={addStop}
+                disabled={!selectedJourneyCanModify || submitLoading}
+                className="px-3 py-1 text-xs font-semibold rounded-md border border-amber-400/60 text-amber-200 hover:bg-amber-400/10 transition-colors disabled:opacity-50"
+                >
+                  Add stop
+                </button>
+              </div>
+            <p className="text-[11px] text-gray-400">Start typing a new address to see Google Maps suggestions.</p>
+            {dropOffs.map((stop, index) => (
+              <div key={`journey-stop-${index}`} className="flex items-center gap-2">
+                <input
+                  ref={(node) => {
+                    dropOffInputRefs.current[index] = node;
+                  }}
+                  value={stop}
+                  onChange={(e) => updateDropOff(index, e.target.value)}
+                  disabled={!selectedJourneyCanModify || submitLoading}
+                  className="w-full rounded-md border border-amber-900/60 bg-[#2a1a1a] px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+                  placeholder={index === dropOffs.length - 1 ? 'Final destination' : `Stop ${index + 1}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => removeStop(index)}
+                  disabled={!selectedJourneyCanModify || submitLoading || dropOffs.length === 1}
+                  className="px-3 py-2 text-xs font-semibold rounded-md border border-red-500/60 text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
           </div>
 
           <label className="block text-xs uppercase tracking-wide text-amber-200/70">
@@ -681,6 +778,8 @@ const ClientHistory: React.FC<Props> = ({
 
           {!selectedJourneyCanModify ? (
             <p className="text-sm text-amber-200">Within 6 hours, please contact our team directly to amend this journey.</p>
+          ) : !selectedJourneyCanEditTime ? (
+            <p className="text-sm text-amber-200">Pickup time can no longer be changed within 2 hours of the journey.</p>
           ) : null}
 
           {recalcError ? <p className="text-sm text-red-300">{recalcError}</p> : null}
@@ -696,10 +795,11 @@ const ClientHistory: React.FC<Props> = ({
               <StripePaymentForm
                 amount={Number(preview?.payNowAmount ?? 0)}
                 clientSecret={stripeClientSecret}
-                onSuccess={(paymentIntent) => submitModification({ ...paymentIntent, method: 'Card' })}
+                onSuccess={(paymentIntent) => submitModification({ ...paymentIntent, method: 'Card authorization' })}
                 onError={setRecalcError}
                 disabled={submitLoading}
-                buttonLabel="Pay and confirm changes"
+                buttonLabel="Authorize hold and confirm changes"
+                mode="authorization"
               />
             </Elements>
           ) : null}
@@ -724,7 +824,7 @@ const ClientHistory: React.FC<Props> = ({
                   : submitLoading
                   ? 'Updating...'
                   : preview && preview.difference > 0
-                    ? `Proceed to payment: GBP ${preview.payNowAmount.toFixed(2)}`
+                    ? `Proceed to authorization: GBP ${preview.payNowAmount.toFixed(2)}`
                     : 'Confirm changes'}
               </button>
             ) : null}

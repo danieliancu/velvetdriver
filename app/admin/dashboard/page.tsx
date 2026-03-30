@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import AdminPageHeader from '@/components/AdminPageHeader';
+import { attachGooglePlacesAutocomplete, loadGoogleMapsPlaces } from '@/lib/google-places-autocomplete';
 
 type DriverDirectoryEntry = {
   id: string;
@@ -26,6 +27,7 @@ type LiveBooking = {
   id: string;
   pickup: string;
   dropOff: string;
+  dropOffs: string[];
   passenger: string;
   phone: string;
   email: string;
@@ -39,6 +41,8 @@ type LiveBooking = {
   paymentMethod?: string;
   isPaid?: boolean;
   isRefundable?: boolean;
+  canReleaseHold?: boolean;
+  paymentAction?: 'refund' | 'cancel_hold' | null;
   bookedBy: string;
   bookedByStaffId?: number | null;
   drivers: string[];
@@ -49,6 +53,17 @@ type LiveBooking = {
   driverPrice?: number | null;
   driverCommissionApplied?: number | null;
   clientConfirmed?: boolean;
+  rideStatus?: string;
+  paymentStatus?: string;
+  originalEstimate?: number | null;
+  currentEstimate?: number | null;
+  finalFare?: number | null;
+  authorizedAmount?: number | null;
+  capturedAmount?: number | null;
+  primaryPaymentIntentId?: string;
+  stripeCustomerId?: string;
+  stripePaymentMethodId?: string;
+  paymentFailureReason?: string;
 };
 
 type LiveBookingResponse = {
@@ -56,6 +71,7 @@ type LiveBookingResponse = {
   code: string;
   pickup: string;
   dropOff: string;
+  dropOffs?: string[];
   passenger: string;
   phone: string;
   passengerEmail?: string;
@@ -70,6 +86,8 @@ type LiveBookingResponse = {
   paymentMethod?: string;
   isPaid?: boolean;
   isRefundable?: boolean;
+  canReleaseHold?: boolean;
+  paymentAction?: 'refund' | 'cancel_hold' | null;
   bookedBy: string;
   bookedByStaffId?: number | null;
   vehicle?: string;
@@ -78,6 +96,17 @@ type LiveBookingResponse = {
   driverPrice?: number | null;
   driverCommissionApplied?: number | null;
   clientConfirmed?: boolean;
+  rideStatus?: string;
+  paymentStatus?: string;
+  originalEstimate?: number | null;
+  currentEstimate?: number | null;
+  finalFare?: number | null;
+  authorizedAmount?: number | null;
+  capturedAmount?: number | null;
+  primaryPaymentIntentId?: string;
+  stripeCustomerId?: string;
+  stripePaymentMethodId?: string;
+  paymentFailureReason?: string;
 };
 
 type VehicleTier = 'executive' | 'luxury' | 'luxury_mpv' | null;
@@ -91,6 +120,7 @@ const FALLBACK_ACTIVE: LiveBooking[] = [
     passenger: 'Maria Popescu',
     phone: '+44 7700 900111',
     email: 'maria.popescu@example.com',
+    dropOffs: ['The Langham, 1C Portland Pl, London W1B 1JA'],
     notes: 'Meet & greet, 1x large suitcase, flight BA0892, watch delays',
     time: '13:15',
     date: '2026-01-10',
@@ -102,6 +132,15 @@ const FALLBACK_ACTIVE: LiveBooking[] = [
 
 const FALLBACK_COMPLETED: LiveBooking[] = [];
 const LIVE_BOOKINGS_REFRESH_EVENT = 'admin-live-bookings-refresh';
+const HOLD_PAYMENT_STATUSES = new Set([
+  'authorized',
+  'authorization_updated',
+  'additional_authorization_created',
+  'partially_captured',
+]);
+
+const formatCurrencyValue = (value?: number | null) =>
+  value === null || value === undefined || !Number.isFinite(value) ? '' : `GBP ${Number(value).toFixed(2)}`;
 
 const formatPhoneForWhatsApp = (phone: string) => phone.replace(/\D/g, '');
 
@@ -208,6 +247,26 @@ const formatDriverCommission = (value?: number | null) => {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 };
 
+const toDateTimeInputs = (iso?: string | null) => {
+  const parsed = iso ? new Date(iso) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    return { date: '', time: '' };
+  }
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  const hours = String(parsed.getHours()).padStart(2, '0');
+  const minutes = String(parsed.getMinutes()).padStart(2, '0');
+  return { date: `${year}-${month}-${day}`, time: `${hours}:${minutes}` };
+};
+
+const canEditJourneyTime = (iso?: string | null) => {
+  if (!iso) return true;
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return true;
+  return parsed.getTime() - Date.now() >= 2 * 60 * 60 * 1000;
+};
+
 const resolveVehicleTier = (label?: string | null): VehicleTier => {
   if (!label) return null;
   const normalized = label.toLowerCase().trim();
@@ -275,6 +334,17 @@ const AdminDashboardPage: React.FC = () => {
   const [completeAllocationBusy, setCompleteAllocationBusy] = useState<Record<string, boolean>>({});
   const [refundBusy, setRefundBusy] = useState<Record<string, boolean>>({});
   const [pendingRefundBooking, setPendingRefundBooking] = useState<LiveBooking | null>(null);
+  const [pendingEditBooking, setPendingEditBooking] = useState<LiveBooking | null>(null);
+  const [editPickup, setEditPickup] = useState('');
+  const [editDropOffs, setEditDropOffs] = useState<string[]>(['']);
+  const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('');
+  const [editReason, setEditReason] = useState('admin_route_update');
+  const [editNote, setEditNote] = useState('');
+  const [editBookingBusy, setEditBookingBusy] = useState(false);
+  const editPickupInputRef = useRef<HTMLInputElement | null>(null);
+  const editDropOffInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const editTimeLocked = pendingEditBooking ? !canEditJourneyTime(pendingEditBooking.journeyDate) : false;
 
   const applyLiveBookingsResponse = useCallback((data: { bookings?: LiveBookingResponse[] }) => {
     const bookings: LiveBooking[] = (data.bookings || []).map((item: LiveBookingResponse) => ({
@@ -282,6 +352,7 @@ const AdminDashboardPage: React.FC = () => {
       id: item.code,
       pickup: item.pickup,
       dropOff: item.dropOff,
+      dropOffs: Array.isArray(item.dropOffs) && item.dropOffs.length ? item.dropOffs : [item.dropOff],
       passenger: item.passenger,
       phone: item.phone,
       email: item.passengerEmail || item.clientEmail || '',
@@ -295,6 +366,8 @@ const AdminDashboardPage: React.FC = () => {
       paymentMethod: item.paymentMethod || '',
       isPaid: Boolean(item.isPaid),
       isRefundable: Boolean(item.isRefundable),
+      canReleaseHold: Boolean(item.canReleaseHold),
+      paymentAction: item.paymentAction || null,
       bookedBy: item.bookedBy,
       bookedByStaffId: item.bookedByStaffId ?? null,
       vehicle: item.vehicle || 'Unknown',
@@ -310,6 +383,21 @@ const AdminDashboardPage: React.FC = () => {
           ? Number(item.driverCommissionApplied)
           : null,
       clientConfirmed: Boolean(item.clientConfirmed),
+      rideStatus: item.rideStatus || '',
+      paymentStatus: item.paymentStatus || '',
+      originalEstimate:
+        item.originalEstimate !== null && item.originalEstimate !== undefined ? Number(item.originalEstimate) : null,
+      currentEstimate:
+        item.currentEstimate !== null && item.currentEstimate !== undefined ? Number(item.currentEstimate) : null,
+      finalFare: item.finalFare !== null && item.finalFare !== undefined ? Number(item.finalFare) : null,
+      authorizedAmount:
+        item.authorizedAmount !== null && item.authorizedAmount !== undefined ? Number(item.authorizedAmount) : null,
+      capturedAmount:
+        item.capturedAmount !== null && item.capturedAmount !== undefined ? Number(item.capturedAmount) : null,
+      primaryPaymentIntentId: item.primaryPaymentIntentId || '',
+      stripeCustomerId: item.stripeCustomerId || '',
+      stripePaymentMethodId: item.stripePaymentMethodId || '',
+      paymentFailureReason: item.paymentFailureReason || '',
       drivers: [],
     }));
 
@@ -439,6 +527,39 @@ const AdminDashboardPage: React.FC = () => {
     };
     loadStaff();
   }, []);
+
+  useEffect(() => {
+    if (!pendingEditBooking) return;
+    let cleanupFns: Array<() => void> = [];
+    let cancelled = false;
+
+    loadGoogleMapsPlaces()
+      .then(() => {
+        if (cancelled) return;
+        if (editPickupInputRef.current) {
+          cleanupFns.push(
+            attachGooglePlacesAutocomplete(editPickupInputRef.current, (value) => {
+              setEditPickup(value);
+            })
+          );
+        }
+        editDropOffInputRefs.current.forEach((input, index) => {
+          if (!input) return;
+          cleanupFns.push(
+            attachGooglePlacesAutocomplete(input, (value) => {
+              setEditDropOffs((prev) => prev.map((stop, stopIndex) => (stopIndex === index ? value : stop)));
+            })
+          );
+        });
+      })
+      .catch((err) => console.error('Failed to load Google Maps Places', err));
+
+    return () => {
+      cancelled = true;
+      cleanupFns.forEach((fn) => fn());
+      cleanupFns = [];
+    };
+  }, [pendingEditBooking, editDropOffs.length]);
 
   const handleBookedByChange = async (booking: LiveBooking, staffIdValue: string) => {
     const previous = bookedBySelection[booking.id] || '';
@@ -824,6 +945,100 @@ const AdminDashboardPage: React.FC = () => {
 
   const closeRefundModal = () => {
     setPendingRefundBooking(null);
+  };
+
+  const openEditBookingModal = (booking: LiveBooking) => {
+    const dt = toDateTimeInputs(booking.journeyDate);
+    setPendingEditBooking(booking);
+    setEditPickup(booking.pickup || '');
+    setEditDropOffs(
+      Array.isArray(booking.dropOffs) && booking.dropOffs.length ? booking.dropOffs : [booking.dropOff || '']
+    );
+    setEditDate(dt.date);
+    setEditTime(dt.time);
+    setEditReason('admin_route_update');
+    setEditNote('');
+  };
+
+  const closeEditBookingModal = () => {
+    setPendingEditBooking(null);
+    setEditPickup('');
+    setEditDropOffs(['']);
+    setEditDate('');
+    setEditTime('');
+    setEditReason('admin_route_update');
+    setEditNote('');
+  };
+
+  const updateEditDropOff = (index: number, value: string) => {
+    setEditDropOffs((prev) => prev.map((stop, stopIndex) => (stopIndex === index ? value : stop)));
+  };
+
+  const addEditDropOff = () => {
+    setEditDropOffs((prev) => [...prev, '']);
+  };
+
+  const removeEditDropOff = (index: number) => {
+    setEditDropOffs((prev) => {
+      if (prev.length === 1) return [''];
+      return prev.filter((_, stopIndex) => stopIndex !== index);
+    });
+  };
+
+  const submitEditBooking = async () => {
+    if (!pendingEditBooking?.journeyId) return;
+    const pickup = editPickup.trim();
+    const dropOffs = editDropOffs.map((stop) => stop.trim()).filter(Boolean);
+    if (!pickup || dropOffs.length === 0 || !editDate || !editTime) {
+      setAllocationWarning('Pickup, date, time, and at least one destination are required.');
+      return;
+    }
+    const nextJourneyDate = new Date(`${editDate}T${editTime}`);
+    if (Number.isNaN(nextJourneyDate.getTime())) {
+      setAllocationWarning('Invalid journey date or time.');
+      return;
+    }
+
+    setEditBookingBusy(true);
+    try {
+      const res = await fetch('/api/admin/rides/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rideId: pendingEditBooking.journeyId,
+          pickup,
+          dropOffs,
+            reason: editReason.trim() || 'admin_route_update',
+            note: editNote.trim() || null,
+            vehicleTypeId: pendingEditBooking.vehicleTypeId ?? null,
+            serviceType: 'Transfer',
+            journeyDate: nextJourneyDate.toISOString(),
+          }),
+        });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to update ride');
+      }
+
+      const paymentMessage =
+        data?.payment?.strategy === 'covered_by_existing_authorization'
+          ? 'Card hold already covers the updated estimate.'
+          : data?.payment?.strategy === 'additional_authorization_off_session'
+            ? 'Fare updated and Stripe created an additional authorization hold for the difference.'
+            : data?.payment?.strategy === 'additional_authorization_on_session'
+              ? 'Fare updated, but an extra authorization now needs customer confirmation.'
+              : 'Fare updated successfully.';
+
+      setAllocationSuccess(paymentMessage);
+      closeEditBookingModal();
+      await fetchLiveBookings({ withLoading: false, useFallbackOnError: false });
+      window.dispatchEvent(new Event(LIVE_BOOKINGS_REFRESH_EVENT));
+    } catch (err: any) {
+      console.error(err);
+      setAllocationWarning(err?.message || 'Failed to update ride');
+    } finally {
+      setEditBookingBusy(false);
+    }
   };
 
   const confirmRefund = async () => {
@@ -1264,16 +1479,29 @@ const AdminDashboardPage: React.FC = () => {
                             {booking.date} {booking.time}
                           </p>
                         </div>
-                        {booking.isRefundable ? (
+                        {booking.isRefundable || booking.canReleaseHold ? (
                           <button
                             type="button"
                             onClick={() => requestRefund(booking)}
                             disabled={refundBusy[booking.id]}
                             className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            {refundBusy[booking.id] ? 'Refunding...' : 'Refund'}
+                            {refundBusy[booking.id]
+                              ? booking.paymentAction === 'cancel_hold'
+                                ? 'Releasing...'
+                                : 'Refunding...'
+                              : booking.paymentAction === 'cancel_hold'
+                                ? 'Cancel hold'
+                                : 'Refund'}
                           </button>
                         ) : null}
+                        <button
+                          type="button"
+                          onClick={() => openEditBookingModal(booking)}
+                          className="rounded-full border border-amber-400 bg-amber-400 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-black transition hover:bg-amber-300"
+                        >
+                          Edit
+                        </button>
                         <button
                           type="button"
                           onClick={() => requestCancelAllocation(booking)}
@@ -1306,6 +1534,30 @@ const AdminDashboardPage: React.FC = () => {
                       <p className="text-sm text-gray-300">
                         Price: <span className="text-white">{booking.priceDetails}</span>
                       </p>
+                      {booking.currentEstimate !== null && booking.currentEstimate !== undefined ? (
+                        <p className="text-sm text-gray-300">
+                          Current Estimate: <span className="text-white">{formatCurrencyValue(booking.currentEstimate)}</span>
+                        </p>
+                      ) : null}
+                      {booking.authorizedAmount !== null && booking.authorizedAmount !== undefined ? (
+                        <p className="text-sm text-gray-300">
+                          Authorized Hold:{' '}
+                          <span className="text-amber-300">{formatCurrencyValue(booking.authorizedAmount)}</span>
+                        </p>
+                      ) : null}
+                      <p className="text-sm text-gray-300">
+                        Payment:{' '}
+                        <span className={HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase()) ? 'text-amber-300' : 'text-white'}>
+                          {HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase())
+                            ? 'Card on hold / pre-authorized'
+                            : booking.paymentStatus || 'Unknown'}
+                        </span>
+                      </p>
+                      {booking.paymentFailureReason ? (
+                        <p className="text-sm text-red-300">
+                          Payment issue: <span className="text-red-200">{booking.paymentFailureReason}</span>
+                        </p>
+                      ) : null}
                       {booking.driverPrice !== null && booking.driverPrice !== undefined ? (
                         <p className="text-sm text-gray-300">
                           Driver Price:{' '}
@@ -1445,10 +1697,18 @@ const AdminDashboardPage: React.FC = () => {
       {pendingRefundBooking && (
         <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-gray-900/90 p-6 shadow-2xl">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-300 mb-3">Refund booking</p>
-            <p className="text-lg text-white mb-2">Confirm full refund and cancellation for {pendingRefundBooking.id}?</p>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-300 mb-3">
+              {pendingRefundBooking.paymentAction === 'cancel_hold' ? 'Cancel card hold' : 'Refund booking'}
+            </p>
+            <p className="text-lg text-white mb-2">
+              {pendingRefundBooking.paymentAction === 'cancel_hold'
+                ? `Release the Stripe authorization hold and cancel ${pendingRefundBooking.id}?`
+                : `Confirm full refund and cancellation for ${pendingRefundBooking.id}?`}
+            </p>
             <p className="text-sm text-gray-300 mb-6">
-              The client will receive a refund email, the assigned driver will be notified, and the job will be removed from queue.
+              {pendingRefundBooking.paymentAction === 'cancel_hold'
+                ? 'The authorized card hold will be released in Stripe, the client will receive a cancellation email, and the assigned driver will be notified.'
+                : 'The client will receive a refund email, the assigned driver will be notified, and the job will be removed from queue.'}
             </p>
             <div className="flex flex-wrap gap-3 justify-end">
               <button
@@ -1464,7 +1724,133 @@ const AdminDashboardPage: React.FC = () => {
                 disabled={refundBusy[pendingRefundBooking.id]}
                 className="rounded-full border border-red-400 bg-red-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {refundBusy[pendingRefundBooking.id] ? 'Refunding...' : 'Yes, refund'}
+                {refundBusy[pendingRefundBooking.id]
+                  ? pendingRefundBooking.paymentAction === 'cancel_hold'
+                    ? 'Releasing...'
+                    : 'Refunding...'
+                  : pendingRefundBooking.paymentAction === 'cancel_hold'
+                    ? 'Yes, release hold'
+                    : 'Yes, refund'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingEditBooking && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-white/10 bg-gray-900/90 p-6 shadow-2xl">
+            <p className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-amber-300">Edit allocated ride</p>
+            <p className="mb-6 text-lg text-white">
+              Update route and stops for {pendingEditBooking.id}. Fare will be recalculated and the authorization hold will be checked against the new estimate.
+            </p>
+            <div className="space-y-4">
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Pickup</span>
+                <input
+                  ref={editPickupInputRef}
+                  type="text"
+                  value={editPickup}
+                  onChange={(event) => setEditPickup(event.target.value)}
+                  className="w-full rounded-xl border border-white/15 bg-black/70 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500"
+                  placeholder="Pickup address"
+                />
+                <p className="mt-1 text-[11px] text-gray-400">Start typing to search with Google Maps.</p>
+              </label>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Date</span>
+                  <input
+                    type="date"
+                    value={editDate}
+                    onChange={(event) => setEditDate(event.target.value)}
+                    className="w-full rounded-xl border border-white/15 bg-black/70 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Time</span>
+                  <input
+                    type="time"
+                    value={editTime}
+                    onChange={(event) => setEditTime(event.target.value)}
+                    disabled={editTimeLocked}
+                    className="w-full rounded-xl border border-white/15 bg-black/70 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500"
+                  />
+                </label>
+              </div>
+              {editTimeLocked ? (
+                <p className="text-sm text-amber-200">Pickup time can no longer be changed within 2 hours of the journey.</p>
+              ) : null}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Stops / drop-off</span>
+                  <button
+                    type="button"
+                    onClick={addEditDropOff}
+                    className="rounded-full border border-white/20 px-3 py-1 text-xs font-semibold text-white transition hover:border-amber-400"
+                  >
+                    Add stop
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-400">Start typing a new address to see Google Maps suggestions.</p>
+                {editDropOffs.map((stop, index) => (
+                  <div key={`edit-stop-${index}`} className="flex gap-2">
+                    <input
+                      ref={(node) => {
+                        editDropOffInputRefs.current[index] = node;
+                      }}
+                      type="text"
+                      value={stop}
+                      onChange={(event) => updateEditDropOff(index, event.target.value)}
+                      className="w-full rounded-xl border border-white/15 bg-black/70 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500"
+                      placeholder={index === editDropOffs.length - 1 ? 'Final destination' : `Stop ${index + 1}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeEditDropOff(index)}
+                      className="rounded-xl border border-red-400/60 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-red-200 transition hover:border-red-300 hover:text-white"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Reason</span>
+                <input
+                  type="text"
+                  value={editReason}
+                  onChange={(event) => setEditReason(event.target.value)}
+                  className="w-full rounded-xl border border-white/15 bg-black/70 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500"
+                  placeholder="admin_route_update"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Admin note</span>
+                <textarea
+                  rows={3}
+                  value={editNote}
+                  onChange={(event) => setEditNote(event.target.value)}
+                  className="w-full rounded-xl border border-white/15 bg-black/70 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500"
+                  placeholder="Reason for route / fare correction"
+                />
+              </label>
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeEditBookingModal}
+                className="rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-gray-200 hover:border-white/40 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitEditBooking}
+                disabled={editBookingBusy}
+                className="rounded-full border border-amber-400 bg-amber-400 px-5 py-2 text-sm font-semibold text-black transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {editBookingBusy ? 'Saving...' : 'Save changes'}
               </button>
             </div>
           </div>

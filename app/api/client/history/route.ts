@@ -4,6 +4,19 @@ import { getDbPool } from '@/lib/db';
 
 const pool = getDbPool();
 
+const stripStopLabel = (value: string) => value.replace(/^Stop\s+\d+:\s*/i, '').trim();
+const parseDestinationStops = (destination: string) => {
+  const raw = String(destination || '').trim();
+  if (!raw) return [''];
+  if (!raw.includes('Stop ')) return [raw];
+  return raw
+    .split(', ')
+    .map((part) => stripStopLabel(part))
+    .filter(Boolean);
+};
+
+const TIME_EDIT_WINDOW_MS = 2 * 60 * 60 * 1000;
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const email = searchParams.get('email');
@@ -83,6 +96,7 @@ export async function GET(request: Request) {
       const hasModifications = Boolean(lastModifiedAt && !Number.isNaN(lastModifiedAt.getTime()));
       const diffMs = dateValue ? dateValue.getTime() - Date.now() : 0;
       const canModify = row.status === 'Upcoming' && diffMs >= 6 * 60 * 60 * 1000;
+      const canEditTime = row.status === 'Upcoming' && diffMs >= TIME_EDIT_WINDOW_MS;
 
       return {
         id: row.id,
@@ -90,6 +104,10 @@ export async function GET(request: Request) {
         journeyDateIso: dateValue && !Number.isNaN(dateValue.getTime()) ? dateValue.toISOString() : null,
         pickup: row.pickup,
         destination: row.destination,
+        dropOffs:
+          Array.isArray(payload?.dropOffs) && payload.dropOffs.length
+            ? payload.dropOffs.map((stop: unknown) => String(stop || '').trim()).filter(Boolean)
+            : parseDestinationStops(String(row.destination || '')),
         serviceType: row.service_type || 'Transfer',
         driver: row.driver_name_display || '-',
         car: row.car_display || '-',
@@ -98,6 +116,7 @@ export async function GET(request: Request) {
         displayStatus: row.status === 'Upcoming' && hasModifications ? 'Modified' : null,
         modifiedAt: hasModifications ? lastModifiedAt!.toISOString() : null,
         canModify,
+        canEditTime,
         price: Number(row.price),
         flightNumber: String(payload?.flightNumber || '').trim(),
         passengers: Math.max(0, Number(payload?.passengers) || 0),

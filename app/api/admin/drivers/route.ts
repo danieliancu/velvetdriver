@@ -225,18 +225,20 @@ export async function GET() {
 
       await ensureDriverStatementsTable(pool);
       const [statementRows] = await queryWithRetry<StatementRow[]>(
-        `SELECT driver_id,
-                booking_ref,
-                journey_date,
-                collection,
-                destination,
-                vehicle_type,
-                fare_quoted,
-                status,
-                statement_pdf_url
-           FROM driver_statements
-          WHERE driver_id IN (${driverIds.map(() => '?').join(',')})
-          ORDER BY journey_date DESC, id DESC`,
+        `SELECT ds.driver_id,
+                ds.booking_ref,
+                ds.journey_date,
+                ds.collection,
+                ds.destination,
+                ds.vehicle_type,
+                ds.fare_quoted,
+                ds.status,
+                ds.statement_pdf_url
+           FROM driver_statements ds
+           INNER JOIN client_journeys cj ON cj.id = ds.journey_id
+          WHERE ds.driver_id IN (${driverIds.map(() => '?').join(',')})
+            AND cj.status = 'Completed'
+          ORDER BY ds.journey_date DESC, ds.id DESC`,
         driverIds
       );
       statementsByDriver = statementRows.reduce((acc, row) => {

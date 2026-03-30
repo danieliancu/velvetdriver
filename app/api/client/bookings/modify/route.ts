@@ -6,6 +6,13 @@ import { computeGoogleRoute } from '@/lib/google-routes';
 import { addClientCredit } from '@/lib/client-credit';
 
 const pool = getDbPool();
+const AUTHORIZED_PAYMENT_STATUSES = new Set([
+  'requires_capture',
+  'authorized',
+  'authorization_updated',
+  'additional_authorization_created',
+  'succeeded',
+]);
 
 type JourneyRow = mysql.RowDataPacket & {
   id: number;
@@ -54,11 +61,23 @@ const defaultVehiclePricing = {
 };
 
 const defaultAirportSurcharges = buildDefaultAirportSurcharges(15, 7);
+const TIME_EDIT_WINDOW_HOURS = 2;
 
 const detectPickupAirport = (pickup: string): AirportCode | null => detectAirportCodeFromText(pickup);
-const detectDropAirportCodes = (dropOff: string): AirportCode[] => {
-  const code = detectAirportCodeFromText(dropOff);
-  return code ? [code] : [];
+const detectDropAirportCodes = (dropOffs: string[]): AirportCode[] =>
+  dropOffs
+    .map((stop) => detectAirportCodeFromText(stop))
+    .filter((code): code is AirportCode => Boolean(code));
+
+const stripStopLabel = (value: string) => value.replace(/^Stop\s+\d+:\s*/i, '').trim();
+const parseDestinationStops = (destination: string) => {
+  const raw = String(destination || '').trim();
+  if (!raw) return [''];
+  if (!raw.includes('Stop ')) return [raw];
+  return raw
+    .split(', ')
+    .map((part) => stripStopLabel(part))
+    .filter(Boolean);
 };
 
 const ADMIN_BOOKING_MODIFY_EMAILS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
@@ -341,6 +360,12 @@ const isNightTime = (time: string) => {
   return hours >= 23 || hours < 4;
 };
 
+const formatTimeValue = (value: Date | string) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
 async function resolveClientId(email?: string | null) {
   if (!email) return null;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
@@ -383,9 +408,15 @@ async function loadPricing() {
   };
 }
 
-async function computeMiles(pickup: string, dropOff: string) {
+async function computeMiles(pickup: string, dropOffs: string[]) {
   try {
-    const route = await computeGoogleRoute({ origin: pickup, destination: dropOff });
+    const cleanedStops = dropOffs.map((stop) => String(stop || '').trim()).filter(Boolean);
+    if (!cleanedStops.length) return 0;
+    const route = await computeGoogleRoute({
+      origin: pickup,
+      destination: cleanedStops[cleanedStops.length - 1],
+      intermediates: cleanedStops.slice(0, -1),
+    });
     if (!route.distanceMeters) return 0;
     return route.distanceMeters * 0.000621371;
   } catch {
@@ -393,8 +424,13 @@ async function computeMiles(pickup: string, dropOff: string) {
   }
 }
 
-function buildDestination(dropOff: string) {
-  return dropOff.trim();
+function buildDestination(dropOffs: string[]) {
+  return dropOffs
+    .map((stop, index) =>
+      index === dropOffs.length - 1 ? String(stop || '').trim() : `Stop ${index + 1}: ${String(stop || '').trim()}`
+    )
+    .filter(Boolean)
+    .join(', ');
 }
 
 async function logAdminNotification(input: {
@@ -402,7 +438,7 @@ async function logAdminNotification(input: {
   email: string;
   delta: number;
   pickup: string;
-  dropOff: string;
+  dropOffs: string[];
   journeyDateIso: string;
 }) {
   const deltaText =
@@ -417,7 +453,7 @@ async function logAdminNotification(input: {
     email: input.email,
     delta: Number(input.delta.toFixed(2)),
     pickup: input.pickup,
-    dropOff: input.dropOff,
+    dropOffs: input.dropOffs,
     journeyDateIso: input.journeyDateIso,
   });
 
@@ -441,7 +477,9 @@ export async function POST(request: Request) {
     const mode = String(body.mode || 'client').toLowerCase();
 
     const pickup = String(body.pickup ?? '').trim();
-    const dropOff = String(body.dropOff ?? '').trim();
+    const dropOffs = Array.isArray(body.dropOffs)
+      ? body.dropOffs.map((value: string) => String(value || '').trim()).filter(Boolean)
+      : parseDestinationStops(String(body.dropOff ?? '').trim());
     const date = String(body.date ?? '').trim();
     const time = String(body.time ?? '').trim();
     const flightNumber = String(body.flightNumber ?? '').trim().toUpperCase();
@@ -454,8 +492,8 @@ export async function POST(request: Request) {
     if (!email || !journeyId) {
       return NextResponse.json({ error: 'Missing journey reference' }, { status: 400 });
     }
-    if (!pickup || !dropOff || !date || !time) {
-      return NextResponse.json({ error: 'Pickup, drop-off, date and time are required.' }, { status: 400 });
+    if (!pickup || !dropOffs.length || !date || !time) {
+      return NextResponse.json({ error: 'Pickup, destination, date and time are required.' }, { status: 400 });
     }
 
     const clientId = await resolveClientId(email);
@@ -481,6 +519,7 @@ export async function POST(request: Request) {
     const originalJourneyDate = new Date(journey.journey_date);
     const hoursUntilPickup = (originalJourneyDate.getTime() - Date.now()) / (1000 * 60 * 60);
     const isLockedByWindow = hoursUntilPickup < 6;
+    const isTimeLocked = hoursUntilPickup < TIME_EDIT_WINDOW_HOURS;
     const bypassTimeLimit = mode === 'admin';
     if (isLockedByWindow && !bypassTimeLimit) {
       return NextResponse.json(
@@ -513,7 +552,7 @@ export async function POST(request: Request) {
 
     const serviceType = String(payload.serviceType || journey.service_type || 'Transfer');
     const waitingMinutes = Math.max(0, Number(payload.waiting) || 0);
-    const miles = await computeMiles(pickup, dropOff);
+    const miles = await computeMiles(pickup, dropOffs);
 
     const mileageRate = getRate(vehicle, miles);
     let recalculatedFare =
@@ -530,7 +569,7 @@ export async function POST(request: Request) {
     }
 
     const pickupAirport = detectPickupAirport(pickup);
-    const dropAirports = detectDropAirportCodes(dropOff);
+    const dropAirports = detectDropAirportCodes(dropOffs);
     if (pickupAirport) {
       recalculatedFare += pricing.airportSurcharges[pickupAirport]?.pickup ?? defaultAirportSurcharges[pickupAirport].pickup;
     }
@@ -544,6 +583,13 @@ export async function POST(request: Request) {
     const oldDriverPrice = getDriverNetAmount(oldPrice, commissionAppliedRaw, journey.driver_price);
     const newDriverPrice = getDriverNetAmount(newPrice, commissionAppliedRaw, journey.driver_price);
     const difference = Math.round((newPrice - oldPrice) * 100) / 100;
+
+    if (isTimeLocked && formatTimeValue(originalJourneyDate) !== time) {
+      return NextResponse.json(
+        { error: 'Pickup time can no longer be changed within 2 hours of the journey.' },
+        { status: 403 }
+      );
+    }
 
     if (action !== 'confirm') {
       return NextResponse.json({
@@ -561,7 +607,7 @@ export async function POST(request: Request) {
     if (Number.isNaN(journeyDate.getTime())) {
       return NextResponse.json({ error: 'Invalid pickup time.' }, { status: 400 });
     }
-    if (difference > 0 && paymentStatus !== 'succeeded') {
+    if (difference > 0 && !AUTHORIZED_PAYMENT_STATUSES.has(paymentStatus)) {
       return NextResponse.json(
         { error: 'Additional payment is required before the booking can be updated.', requiresPayment: true, amountDue: difference },
         { status: 402 }
@@ -586,7 +632,7 @@ export async function POST(request: Request) {
       next: {
         journeyDate: journeyDate.toISOString(),
         pickup,
-        destination: dropOff,
+        destination: buildDestination(dropOffs),
         flightNumber,
         passengers,
         specialRequests,
@@ -606,7 +652,7 @@ export async function POST(request: Request) {
     const updatedPayload = {
       ...payload,
       pickup,
-      dropOffs: [dropOff],
+      dropOffs,
       date,
       time,
       miles: miles.toFixed(2),
@@ -620,10 +666,10 @@ export async function POST(request: Request) {
       modificationPayment:
         difference > 0
           ? {
-              status: 'succeeded',
+              status: AUTHORIZED_PAYMENT_STATUSES.has(paymentStatus) ? 'authorized' : paymentStatus || 'pending',
               amount: difference,
               paymentIntentId: paymentIntentId || null,
-              paymentMethod: paymentMethod || 'Card',
+              paymentMethod: paymentMethod || 'Card authorization',
               paidAt: nowIso,
             }
           : difference < 0
@@ -639,7 +685,7 @@ export async function POST(request: Request) {
       [
         journeyDate.toISOString().slice(0, 19).replace('T', ' '),
         pickup,
-        buildDestination(dropOff),
+        buildDestination(dropOffs),
         newPrice,
         newDriverPrice,
         JSON.stringify(updatedPayload),
@@ -653,7 +699,7 @@ export async function POST(request: Request) {
       email,
       delta: difference,
       pickup,
-      dropOff,
+      dropOffs,
       journeyDateIso: journeyDate.toISOString(),
     });
 
@@ -686,7 +732,7 @@ export async function POST(request: Request) {
       nextState: {
         journeyDate: journeyDate.toISOString(),
         pickup,
-        destination: dropOff,
+        destination: buildDestination(dropOffs),
         flightNumber,
         passengers,
         specialRequests,

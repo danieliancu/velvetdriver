@@ -71,18 +71,20 @@ const openWhatsAppBookingNotification = (payload: {
     pickup: string;
     destination: string;
     totalFare: number;
+    amountHeld?: number;
 }) => {
     if (typeof window === 'undefined') return;
     const digits = formatPhoneForWhatsApp(BOOKING_WHATSAPP_NOTIFY_PHONE);
     if (!digits) return;
     const text = [
-        `New paid booking: ${payload.bookingRef}`,
+        `New authorized booking: ${payload.bookingRef}`,
         `Date/time: ${payload.date} ${payload.time}`,
         `Passenger: ${payload.passengerName}`,
         `Phone: ${payload.passengerPhone}`,
         `Pickup: ${payload.pickup}`,
         `Drop-off: ${payload.destination}`,
-        `Amount paid: GBP ${payload.totalFare.toFixed(2)}`,
+        `Estimated fare: GBP ${payload.totalFare.toFixed(2)}`,
+        `Pre-authorized hold: GBP ${Number(payload.amountHeld ?? payload.totalFare).toFixed(2)}`,
     ].join('\n');
 
     const params = new URLSearchParams();
@@ -1510,7 +1512,7 @@ const BookingPageInner = () => {
         setPaymentIntentLoading(true);
         setPaymentError(null);
         try {
-            const response = await fetch('/api/stripe/create-payment-intent', {
+            const response = await fetch('/api/payments/create-authorization', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1540,7 +1542,7 @@ const BookingPageInner = () => {
     const finalizeBooking = async (paymentIntent: { id: string; status: string }) => {
         setBookingSubmitting(true);
         try {
-            const response = await fetch('/api/booking', {
+            const response = await fetch('/api/bookings/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1558,7 +1560,7 @@ const BookingPageInner = () => {
                         : null,
                     paymentIntentId: paymentIntent.id,
                     paymentStatus: paymentIntent.status,
-                    paymentMethod: 'Card',
+                    paymentMethod: 'Card authorization',
                     paymentAmount: Number(amountDueNow),
                     paymentCurrency: 'GBP',
                     appliedCreditAmount: Number(appliedCreditAmount),
@@ -1585,11 +1587,12 @@ const BookingPageInner = () => {
                 passengerPhone: pendingBookingPayload?.passengerPhone || '',
                 pickup: pendingBookingPayload?.pickup || '',
                 destination: destinationText,
-                totalFare: Number(amountDueNow || totalFareFinal),
+                totalFare: Number(totalFareFinal),
+                amountHeld: Number(amountDueNow),
             });
             setShowVerificationModal(false);
             setCheckoutActive(false);
-            showAlert('Payment confirmed! Your booking is now complete.');
+            showAlert('Card hold authorized. Your booking is confirmed and payment will be captured after the trip.');
             router.push(user ? '/client/dashboard' : '/');
         } catch (err: any) {
             showAlert(err?.message || 'Failed to submit booking.');
@@ -1606,7 +1609,7 @@ const BookingPageInner = () => {
         }
         setBookingSubmitting(true);
         try {
-            const response = await fetch('/api/booking', {
+            const response = await fetch('/api/bookings/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1648,7 +1651,7 @@ const BookingPageInner = () => {
     const finalizeBookingUsingCredit = async () => {
         setBookingSubmitting(true);
         try {
-            const response = await fetch('/api/booking', {
+            const response = await fetch('/api/bookings/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1665,7 +1668,7 @@ const BookingPageInner = () => {
                         }
                         : null,
                     paymentIntentId: null,
-                    paymentStatus: 'succeeded',
+                    paymentStatus: 'captured',
                     paymentMethod: 'Credit',
                     paymentAmount: 0,
                     paymentCurrency: 'GBP',
@@ -2261,6 +2264,8 @@ const BookingPageInner = () => {
                                                 onSuccess={finalizeBooking}
                                                 onError={setPaymentError}
                                                 disabled={bookingSubmitting}
+                                                buttonLabel={`Authorize hold for GBP${amountDueNow.toFixed(2)}`}
+                                                mode="authorization"
                                             />
                                         </Elements>
                                     ) : (

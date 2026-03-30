@@ -68,5 +68,34 @@ input[type="time"]::-ms-expand {
   filter: invert(0) brightness(1);
 }
 
+.pac-container {
+  z-index: 2147483647 !important;
+  border: 1px solid rgba(251, 191, 36, 0.35) !important;
+  border-radius: 14px !important;
+  background: #0b0b0d !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55) !important;
+  overflow: hidden;
+}
+
+.pac-container .pac-item {
+  border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: transparent !important;
+  color: #f5f5f5 !important;
+  padding: 10px 14px !important;
+}
+
+.pac-container .pac-item:first-child {
+  border-top: 0 !important;
+}
+
+.pac-container .pac-item:hover,
+.pac-container .pac-item-selected {
+  background: rgba(251, 191, 36, 0.12) !important;
+}
+
+.pac-container .pac-item-query {
+  color: #fff !important;
+}
+
 
 

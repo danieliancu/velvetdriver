@@ -55,7 +55,8 @@ export async function GET(request: Request) {
               ds.status,
               ds.created_at
        FROM driver_statements ds
-       ${where}
+       INNER JOIN client_journeys cj ON cj.id = ds.journey_id
+       ${where ? `${where} AND cj.status = 'Completed'` : `WHERE cj.status = 'Completed'`}
        ORDER BY ds.created_at DESC
        LIMIT 1000`,
       params

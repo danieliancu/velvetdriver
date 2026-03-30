@@ -21,6 +21,7 @@ export interface Journey {
   journeyDateIso?: string | null;
   pickup: string;
   destination: string;
+  dropOffs?: string[];
   serviceType: 'Transfer' | 'Wait and Return' | 'As Directed';
   driver: string;
   car: string;
@@ -29,6 +30,7 @@ export interface Journey {
   displayStatus?: 'Modified' | null;
   modifiedAt?: string | null;
   canModify?: boolean;
+  canEditTime?: boolean;
   price: number;
   flightNumber?: string;
   passengers?: number;

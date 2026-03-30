@@ -37,7 +37,27 @@ type BookingRow = mysql.RowDataPacket & {
   driver_name: string | null;
   booking_payload: unknown;
   client_email: string | null;
+  payment_status?: string | null;
+  ride_status?: string | null;
 };
+
+const HOLD_PAYMENT_STATUSES = new Set([
+  'authorized',
+  'authorization_updated',
+  'additional_authorization_created',
+  'requires_capture',
+  'partially_captured',
+]);
+
+async function getClientJourneyColumns() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_NAME
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'client_journeys'`
+  );
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '')));
+}
 
 async function resolveDriverEmail(rawDriver: string) {
   if (!rawDriver) return { name: '', email: '' };
@@ -115,6 +135,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing journey id' }, { status: 400 });
     }
 
+    const clientJourneyColumns = await getClientJourneyColumns();
+    const selectPaymentStatus = clientJourneyColumns.has('payment_status')
+      ? 'cj.payment_status'
+      : `JSON_UNQUOTE(JSON_EXTRACT(cj.booking_payload, '$.paymentStatus')) AS payment_status`;
+    const selectRideStatus = clientJourneyColumns.has('ride_status')
+      ? 'cj.ride_status'
+      : `NULL AS ride_status`;
+
     const [rows] = await pool.query<BookingRow[]>(
       `SELECT cj.id,
               cj.status,
@@ -126,6 +154,8 @@ export async function POST(request: Request) {
               cj.price,
               cj.driver_name,
               cj.booking_payload,
+              ${selectPaymentStatus},
+              ${selectRideStatus},
               u.email AS client_email
          FROM client_journeys cj
          LEFT JOIN users u ON u.id = cj.client_id
@@ -154,46 +184,95 @@ export async function POST(request: Request) {
     }
 
     const paymentIntentId = String(payload?.paymentIntentId || '').trim();
-    const paymentStatus = String(payload?.paymentStatus || '').trim().toLowerCase();
-    if (!paymentIntentId || paymentStatus !== 'succeeded') {
-      return NextResponse.json({ error: 'This job is not eligible for refund.' }, { status: 400 });
+    const paymentStatus = String(booking.payment_status || payload?.paymentStatus || '').trim().toLowerCase();
+    const isCapturedPayment = paymentStatus === 'succeeded' || paymentStatus === 'captured' || paymentStatus === 'extra_charge_succeeded';
+    const isHoldAuthorization = HOLD_PAYMENT_STATUSES.has(paymentStatus);
+    if (!paymentIntentId || (!isCapturedPayment && !isHoldAuthorization)) {
+      return NextResponse.json({ error: 'This job is not eligible for refund or hold cancellation.' }, { status: 400 });
     }
     if (String(payload?.refund?.status || '').trim().toLowerCase() === 'succeeded') {
       return NextResponse.json({ error: 'This booking has already been refunded.' }, { status: 409 });
     }
 
-    const refund = await stripe.refunds.create({
-      payment_intent: paymentIntentId,
-      reason: 'requested_by_customer',
-      metadata: { journeyId: String(journeyId) },
-    });
-
-    const refundAmount = Number(refund.amount || 0) / 100;
+    let refundId: string | null = null;
+    let refundAmount = 0;
+    let action: 'refund' | 'cancel_hold' = 'refund';
+    let clientMessage = 'Your booking has been cancelled and your payment has been refunded in full.';
+    let driverMessage = 'The following job has been cancelled and removed from queue:';
     const nowIso = new Date().toISOString();
+
+    if (isCapturedPayment) {
+      const refund = await stripe.refunds.create({
+        payment_intent: paymentIntentId,
+        reason: 'requested_by_customer',
+        metadata: { journeyId: String(journeyId) },
+      });
+      refundId = refund.id;
+      refundAmount = Number(refund.amount || 0) / 100;
+      action = 'refund';
+    } else {
+      await stripe.paymentIntents.cancel(paymentIntentId, {
+        cancellation_reason: 'requested_by_customer',
+      });
+      refundId = paymentIntentId;
+      refundAmount = Number(payload?.paymentAmount || payload?.totalFare || booking.price || 0);
+      action = 'cancel_hold';
+      clientMessage = 'Your booking has been cancelled and the Stripe card hold has been released.';
+    }
+
     const updatedPayload = {
       ...payload,
-      refund: {
-        id: refund.id,
-        status: refund.status,
-        amount: refundAmount,
-        currency: String(refund.currency || 'gbp').toUpperCase(),
-        createdAt: nowIso,
-      },
+      refund:
+        action === 'refund'
+          ? {
+              id: refundId,
+              status: 'succeeded',
+              amount: refundAmount,
+              currency: 'GBP',
+              createdAt: nowIso,
+            }
+          : payload.refund,
+      authorizationCancellation:
+        action === 'cancel_hold'
+          ? {
+              paymentIntentId,
+              status: 'canceled',
+              amount: refundAmount,
+              currency: 'GBP',
+              createdAt: nowIso,
+            }
+          : payload.authorizationCancellation,
       cancellation: {
-        source: 'admin-refund',
-        reason: 'Booking cancelled by admin and fully refunded.',
+        source: action === 'refund' ? 'admin-refund' : 'admin-cancel-hold',
+        reason:
+          action === 'refund'
+            ? 'Booking cancelled by admin and fully refunded.'
+            : 'Booking cancelled by admin and authorization hold released.',
         at: nowIso,
       },
+      paymentStatus: action === 'refund' ? 'refunded' : 'canceled',
     };
 
+    const updateParts = [`status = 'Cancelled'`, `booking_payload = ?`, `updated_at = NOW()`];
+    const updateParams: Array<string | number | null> = [JSON.stringify(updatedPayload)];
+    if (clientJourneyColumns.has('payment_status')) {
+      updateParts.push(`payment_status = ?`);
+      updateParams.push(action === 'refund' ? 'canceled' : 'canceled');
+    }
+    if (clientJourneyColumns.has('ride_status')) {
+      updateParts.push(`ride_status = ?`);
+      updateParams.push('canceled');
+    }
+    if (clientJourneyColumns.has('captured_amount') && action === 'cancel_hold') {
+      updateParts.push(`captured_amount = 0`);
+    }
+    updateParams.push(journeyId);
     await pool.execute(
       `UPDATE client_journeys
-          SET status = 'Cancelled',
-              booking_payload = ?,
-              updated_at = NOW()
+          SET ${updateParts.join(', ')}
         WHERE id = ?
         LIMIT 1`,
-      [JSON.stringify(updatedPayload), journeyId]
+      updateParams
     );
 
     const bookingCode = `VD-${String(journeyId).padStart(4, '0')}`;
@@ -204,7 +283,10 @@ export async function POST(request: Request) {
     const warnings: string[] = [];
 
     if (recipient) {
-      const clientSubject = `Velvet Drivers - Booking cancelled and refunded ${bookingCode}`;
+      const clientSubject =
+        action === 'refund'
+          ? `Velvet Drivers - Booking cancelled and refunded ${bookingCode}`
+          : `Velvet Drivers - Booking cancelled and card hold released ${bookingCode}`;
       const clientHtml = `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8" /><title>Booking Refunded</title></head>
@@ -214,16 +296,16 @@ export async function POST(request: Request) {
       <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:6px; overflow:hidden;">
         <tr><td align="center" style="background:linear-gradient(90deg,#3A0511,#000000); padding:24px 20px;">
           <h1 style="margin:0; font-size:22px; color:#ffffff;">Velvet Drivers</h1>
-          <p style="margin:8px 0 0; font-size:13px; color:#f2f2f2;">Cancellation & Refund Confirmation</p>
+          <p style="margin:8px 0 0; font-size:13px; color:#f2f2f2;">${action === 'refund' ? 'Cancellation & Refund Confirmation' : 'Cancellation & Hold Release Confirmation'}</p>
         </td></tr>
         <tr><td style="padding:24px 26px; color:#333333; font-size:14px; line-height:1.6;">
           <p>Dear ${escapeHtml(passengerName)},</p>
-          <p>Your booking has been cancelled and your payment has been refunded in full.</p>
+          <p>${escapeHtml(clientMessage)}</p>
           <p><strong>Reference:</strong> ${escapeHtml(bookingCode)}<br />
              <strong>Journey:</strong> ${escapeHtml(date)} at ${escapeHtml(time)}<br />
              <strong>Route:</strong> ${escapeHtml(String(booking.pickup || ''))} to ${escapeHtml(String(booking.destination || ''))}<br />
-             <strong>Refunded Amount:</strong> GBP ${refundAmount.toFixed(2)}</p>
-          <p>The refund may take a short time to appear depending on your card issuer.</p>
+             <strong>${action === 'refund' ? 'Refunded Amount' : 'Released Hold Amount'}:</strong> GBP ${refundAmount.toFixed(2)}</p>
+          <p>${action === 'refund' ? 'The refund may take a short time to appear depending on your card issuer.' : 'The hold release timing depends on the card issuer and may take a short time to show on the customer account.'}</p>
         </td></tr>
       </table>
     </td></tr>
@@ -231,8 +313,8 @@ export async function POST(request: Request) {
 </body>
 </html>`;
       const clientText =
-        `Booking ${bookingCode} was cancelled and refunded.\n` +
-        `Refunded amount: GBP ${refundAmount.toFixed(2)}.\n` +
+        `Booking ${bookingCode} was cancelled and ${action === 'refund' ? 'refunded' : 'the card hold was released'}.\n` +
+        `${action === 'refund' ? 'Refunded amount' : 'Released hold amount'}: GBP ${refundAmount.toFixed(2)}.\n` +
         `Route: ${booking.pickup} -> ${booking.destination}.`;
       try {
         await sendEmail({ to: recipient, subject: clientSubject, html: clientHtml, text: clientText });
@@ -261,7 +343,7 @@ export async function POST(request: Request) {
         </td></tr>
         <tr><td style="padding:24px 26px; color:#333333; font-size:14px; line-height:1.6;">
           <p>Dear ${escapeHtml(driver.name || 'Driver')},</p>
-          <p>The following job has been cancelled and removed from queue:</p>
+          <p>${escapeHtml(driverMessage)}</p>
           <p><strong>Reference:</strong> ${escapeHtml(bookingCode)}<br />
              <strong>Journey:</strong> ${escapeHtml(date)} at ${escapeHtml(time)}<br />
              <strong>Route:</strong> ${escapeHtml(String(booking.pickup || ''))} to ${escapeHtml(String(booking.destination || ''))}</p>
@@ -286,9 +368,11 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      refunded: true,
-      refundId: refund.id,
+      refunded: action === 'refund',
+      releasedHold: action === 'cancel_hold',
+      refundId,
       amount: refundAmount,
+      action,
       warning: warnings.length ? warnings.join(' ') : undefined,
     });
   } catch (err: any) {

@@ -1,6 +1,6 @@
 import mysql from 'mysql2/promise';
 
-export async function ensureClientCreditLedgerTable(pool: mysql.Pool) {
+export async function ensureClientCreditLedgerTable(pool: mysql.Pool | mysql.PoolConnection) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS client_credit_ledger (
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -20,7 +20,7 @@ export async function ensureClientCreditLedgerTable(pool: mysql.Pool) {
   `);
 }
 
-export async function getClientCreditBalance(pool: mysql.Pool, clientId: number) {
+export async function getClientCreditBalance(pool: mysql.Pool | mysql.PoolConnection, clientId: number) {
   await ensureClientCreditLedgerTable(pool);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT COALESCE(SUM(
@@ -38,7 +38,7 @@ export async function getClientCreditBalance(pool: mysql.Pool, clientId: number)
 }
 
 async function insertLedgerEntry(
-  pool: mysql.Pool,
+  pool: mysql.Pool | mysql.PoolConnection,
   input: {
     clientId: number;
     journeyId?: number | null;
@@ -67,7 +67,7 @@ async function insertLedgerEntry(
 }
 
 export async function addClientCredit(
-  pool: mysql.Pool,
+  pool: mysql.Pool | mysql.PoolConnection,
   input: {
     clientId: number;
     journeyId?: number | null;
@@ -80,7 +80,7 @@ export async function addClientCredit(
 }
 
 export async function consumeClientCredit(
-  pool: mysql.Pool,
+  pool: mysql.Pool | mysql.PoolConnection,
   input: {
     clientId: number;
     journeyId?: number | null;

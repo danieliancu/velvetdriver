@@ -38,17 +38,19 @@ export async function GET(request: Request) {
     }
 
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT booking_ref,
-              journey_date,
-              collection,
-              destination,
-              vehicle_type,
-              fare_quoted,
-              status,
-              statement_pdf_url
-       FROM driver_statements
-       WHERE driver_id = ?
-       ORDER BY journey_date DESC, id DESC
+      `SELECT ds.booking_ref,
+              ds.journey_date,
+              ds.collection,
+              ds.destination,
+              ds.vehicle_type,
+              ds.fare_quoted,
+              ds.status,
+              ds.statement_pdf_url
+       FROM driver_statements ds
+       INNER JOIN client_journeys cj ON cj.id = ds.journey_id
+       WHERE ds.driver_id = ?
+         AND cj.status = 'Completed'
+       ORDER BY ds.journey_date DESC, ds.id DESC
        LIMIT 1000`,
       [driverId]
     );

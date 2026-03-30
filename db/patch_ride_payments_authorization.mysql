@@ -1,0 +1,119 @@
+ALTER TABLE client_journeys
+  ADD COLUMN ride_status VARCHAR(40) NOT NULL DEFAULT 'booked' AFTER status,
+  ADD COLUMN payment_status VARCHAR(60) NOT NULL DEFAULT 'authorization_pending' AFTER ride_status,
+  ADD COLUMN original_estimated_fare DECIMAL(10,2) NULL AFTER price,
+  ADD COLUMN current_estimated_fare DECIMAL(10,2) NULL AFTER original_estimated_fare,
+  ADD COLUMN final_fare DECIMAL(10,2) NULL AFTER current_estimated_fare,
+  ADD COLUMN originally_authorized_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER final_fare,
+  ADD COLUMN latest_authorized_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER originally_authorized_amount,
+  ADD COLUMN captured_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER latest_authorized_amount,
+  ADD COLUMN stripe_customer_id VARCHAR(64) NULL AFTER captured_amount,
+  ADD COLUMN stripe_payment_method_id VARCHAR(64) NULL AFTER stripe_customer_id,
+  ADD COLUMN primary_payment_intent_id VARCHAR(64) NULL AFTER stripe_payment_method_id,
+  ADD COLUMN authorization_expires_at DATETIME NULL AFTER primary_payment_intent_id,
+  ADD COLUMN authorized_at DATETIME NULL AFTER authorization_expires_at,
+  ADD COLUMN fare_finalized_at DATETIME NULL AFTER authorized_at,
+  ADD COLUMN captured_at DATETIME NULL AFTER fare_finalized_at,
+  ADD COLUMN payment_failure_reason TEXT NULL AFTER captured_at;
+
+UPDATE client_journeys
+SET ride_status = CASE
+      WHEN status = 'Completed' THEN 'payment_captured'
+      WHEN status = 'Cancelled' THEN 'canceled'
+      ELSE 'booked'
+    END,
+    payment_status = CASE
+      WHEN JSON_UNQUOTE(JSON_EXTRACT(booking_payload, '$.paymentStatus')) = 'succeeded' THEN 'captured'
+      WHEN status = 'Cancelled' THEN 'canceled'
+      ELSE 'authorization_pending'
+    END,
+    original_estimated_fare = price,
+    current_estimated_fare = price,
+    final_fare = CASE WHEN status = 'Completed' THEN price ELSE NULL END,
+    originally_authorized_amount = CASE
+      WHEN JSON_UNQUOTE(JSON_EXTRACT(booking_payload, '$.paymentStatus')) = 'succeeded'
+        THEN COALESCE(JSON_EXTRACT(booking_payload, '$.paymentAmount'), price, 0)
+      ELSE 0
+    END,
+    latest_authorized_amount = CASE
+      WHEN JSON_UNQUOTE(JSON_EXTRACT(booking_payload, '$.paymentStatus')) = 'succeeded'
+        THEN COALESCE(JSON_EXTRACT(booking_payload, '$.paymentAmount'), price, 0)
+      ELSE 0
+    END,
+    captured_amount = CASE
+      WHEN JSON_UNQUOTE(JSON_EXTRACT(booking_payload, '$.paymentStatus')) = 'succeeded'
+        THEN COALESCE(JSON_EXTRACT(booking_payload, '$.paymentAmount'), price, 0)
+      ELSE 0
+    END,
+    primary_payment_intent_id = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(booking_payload, '$.paymentIntentId')), '');
+
+CREATE TABLE ride_payments (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  ride_id BIGINT NOT NULL,
+  payment_role VARCHAR(40) NOT NULL,
+  stripe_payment_intent_id VARCHAR(64) NOT NULL,
+  stripe_charge_id VARCHAR(64) NULL,
+  stripe_customer_id VARCHAR(64) NULL,
+  stripe_payment_method_id VARCHAR(64) NULL,
+  currency CHAR(3) NOT NULL DEFAULT 'gbp',
+  amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  authorized_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  capturable_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  captured_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  status VARCHAR(60) NOT NULL,
+  stripe_status VARCHAR(60) NULL,
+  failure_code VARCHAR(120) NULL,
+  failure_message TEXT NULL,
+  authorization_expires_at DATETIME NULL,
+  authorized_at DATETIME NULL,
+  captured_at DATETIME NULL,
+  canceled_at DATETIME NULL,
+  metadata JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_ride_payments_intent (stripe_payment_intent_id),
+  KEY idx_ride_payments_ride_status (ride_id, status),
+  KEY idx_ride_payments_role (payment_role),
+  CONSTRAINT fk_ride_payments_ride
+    FOREIGN KEY (ride_id) REFERENCES client_journeys(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE payment_events (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  ride_id BIGINT NULL,
+  ride_payment_id BIGINT NULL,
+  stripe_event_id VARCHAR(128) NULL,
+  event_type VARCHAR(80) NOT NULL,
+  source VARCHAR(40) NOT NULL DEFAULT 'system',
+  status VARCHAR(60) NULL,
+  message TEXT NULL,
+  payload JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_payment_events_stripe_event (stripe_event_id),
+  KEY idx_payment_events_ride (ride_id, created_at),
+  CONSTRAINT fk_payment_events_ride
+    FOREIGN KEY (ride_id) REFERENCES client_journeys(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE ride_change_history (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  ride_id BIGINT NOT NULL,
+  change_source VARCHAR(20) NOT NULL,
+  changed_by_user_id BIGINT NULL,
+  changed_by_admin_id BIGINT NULL,
+  change_reason VARCHAR(255) NULL,
+  note TEXT NULL,
+  previous_snapshot JSON NOT NULL,
+  next_snapshot JSON NOT NULL,
+  fare_before DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  fare_after DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  fare_delta DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  payment_adjustment_status VARCHAR(60) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_ride_change_history_ride (ride_id, created_at),
+  CONSTRAINT fk_ride_change_history_ride
+    FOREIGN KEY (ride_id) REFERENCES client_journeys(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

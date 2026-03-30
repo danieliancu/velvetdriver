@@ -29,8 +29,70 @@ const buildNotes = (payload: any) => {
   return pieces.length ? pieces.join(' - ') : '-';
 };
 
+const parsePayload = (value: unknown) => {
+  if (!value) return null;
+  try {
+    return typeof value === 'string' ? JSON.parse(value) : value;
+  } catch {
+    return null;
+  }
+};
+
+const parseDropOffs = (destination: string, payload: any) => {
+  if (Array.isArray(payload?.dropOffs)) {
+    return payload.dropOffs.map((stop: unknown) => String(stop || '').trim()).filter(Boolean);
+  }
+  const trimmedDestination = String(destination || '').trim();
+  return trimmedDestination ? [trimmedDestination] : [];
+};
+
+const HOLD_PAYMENT_STATUSES = new Set([
+  'authorized',
+  'authorization_updated',
+  'additional_authorization_created',
+  'requires_capture',
+  'partially_captured',
+]);
+
+const OPTIONAL_RIDE_COLUMNS = [
+  'ride_status',
+  'payment_status',
+  'original_estimated_fare',
+  'current_estimated_fare',
+  'final_fare',
+  'originally_authorized_amount',
+  'latest_authorized_amount',
+  'captured_amount',
+  'primary_payment_intent_id',
+  'stripe_customer_id',
+  'stripe_payment_method_id',
+  'payment_failure_reason',
+] as const;
+
+const quoteIdentifier = (value: string) => `\`${value.replace(/`/g, '``')}\``;
+
+async function getClientJourneyColumns() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_NAME
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'client_journeys'`
+  );
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '')));
+}
+
+function buildOptionalSelect(existingColumns: Set<string>) {
+  return OPTIONAL_RIDE_COLUMNS.map((column) =>
+    existingColumns.has(column)
+      ? `cj.${quoteIdentifier(column)}`
+      : `NULL AS ${quoteIdentifier(column)}`
+  ).join(',\n              ');
+}
+
 export async function GET() {
   try {
+    const existingColumns = await getClientJourneyColumns();
+    const optionalSelect = buildOptionalSelect(existingColumns);
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT cj.id,
               cj.journey_date,
@@ -50,6 +112,7 @@ export async function GET() {
               cj.booked_by_staff_id,
               cj.service_type,
               cj.vehicle_type_id,
+              ${optionalSelect},
               u.email AS client_email
          , staff.full_name AS staff_name
          , pv.label AS vehicle_label
@@ -62,14 +125,7 @@ export async function GET() {
     );
 
     const bookings = rows.map((row) => {
-      let payload: any = null;
-      if (row.booking_payload) {
-        try {
-          payload = typeof row.booking_payload === 'string' ? JSON.parse(row.booking_payload) : row.booking_payload;
-        } catch {
-          payload = null;
-        }
-      }
+      const payload: any = parsePayload(row.booking_payload);
       const { date, time } = formatDate(String(row.journey_date));
       const priceNumber = Number(row.price ?? payload?.totalFare ?? 0) || 0;
       const bookedByStaffId = row.booked_by_staff_id ? Number(row.booked_by_staff_id) : null;
@@ -77,11 +133,13 @@ export async function GET() {
       const vehicleLabel =
         row.vehicle_label || payload?.vehicle || payload?.vehicleLabel || payload?.vehicleTypeLabel || 'Unknown';
       const paymentMethod = String(payload?.paymentMethod || payload?.paymentType || '').trim();
-      const paymentStatus = String(payload?.paymentStatus || '').trim().toLowerCase();
+      const paymentStatus = String(row.payment_status || payload?.paymentStatus || '').trim().toLowerCase();
       const paymentIntentId = String(payload?.paymentIntentId || '').trim();
       const alreadyRefunded = String(payload?.refund?.status || '').trim().toLowerCase() === 'succeeded';
       const isPaid = paymentStatus === 'succeeded';
       const isRefundable = isPaid && Boolean(paymentIntentId) && !alreadyRefunded;
+      const canReleaseHold = HOLD_PAYMENT_STATUSES.has(paymentStatus) && Boolean(paymentIntentId) && !alreadyRefunded;
+      const dropOffs = parseDropOffs(String(row.destination || ''), payload);
       const rawDriverName = String(row.driver_name ?? '').trim();
       const driverId =
         rawDriverName && rawDriverName.toLowerCase() !== 'pending assignment' ? rawDriverName : '';
@@ -92,6 +150,7 @@ export async function GET() {
         journeyDate: row.journey_date ? String(row.journey_date) : null,
         pickup: row.pickup,
         dropOff: row.destination,
+        dropOffs,
         passenger: row.passenger_name || payload?.passengerName || 'Guest Passenger',
         phone: row.passenger_phone || payload?.passengerPhone || '',
         bookedBy: bookedByName || row.client_email || payload?.passengerName || 'Guest Booking',
@@ -103,6 +162,8 @@ export async function GET() {
         paymentMethod,
         isPaid,
         isRefundable,
+        canReleaseHold,
+        paymentAction: isRefundable ? 'refund' : canReleaseHold ? 'cancel_hold' : null,
         vehicle: vehicleLabel,
         vehicleTypeId: row.vehicle_type_id ? Number(row.vehicle_type_id) : null,
         passengerEmail: row.passenger_email || payload?.passengerEmail || '',
@@ -114,6 +175,32 @@ export async function GET() {
             ? Number(row.driver_commission_applied)
             : null,
         clientConfirmed: Boolean(row.client_confirmed),
+        rideStatus: row.ride_status ? String(row.ride_status) : '',
+        paymentStatus: row.payment_status ? String(row.payment_status) : paymentStatus,
+        originalEstimate:
+          row.original_estimated_fare !== null && row.original_estimated_fare !== undefined
+            ? Number(row.original_estimated_fare)
+            : null,
+        currentEstimate:
+          row.current_estimated_fare !== null && row.current_estimated_fare !== undefined
+            ? Number(row.current_estimated_fare)
+            : null,
+        finalFare:
+          row.final_fare !== null && row.final_fare !== undefined
+            ? Number(row.final_fare)
+            : null,
+        authorizedAmount:
+          row.latest_authorized_amount !== null && row.latest_authorized_amount !== undefined
+            ? Number(row.latest_authorized_amount)
+            : null,
+        capturedAmount:
+          row.captured_amount !== null && row.captured_amount !== undefined
+            ? Number(row.captured_amount)
+            : null,
+        primaryPaymentIntentId: row.primary_payment_intent_id ? String(row.primary_payment_intent_id) : '',
+        stripeCustomerId: row.stripe_customer_id ? String(row.stripe_customer_id) : '',
+        stripePaymentMethodId: row.stripe_payment_method_id ? String(row.stripe_payment_method_id) : '',
+        paymentFailureReason: row.payment_failure_reason ? String(row.payment_failure_reason) : '',
         createdAt: row.created_at ? String(row.created_at) : null,
         updatedAt: row.updated_at ? String(row.updated_at) : null,
       };
