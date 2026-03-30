@@ -208,10 +208,6 @@ const AdminStatementsPage: React.FC = () => {
   const [rows, setRows] = useState<StatementRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [backfillBusy, setBackfillBusy] = useState(false);
-  const [regenerateBusy, setRegenerateBusy] = useState(false);
-  const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -246,7 +242,7 @@ const AdminStatementsPage: React.FC = () => {
 
     loadStatements();
     return () => controller.abort();
-  }, [startDate, endDate, refreshKey]);
+  }, [startDate, endDate]);
 
   const toggleSelect = (key: string) => {
     setSelected((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -297,54 +293,15 @@ const AdminStatementsPage: React.FC = () => {
     });
   };
 
-  const handleBackfill = async () => {
-    setBackfillBusy(true);
-    setBackfillMessage(null);
-    try {
-      const res = await fetch('/api/admin/statements/backfill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ limit: 100 }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to backfill statements');
-      }
-
-      setBackfillMessage(
-        `Backfill finished. Generated ${Number(data?.generatedCount || 0)}, skipped ${Number(data?.skippedCount || 0)}, failed ${Number(data?.failedCount || 0)}.`
-      );
-      setRefreshKey((prev) => prev + 1);
-    } catch (err: any) {
-      setBackfillMessage(err?.message || 'Failed to backfill statements');
-    } finally {
-      setBackfillBusy(false);
-    }
-  };
-
-  const handleRegenerate = async () => {
-    setRegenerateBusy(true);
-    setBackfillMessage(null);
-    try {
-      const res = await fetch('/api/admin/statements/backfill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ limit: 100, force: true }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || 'Failed to regenerate PDFs');
-      }
-
-      setBackfillMessage(
-        `PDF regeneration finished. Generated ${Number(data?.generatedCount || 0)}, skipped ${Number(data?.skippedCount || 0)}, failed ${Number(data?.failedCount || 0)}.`
-      );
-      setRefreshKey((prev) => prev + 1);
-    } catch (err: any) {
-      setBackfillMessage(err?.message || 'Failed to regenerate PDFs');
-    } finally {
-      setRegenerateBusy(false);
-    }
+  const formatDateLabel = (value: string) => {
+    if (!value) return 'Any date';
+    const date = new Date(`${value}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }).format(date);
   };
 
   return (
@@ -356,7 +313,9 @@ const AdminStatementsPage: React.FC = () => {
           <main className="w-full space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="flex flex-wrap items-center gap-3 text-sm text-gray-200">
-                <span className="text-xs uppercase tracking-[0.25em] text-amber-300">Select between dates</span>
+                <span className="text-xs uppercase tracking-[0.25em] text-amber-300">
+                  Showing: {formatDateLabel(startDate)} to {formatDateLabel(endDate)}
+                </span>
                 <input
                   type="date"
                   value={startDate}
@@ -374,22 +333,6 @@ const AdminStatementsPage: React.FC = () => {
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={handleBackfill}
-                  className="inline-flex items-center gap-2 rounded-md border border-amber-500 px-4 py-2 text-sm font-semibold text-amber-300 hover:bg-amber-500 hover:text-black transition-colors disabled:opacity-60"
-                  disabled={backfillBusy}
-                >
-                  {backfillBusy ? 'Generating...' : 'Generate missing'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleRegenerate}
-                  className="inline-flex items-center gap-2 rounded-md border border-white/20 px-4 py-2 text-sm font-semibold text-white hover:bg-white hover:text-black transition-colors disabled:opacity-60"
-                  disabled={regenerateBusy}
-                >
-                  {regenerateBusy ? 'Refreshing PDFs...' : 'Regenerate PDFs'}
-                </button>
-                <button
-                  type="button"
                   onClick={handleDownload}
                   className="inline-flex items-center gap-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400 transition-colors disabled:opacity-60"
                   disabled={!rows.some((row) => selected[String(row.id)])}
@@ -401,9 +344,6 @@ const AdminStatementsPage: React.FC = () => {
 
             {error ? (
               <div className="rounded-2xl border border-red-500/50 bg-red-950/40 p-4 text-red-200">{error}</div>
-            ) : null}
-            {backfillMessage ? (
-              <div className="rounded-2xl border border-amber-500/40 bg-amber-950/20 p-4 text-amber-100">{backfillMessage}</div>
             ) : null}
 
             <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-[#120c0a]/80 px-4 py-3 text-sm text-gray-300">

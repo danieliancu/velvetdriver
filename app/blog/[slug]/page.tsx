@@ -85,7 +85,7 @@ export default async function BlogArticlePage({ params }: { params: { slug: stri
         </div>
         <div className="rounded-3xl overflow-hidden border border-white/10 shadow-xl shadow-black/30">
           {article.hero_image ? (
-            <img src={article.hero_image} alt={article.title} className="w-full h-[360px] object-cover" />
+            <img src={article.hero_image} alt={article.title} className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-[360px] bg-gradient-to-br from-neutral-800 to-neutral-950" />
           )}
