@@ -13,6 +13,8 @@ type DriverRow = DbRow<{
   surname: string | null;
   first_and_middle_name: string | null;
   address: string | null;
+  date_of_birth: string | null;
+  nino: string | null;
   pco_license_no: string | null;
   pco_expires_date: string | null;
   commission: number | null;
@@ -106,6 +108,19 @@ const executeWithRetry = async <T extends mysql.ResultSetHeader>(
   }
 };
 
+const executeOptional = async (
+  conn: mysql.PoolConnection,
+  sql: string,
+  params?: any[]
+) => {
+  try {
+    return await conn.execute(sql, params);
+  } catch (err: any) {
+    if (err?.code === 'ER_NO_SUCH_TABLE') return null;
+    throw err;
+  }
+};
+
 export async function GET() {
   try {
     const [rows] = await queryWithRetry<DriverRow[]>(
@@ -119,6 +134,8 @@ export async function GET() {
               d.surname,
               d.first_and_middle_name,
               d.address,
+              d.date_of_birth,
+              d.nino,
               d.pco_license_no,
               d.pco_expires_date,
               d.commission
@@ -265,6 +282,8 @@ export async function GET() {
       phone: row.phone || '-',
       email: row.email,
       address: row.address || '-',
+      dateOfBirth: row.date_of_birth || '-',
+      nino: row.nino || '-',
       license: row.pco_license_no || '-',
       pcoExpiry: row.pco_expires_date || '-',
       commission: row.commission ?? 20,
@@ -292,6 +311,8 @@ export async function PATCH(request: Request) {
     const commission = body.commission !== undefined ? Number(body.commission) : null;
     const driverCarId = Number(body.driverCarId);
     const vehicleTypeId = body.vehicleTypeId !== undefined ? Number(body.vehicleTypeId) : null;
+    const docType = body.docType !== undefined ? String(body.docType ?? '').trim() : null;
+    const expiryDate = body.expiryDate !== undefined ? String(body.expiryDate ?? '').trim() : null;
     if (!driverId) {
       if (!driverCarId) {
         return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
@@ -329,6 +350,26 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    if (driverCarId && docType) {
+      const allowedDocTypes = new Set(['mot', 'insurance', 'phv_car_licence']);
+      if (!allowedDocTypes.has(docType)) {
+        return NextResponse.json({ error: 'Invalid document type' }, { status: 400 });
+      }
+
+      const normalizedExpiryDate = expiryDate || null;
+      await executeWithRetry<mysql.ResultSetHeader>(
+        `INSERT INTO driver_car_documents
+         (car_id, doc_type, expiry_date, file_name, file_url, public_id, resource_type, format, bytes, width, height)
+         VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+         ON DUPLICATE KEY UPDATE
+           expiry_date = VALUES(expiry_date),
+           updated_at = CURRENT_TIMESTAMP`,
+        [driverCarId, docType, normalizedExpiryDate]
+      );
+
+      return NextResponse.json({ ok: true, docType, expiryDate: normalizedExpiryDate });
+    }
+
     let updatedAt: string | null = null;
     let status: string | null = null;
     if (nextStatus) {
@@ -361,5 +402,149 @@ export async function PATCH(request: Request) {
   } catch (err) {
     console.error('Admin driver commission update error', err);
     return NextResponse.json({ error: 'Failed to update commission' }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const conn = await pool.getConnection();
+  try {
+    const body = await request.json().catch(() => ({}));
+    const driverId = Number(body?.driverId);
+    if (!driverId) {
+      return NextResponse.json({ error: 'Invalid driver id' }, { status: 400 });
+    }
+
+    const [driverRows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT d.id,
+              d.user_id,
+              d.first_and_middle_name,
+              d.surname
+         FROM drivers d
+        WHERE d.id = ?
+        LIMIT 1`,
+      [driverId]
+    );
+    const driver = driverRows[0];
+    if (!driver?.id || !driver?.user_id) {
+      return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
+    }
+
+    const driverName =
+      [driver.first_and_middle_name, driver.surname]
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean)
+        .join(' ') || `Driver ${driverId}`;
+    const driverIdText = String(driverId).trim().toLowerCase();
+    const driverNameText = driverName.trim().toLowerCase();
+    const userId = Number(driver.user_id);
+
+    await conn.beginTransaction();
+
+    await conn.execute(
+      `UPDATE client_journeys
+          SET driver_name = ?,
+              car = 'TBD',
+              plate = 'TBD',
+              driver_commission_applied = NULL,
+              driver_price = NULL
+        WHERE status <> 'Completed'
+          AND (
+            LOWER(TRIM(driver_name)) = ?
+            OR LOWER(TRIM(driver_name)) = ?
+          )`,
+      ['Pending assignment', driverIdText, driverNameText]
+    );
+
+    await conn.execute(
+      `UPDATE client_journeys
+          SET driver_name = ?
+        WHERE status = 'Completed'
+          AND (
+            LOWER(TRIM(driver_name)) = ?
+            OR LOWER(TRIM(driver_name)) = ?
+          )`,
+      [driverName, driverIdText, driverNameText]
+    );
+
+    const [driverCarRows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT id, car_id
+         FROM driver_cars
+        WHERE driver_id = ?`,
+      [driverId]
+    );
+    const driverCarIds = driverCarRows.map((row) => Number(row.id)).filter(Boolean);
+    const carIds = driverCarRows.map((row) => Number(row.car_id)).filter(Boolean);
+
+    if (driverCarIds.length) {
+      await executeOptional(
+        conn,
+        `DELETE FROM driver_car_documents
+          WHERE car_id IN (${driverCarIds.map(() => '?').join(',')})`,
+        driverCarIds
+      );
+    }
+
+    await executeOptional(
+      conn,
+      `DELETE FROM driver_bank_details WHERE driver_id = ?`,
+      [driverId]
+    );
+
+    await conn.execute(
+      `DELETE FROM driver_documents WHERE driver_id = ?`,
+      [driverId]
+    );
+
+    await executeOptional(
+      conn,
+      `DELETE FROM driver_statements WHERE driver_id = ?`,
+      [driverId]
+    );
+
+    await conn.execute(
+      `DELETE FROM driver_cars WHERE driver_id = ?`,
+      [driverId]
+    );
+
+    if (carIds.length) {
+      await conn.execute(
+        `DELETE FROM cars
+          WHERE id IN (${carIds.map(() => '?').join(',')})
+            AND id NOT IN (
+              SELECT car_id
+                FROM (
+                  SELECT car_id
+                    FROM driver_cars
+                   WHERE car_id IN (${carIds.map(() => '?').join(',')})
+                ) AS linked_cars
+            )`,
+        [...carIds, ...carIds]
+      );
+    }
+
+    await executeOptional(
+      conn,
+      `DELETE FROM password_reset_tokens WHERE user_id = ?`,
+      [userId]
+    );
+
+    await conn.execute(
+      `DELETE FROM drivers WHERE id = ? LIMIT 1`,
+      [driverId]
+    );
+
+    await conn.execute(
+      `DELETE FROM users WHERE id = ? LIMIT 1`,
+      [userId]
+    );
+
+    await conn.commit();
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    await conn.rollback();
+    console.error('Admin driver delete error', err);
+    return NextResponse.json({ error: 'Failed to delete driver' }, { status: 500 });
+  } finally {
+    conn.release();
   }
 }

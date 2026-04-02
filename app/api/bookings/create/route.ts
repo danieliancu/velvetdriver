@@ -5,6 +5,104 @@ import { consumeClientCredit, getClientCreditBalance } from '@/lib/client-credit
 import { persistBookingAuthorization } from '@/lib/ride-payments';
 
 const pool = getDbPool();
+const ADMIN_BOOKING_NOTIFICATION_EMAILS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const formatDateForEmail = (value: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return value || '-';
+  return `${match[3]}/${match[2]}/${match[1]}`;
+};
+
+const formatTimeForEmail = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return '-';
+  return trimmed.length >= 5 ? trimmed.slice(0, 5) : trimmed;
+};
+
+async function sendAdminBookingCreatedEmail(input: {
+  journeyId: number;
+  date: string;
+  time: string;
+  passengerName: string;
+  passengerEmail: string;
+  passengerPhone: string;
+  pickup: string;
+  destination: string;
+  serviceType: string;
+  totalFare: number;
+  paymentMethod: string;
+  amountDueNow: number;
+  appliedCreditAmount: number;
+}) {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.EMAIL_FROM;
+  if (!resendApiKey || !emailFrom) return;
+
+  const bookingCode = `VD-${String(input.journeyId).padStart(4, '0')}`;
+  const formattedDate = formatDateForEmail(input.date);
+  const formattedTime = formatTimeForEmail(input.time);
+  const paymentMethodLabel = input.paymentMethod || 'Not specified';
+  const html = `
+    <h2>New booking received (${escapeHtml(bookingCode)})</h2>
+    <p>A new booking was created on the website.</p>
+    <p><strong>Booking ref:</strong> ${escapeHtml(bookingCode)}</p>
+    <p><strong>Date:</strong> ${escapeHtml(formattedDate)}</p>
+    <p><strong>Time:</strong> ${escapeHtml(formattedTime)}</p>
+    <p><strong>Passenger:</strong> ${escapeHtml(input.passengerName || 'N/A')}</p>
+    <p><strong>Email:</strong> ${escapeHtml(input.passengerEmail || 'N/A')}</p>
+    <p><strong>Phone:</strong> ${escapeHtml(input.passengerPhone || 'N/A')}</p>
+    <p><strong>Pickup:</strong> ${escapeHtml(input.pickup || 'N/A')}</p>
+    <p><strong>Destination:</strong> ${escapeHtml(input.destination || 'N/A')}</p>
+    <p><strong>Service:</strong> ${escapeHtml(input.serviceType || 'Transfer')}</p>
+    <p><strong>Estimated fare:</strong> GBP ${input.totalFare.toFixed(2)}</p>
+    <p><strong>Payment method:</strong> ${escapeHtml(paymentMethodLabel)}</p>
+    <p><strong>Amount due now:</strong> GBP ${input.amountDueNow.toFixed(2)}</p>
+    <p><strong>Credit applied:</strong> GBP ${input.appliedCreditAmount.toFixed(2)}</p>
+  `;
+  const text = [
+    `New booking received (${bookingCode})`,
+    `Date: ${formattedDate}`,
+    `Time: ${formattedTime}`,
+    `Passenger: ${input.passengerName || 'N/A'}`,
+    `Email: ${input.passengerEmail || 'N/A'}`,
+    `Phone: ${input.passengerPhone || 'N/A'}`,
+    `Pickup: ${input.pickup || 'N/A'}`,
+    `Destination: ${input.destination || 'N/A'}`,
+    `Service: ${input.serviceType || 'Transfer'}`,
+    `Estimated fare: GBP ${input.totalFare.toFixed(2)}`,
+    `Payment method: ${paymentMethodLabel}`,
+    `Amount due now: GBP ${input.amountDueNow.toFixed(2)}`,
+    `Credit applied: GBP ${input.appliedCreditAmount.toFixed(2)}`,
+  ].join('\n');
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: emailFrom,
+      to: ADMIN_BOOKING_NOTIFICATION_EMAILS,
+      subject: `Velvet Drivers Admin - New booking ${bookingCode}`,
+      html,
+      text,
+    }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data?.message || `Resend error ${response.status}`);
+  }
+}
 
 export async function POST(request: Request) {
   const conn = await pool.getConnection();
@@ -124,6 +222,27 @@ export async function POST(request: Request) {
     }
 
     await conn.commit();
+
+    try {
+      await sendAdminBookingCreatedEmail({
+        journeyId: rideId,
+        date,
+        time,
+        passengerName,
+        passengerEmail,
+        passengerPhone,
+        pickup,
+        destination,
+        serviceType: String(body.serviceType ?? 'Transfer'),
+        totalFare,
+        paymentMethod,
+        amountDueNow,
+        appliedCreditAmount,
+      });
+    } catch (emailErr) {
+      console.error('Admin booking create email error', emailErr);
+    }
+
     return NextResponse.json({ success: true, journeyId: rideId });
   } catch (err: any) {
     await conn.rollback();

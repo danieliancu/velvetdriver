@@ -73,8 +73,7 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
     {
       id: 'awaiting',
       label: 'Awaiting Approval',
-      to: '/admin/awaiting',
-      badge: 4
+      to: '/admin/awaiting'
     },
     {
       id: 'notifications',

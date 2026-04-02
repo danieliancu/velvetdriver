@@ -59,6 +59,8 @@ type DriverProfileData = {
   phone: string;
   email: string;
   address: string;
+  dateOfBirth: string;
+  nino: string;
   license: string;
   pcoExpiry: string;
   status: string;
@@ -81,6 +83,9 @@ type DriverProfileData = {
     status?: string;
     vehicleTypeId?: number | null;
     vehicleTypeLabel?: string;
+    motExpiry?: string;
+    insuranceExpiry?: string;
+    phvExpiry?: string;
     documents?: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }>;
   }>;
   upcomingJobs: DriverJob[];
@@ -96,9 +101,30 @@ type DriverStatusAction = 'holiday' | 'resume' | 'block';
 type ConfirmationState =
   | { type: 'driver-status'; driverId: string; action: DriverStatusAction; message: string }
   | { type: 'vehicle-cease'; driverId: string; vrm: string; message: string }
+  | { type: 'delete-driver'; driverId: string; message: string }
   | null;
 
 const tabs = ['Details', 'Jobs', 'Car(s)', 'Monthly Statement', 'Documents Uploaded', 'Logs', 'New Photo Upload'] as const;
+
+const normalizeDateInput = (value?: string | null) => {
+  if (!value || value === '-') return '';
+  const dateValue = new Date(value);
+  if (Number.isNaN(dateValue.getTime())) return value;
+  return dateValue.toISOString().slice(0, 10);
+};
+
+const getCarExpiryInputValue = (
+  car: DriverProfileData['carDetails'][number],
+  field: 'motExpiry' | 'insuranceExpiry' | 'phvExpiry',
+  docType: 'mot' | 'insurance' | 'phv_car_licence'
+) => {
+  const directValue = normalizeDateInput(car[field]);
+  if (directValue) return directValue;
+  const fallbackValue = Array.isArray(car.documents)
+    ? car.documents.find((doc) => doc.docType === docType)?.expiryDate
+    : null;
+  return normalizeDateInput(fallbackValue);
+};
 
 const InfoItem: React.FC<{ label: string; value: string }> = ({ label, value }) => (
   <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -275,6 +301,8 @@ const AdminDriversPage: React.FC = () => {
           phone: driver.phone,
           email: driver.email,
           address: driver.address,
+          dateOfBirth: driver.dateOfBirth || '-',
+          nino: driver.nino || '-',
           license: driver.license,
           pcoExpiry: driver.pcoExpiry,
           status: driver.status || 'active',
@@ -290,6 +318,15 @@ const AdminDriversPage: React.FC = () => {
           carDetails: (driver.carDetails || []).map((car: any) => ({
             ...car,
             documents: Array.isArray(car.documents) ? car.documents : [],
+            motExpiry: normalizeDateInput(
+              Array.isArray(car.documents) ? car.documents.find((doc: any) => doc.docType === 'mot')?.expiryDate : null
+            ),
+            insuranceExpiry: normalizeDateInput(
+              Array.isArray(car.documents) ? car.documents.find((doc: any) => doc.docType === 'insurance')?.expiryDate : null
+            ),
+            phvExpiry: normalizeDateInput(
+              Array.isArray(car.documents) ? car.documents.find((doc: any) => doc.docType === 'phv_car_licence')?.expiryDate : null
+            ),
           })),
           upcomingJobs: [],
           completedJobs: [],
@@ -424,6 +461,91 @@ const AdminDriversPage: React.FC = () => {
     }
   };
 
+  const handleCarExpiryFieldChange = (
+    driverId: string,
+    carId: string | undefined,
+    field: 'motExpiry' | 'insuranceExpiry' | 'phvExpiry',
+    value: string
+  ) => {
+    if (!carId) return;
+    setDriverProfiles((prev) =>
+      prev.map((driver) =>
+        driver.id !== driverId
+          ? driver
+          : {
+              ...driver,
+              carDetails: driver.carDetails.map((car) =>
+                car.id === carId
+                  ? { ...car, [field]: value }
+                  : car
+              ),
+            }
+      )
+    );
+  };
+
+  const saveCarExpiry = async (
+    driverId: string,
+    carId: string | undefined,
+    docType: 'mot' | 'insurance' | 'phv_car_licence',
+    expiryDate: string
+  ) => {
+    if (!carId) return;
+    setCommissionError(null);
+    try {
+      const res = await fetch('/api/admin/drivers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverCarId: carId, docType, expiryDate }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to update expiry date');
+      }
+      const data = await res.json().catch(() => ({}));
+      const nextExpiry = normalizeDateInput(data?.expiryDate || expiryDate || '');
+      const fieldMap = {
+        mot: 'motExpiry',
+        insurance: 'insuranceExpiry',
+        phv_car_licence: 'phvExpiry',
+      } as const;
+      const targetField = fieldMap[docType];
+
+      setDriverProfiles((prev) =>
+        prev.map((driver) =>
+          driver.id !== driverId
+            ? driver
+            : {
+                ...driver,
+                carDetails: driver.carDetails.map((car) => {
+                  if (car.id !== carId) return car;
+                  const docs = Array.isArray(car.documents) ? car.documents.slice() : [];
+                  const existingIndex = docs.findIndex((doc) => doc.docType === docType);
+                  if (existingIndex >= 0) {
+                    docs[existingIndex] = { ...docs[existingIndex], expiryDate: nextExpiry || null };
+                  } else {
+                    docs.push({
+                      docType,
+                      name: docType,
+                      url: '',
+                      type: 'FILE',
+                      expiryDate: nextExpiry || null,
+                    });
+                  }
+                  return {
+                    ...car,
+                    [targetField]: nextExpiry,
+                    documents: docs,
+                  };
+                }),
+              }
+        )
+      );
+    } catch (err: any) {
+      setCommissionError(err?.message || 'Failed to update expiry date');
+    }
+  };
+
   const handlePhotoUpload = async (driverId: string, file: File | null) => {
     if (!file) return;
     setPhotoUploading((prev) => ({ ...prev, [driverId]: true }));
@@ -507,6 +629,63 @@ const AdminDriversPage: React.FC = () => {
     });
   };
 
+  const deleteDriver = async (driverId: string) => {
+    setCommissionError(null);
+    try {
+      const res = await fetch('/api/admin/drivers', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to delete driver');
+      }
+      setDriverProfiles((prev) => prev.filter((driver) => driver.id !== driverId));
+      setCommissions((prev) => {
+        const next = { ...prev };
+        delete next[driverId];
+        return next;
+      });
+      setActiveTabs((prev) => {
+        const next = { ...prev };
+        delete next[driverId];
+        return next;
+      });
+      setCarCeasedState((prev) => {
+        const next = { ...prev };
+        delete next[driverId];
+        return next;
+      });
+      setRowStatuses((prev) => {
+        const next = { ...prev };
+        delete next[driverId];
+        return next;
+      });
+      setPhotoError((prev) => {
+        const next = { ...prev };
+        delete next[driverId];
+        return next;
+      });
+      setPhotoUploading((prev) => {
+        const next = { ...prev };
+        delete next[driverId];
+        return next;
+      });
+    } catch (err: any) {
+      setCommissionError(err?.message || 'Failed to delete driver');
+    }
+  };
+
+  const requestDeleteDriver = (driverId: string) => {
+    const driverName = driverProfiles.find((d) => d.id === driverId)?.name ?? 'this driver';
+    setConfirmation({
+      type: 'delete-driver',
+      driverId,
+      message: `Are you sure you want to permanently delete ${driverName}? This will remove the driver from the system and revoke account access.`,
+    });
+  };
+
   const toggleCommissionEditing = async (driverId: string) => {
     const current = commissions[driverId] ?? { value: '20', editing: false };
     if (!current.editing) {
@@ -551,6 +730,8 @@ const AdminDriversPage: React.FC = () => {
       applyDriverStatusChange(confirmation.driverId, confirmation.action);
     } else if (confirmation.type === 'vehicle-cease') {
       applyVehicleCease(confirmation.driverId, confirmation.vrm);
+    } else if (confirmation.type === 'delete-driver') {
+      deleteDriver(confirmation.driverId);
     }
     setConfirmation(null);
   };
@@ -571,6 +752,8 @@ const AdminDriversPage: React.FC = () => {
               <InfoItem label="Phone" value={driver.phone} />
               <InfoItem label="Email" value={driver.email} />
               <InfoItem label="Address" value={driver.address} />
+              <InfoItem label="Date of Birth" value={formatDate(driver.dateOfBirth)} />
+              <InfoItem label="NINO" value={driver.nino} />
               <InfoItem label="PCO Licence" value={driver.license} />
               <InfoItem label="PCO Expiry" value={formatDate(driver.pcoExpiry)} />
               <InfoItem label="Rating" value={driver.rating} />
@@ -641,6 +824,13 @@ const AdminDriversPage: React.FC = () => {
                   className="rounded-full border border-red-500/60 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-red-200 hover:bg-red-500/10 disabled:opacity-50"
                 >
                   Block driver
+                </button>
+                <button
+                  type="button"
+                  onClick={() => requestDeleteDriver(driver.id)}
+                  className="rounded-full border border-red-500 bg-red-600 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white transition hover:bg-red-500"
+                >
+                  Delete Driver
                 </button>
               </div>
             </div>
@@ -730,6 +920,50 @@ const AdminDriversPage: React.FC = () => {
                                   ))}
                                 </select>
                               </div>
+                              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                                <div>
+                                  <label className="mb-1 block text-[11px] uppercase tracking-wide text-amber-200/70">
+                                    MOT Expiry
+                                  </label>
+                                  <input
+                                    type="date"
+                                    value={getCarExpiryInputValue(car, 'motExpiry', 'mot')}
+                                    onChange={(event) =>
+                                      handleCarExpiryFieldChange(driver.id, car.id, 'motExpiry', event.target.value)
+                                    }
+                                    onBlur={(event) => saveCarExpiry(driver.id, car.id, 'mot', event.target.value)}
+                                    className="w-full rounded-lg border border-amber-900/60 bg-black/40 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-[11px] uppercase tracking-wide text-amber-200/70">
+                                    Insurance Expiry
+                                  </label>
+                                  <input
+                                    type="date"
+                                    value={getCarExpiryInputValue(car, 'insuranceExpiry', 'insurance')}
+                                    onChange={(event) =>
+                                      handleCarExpiryFieldChange(driver.id, car.id, 'insuranceExpiry', event.target.value)
+                                    }
+                                    onBlur={(event) => saveCarExpiry(driver.id, car.id, 'insurance', event.target.value)}
+                                    className="w-full rounded-lg border border-amber-900/60 bg-black/40 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-[11px] uppercase tracking-wide text-amber-200/70">
+                                    PHV Car License Expiry
+                                  </label>
+                                  <input
+                                    type="date"
+                                    value={getCarExpiryInputValue(car, 'phvExpiry', 'phv_car_licence')}
+                                    onChange={(event) =>
+                                      handleCarExpiryFieldChange(driver.id, car.id, 'phvExpiry', event.target.value)
+                                    }
+                                    onBlur={(event) => saveCarExpiry(driver.id, car.id, 'phv_car_licence', event.target.value)}
+                                    className="w-full rounded-lg border border-amber-900/60 bg-black/40 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
                             </div>
                   <div className="mt-4 border-t border-amber-900/40 pt-3 text-xs text-white/80">
                     <p className="text-xs uppercase text-amber-300 mb-2">Documents</p>
@@ -744,9 +978,20 @@ const AdminDriversPage: React.FC = () => {
                           { label: 'Other', type: 'other' },
                         ].map((entry) => {
                           const doc = car.documents?.find((item) => item.docType === entry.type);
+                          const expiryText =
+                            doc?.expiryDate && ['mot', 'insurance', 'phv_car_licence'].includes(entry.type)
+                              ? formatDate(doc.expiryDate)
+                              : null;
                           return (
-                            <div key={`${driver.id}-${car.vrm}-${entry.type}`} className="flex items-center justify-between">
-                              <span>{entry.label}</span>
+                            <div key={`${driver.id}-${car.vrm}-${entry.type}`} className="flex items-center justify-between gap-3">
+                              <span>
+                                {entry.label}
+                                {expiryText ? (
+                                  <span className="ml-2 text-[10px] uppercase tracking-wide text-amber-200/70">
+                                    Expires: {expiryText}
+                                  </span>
+                                ) : null}
+                              </span>
                               <span className="flex items-center gap-2">
                                 <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide">
                                   {doc ? 'Uploaded' : 'Missing'}
