@@ -63,6 +63,7 @@ type DriverProfileData = {
   nino: string;
   license: string;
   pcoExpiry: string;
+  documentsCheckedAt?: string | null;
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -244,6 +245,7 @@ const AdminDriversPage: React.FC = () => {
   const [carCeasedState, setCarCeasedState] = useState<Record<string, Record<string, boolean>>>({});
   const [commissions, setCommissions] = useState<Record<string, { value: string; editing: boolean }>>({});
   const [confirmation, setConfirmation] = useState<ConfirmationState>(null);
+  const [documentsCheckSaving, setDocumentsCheckSaving] = useState<Record<string, boolean>>({});
 
   const formatDate = (value: string) => {
     if (!value || value === '-') return '-';
@@ -264,6 +266,20 @@ const AdminDriversPage: React.FC = () => {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
+    }).format(dateValue);
+  };
+
+  const formatDocumentsCheckedAt = (value?: string | null) => {
+    if (!value || value === '-') return '';
+    const dateValue = new Date(value);
+    if (Number.isNaN(dateValue.getTime())) return value;
+    return new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
     }).format(dateValue);
   };
 
@@ -305,6 +321,7 @@ const AdminDriversPage: React.FC = () => {
           nino: driver.nino || '-',
           license: driver.license,
           pcoExpiry: driver.pcoExpiry,
+          documentsCheckedAt: driver.documentsCheckedAt || null,
           status: driver.status || 'active',
           createdAt: driver.createdAt || '-',
           updatedAt: driver.updatedAt || '-',
@@ -482,6 +499,20 @@ const AdminDriversPage: React.FC = () => {
             }
       )
     );
+  };
+
+  const handleCarExpiryInputChange = (
+    driverId: string,
+    carId: string | undefined,
+    field: 'motExpiry' | 'insuranceExpiry' | 'phvExpiry',
+    docType: 'mot' | 'insurance' | 'phv_car_licence',
+    value: string
+  ) => {
+    handleCarExpiryFieldChange(driverId, carId, field, value);
+    if (!carId) return;
+    if (!value || /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      void saveCarExpiry(driverId, carId, docType, value);
+    }
   };
 
   const saveCarExpiry = async (
@@ -686,6 +717,33 @@ const AdminDriversPage: React.FC = () => {
     });
   };
 
+  const markDocumentsChecked = async (driverId: string) => {
+    setCommissionError(null);
+    setDocumentsCheckSaving((prev) => ({ ...prev, [driverId]: true }));
+    try {
+      const res = await fetch('/api/admin/drivers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverId, documentsChecked: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to mark documents as checked');
+      }
+      setDriverProfiles((prev) =>
+        prev.map((driver) =>
+          driver.id === driverId
+            ? { ...driver, documentsCheckedAt: data?.documentsCheckedAt || new Date().toISOString() }
+            : driver
+        )
+      );
+    } catch (err: any) {
+      setCommissionError(err?.message || 'Failed to mark documents as checked');
+    } finally {
+      setDocumentsCheckSaving((prev) => ({ ...prev, [driverId]: false }));
+    }
+  };
+
   const toggleCommissionEditing = async (driverId: string) => {
     const current = commissions[driverId] ?? { value: '20', editing: false };
     if (!current.editing) {
@@ -832,6 +890,23 @@ const AdminDriversPage: React.FC = () => {
                 >
                   Delete Driver
                 </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => markDocumentsChecked(driver.id)}
+                    disabled={documentsCheckSaving[driver.id]}
+                    className="rounded-full border border-emerald-500/60 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-50"
+                  >
+                    {documentsCheckSaving[driver.id] ? 'Saving...' : 'Documents check'}
+                  </button>
+                  {driver.documentsCheckedAt ? (
+                    <span className="text-sm text-emerald-400">
+                      {'\u2713'} {formatDocumentsCheckedAt(driver.documentsCheckedAt)}
+                    </span>
+                  ) : (
+                    <span className="text-sm text-amber-300">Not checked yet</span>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -929,9 +1004,8 @@ const AdminDriversPage: React.FC = () => {
                                     type="date"
                                     value={getCarExpiryInputValue(car, 'motExpiry', 'mot')}
                                     onChange={(event) =>
-                                      handleCarExpiryFieldChange(driver.id, car.id, 'motExpiry', event.target.value)
+                                      handleCarExpiryInputChange(driver.id, car.id, 'motExpiry', 'mot', event.target.value)
                                     }
-                                    onBlur={(event) => saveCarExpiry(driver.id, car.id, 'mot', event.target.value)}
                                     className="w-full rounded-lg border border-amber-900/60 bg-black/40 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
                                   />
                                 </div>
@@ -943,9 +1017,8 @@ const AdminDriversPage: React.FC = () => {
                                     type="date"
                                     value={getCarExpiryInputValue(car, 'insuranceExpiry', 'insurance')}
                                     onChange={(event) =>
-                                      handleCarExpiryFieldChange(driver.id, car.id, 'insuranceExpiry', event.target.value)
+                                      handleCarExpiryInputChange(driver.id, car.id, 'insuranceExpiry', 'insurance', event.target.value)
                                     }
-                                    onBlur={(event) => saveCarExpiry(driver.id, car.id, 'insurance', event.target.value)}
                                     className="w-full rounded-lg border border-amber-900/60 bg-black/40 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
                                   />
                                 </div>
@@ -957,9 +1030,8 @@ const AdminDriversPage: React.FC = () => {
                                     type="date"
                                     value={getCarExpiryInputValue(car, 'phvExpiry', 'phv_car_licence')}
                                     onChange={(event) =>
-                                      handleCarExpiryFieldChange(driver.id, car.id, 'phvExpiry', event.target.value)
+                                      handleCarExpiryInputChange(driver.id, car.id, 'phvExpiry', 'phv_car_licence', event.target.value)
                                     }
-                                    onBlur={(event) => saveCarExpiry(driver.id, car.id, 'phv_car_licence', event.target.value)}
                                     className="w-full rounded-lg border border-amber-900/60 bg-black/40 px-3 py-2 text-sm text-white focus:border-amber-400 focus:outline-none"
                                   />
                                 </div>

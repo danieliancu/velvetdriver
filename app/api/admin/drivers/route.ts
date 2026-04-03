@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool, DbRow } from '@/lib/db';
 import { ensureDriverStatementsTable } from '@/lib/driver-statements';
+import { upsertDriverCarDocument } from '@/lib/driver-car-documents';
+import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
 const pool = getDbPool();
 
@@ -17,6 +19,7 @@ type DriverRow = DbRow<{
   nino: string | null;
   pco_license_no: string | null;
   pco_expires_date: string | null;
+  documents_checked_at: string | null;
   commission: number | null;
   status: string;
   created_at: string;
@@ -50,6 +53,7 @@ type PricingVehicleRow = DbRow<{
 }>;
 
 type CarDocRow = DbRow<{
+  id: number;
   car_id: number;
   doc_type: string;
   expiry_date: string | null;
@@ -138,6 +142,7 @@ export async function GET() {
               d.nino,
               d.pco_license_no,
               d.pco_expires_date,
+              d.documents_checked_at,
               d.commission
        FROM users u
        INNER JOIN roles r ON r.id = u.role_id AND r.code = 'driver'
@@ -195,12 +200,17 @@ export async function GET() {
       if (carIds.length) {
         try {
           const [carDocs] = await queryWithRetry<CarDocRow[]>(
-            `SELECT car_id, doc_type, expiry_date, file_url, format, file_name
+            `SELECT id, car_id, doc_type, expiry_date, file_url, format, file_name
              FROM driver_car_documents
-             WHERE car_id IN (${carIds.map(() => '?').join(',')})`,
+             WHERE car_id IN (${carIds.map(() => '?').join(',')})
+             ORDER BY updated_at DESC, id DESC`,
             carIds
           );
           carDocsByCar = carDocs.reduce((acc, doc) => {
+            const existingDocs = acc[doc.car_id] || [];
+            if (existingDocs.some((entry) => entry.docType === doc.doc_type)) {
+              return acc;
+            }
             if (!acc[doc.car_id]) acc[doc.car_id] = [];
             acc[doc.car_id].push({
               docType: doc.doc_type,
@@ -286,6 +296,7 @@ export async function GET() {
       nino: row.nino || '-',
       license: row.pco_license_no || '-',
       pcoExpiry: row.pco_expires_date || '-',
+      documentsCheckedAt: row.documents_checked_at || null,
       commission: row.commission ?? 20,
       status: row.status,
       createdAt: row.created_at,
@@ -313,12 +324,13 @@ export async function PATCH(request: Request) {
     const vehicleTypeId = body.vehicleTypeId !== undefined ? Number(body.vehicleTypeId) : null;
     const docType = body.docType !== undefined ? String(body.docType ?? '').trim() : null;
     const expiryDate = body.expiryDate !== undefined ? String(body.expiryDate ?? '').trim() : null;
+    const documentsChecked = body.documentsChecked === true;
     if (!driverId) {
       if (!driverCarId) {
         return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
       }
     }
-    if (commission === null && !nextStatus && !driverCarId) {
+    if (commission === null && !nextStatus && !driverCarId && !documentsChecked) {
       return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
     }
 
@@ -334,6 +346,18 @@ export async function PATCH(request: Request) {
       if (!result.affectedRows) {
         return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
       }
+      await logSiteActivity(pool, {
+        tableName: 'drivers',
+        operation: 'UPDATE',
+        pk: driverId,
+        category: 'driver',
+        title: 'Driver commission updated',
+        message: `Commission updated for driver ${driverId}.`,
+        severity: 'info',
+        tags: { actor: 'admin', commission },
+        ip: getRequestIp(request),
+        next: { commission },
+      }).catch((err) => console.error('Driver commission audit error', err));
     }
 
     if (driverCarId && vehicleTypeId) {
@@ -347,6 +371,18 @@ export async function PATCH(request: Request) {
       if (!result.affectedRows) {
         return NextResponse.json({ error: 'Car not found' }, { status: 404 });
       }
+      await logSiteActivity(pool, {
+        tableName: 'driver_cars',
+        operation: 'UPDATE',
+        pk: driverCarId,
+        category: 'driver',
+        title: 'Driver vehicle type updated',
+        message: `Vehicle type updated for car ${driverCarId}.`,
+        severity: 'info',
+        tags: { actor: 'admin', vehicleTypeId },
+        ip: getRequestIp(request),
+        next: { vehicleTypeId },
+      }).catch((err) => console.error('Driver car type audit error', err));
       return NextResponse.json({ ok: true });
     }
 
@@ -357,17 +393,65 @@ export async function PATCH(request: Request) {
       }
 
       const normalizedExpiryDate = expiryDate || null;
-      await executeWithRetry<mysql.ResultSetHeader>(
-        `INSERT INTO driver_car_documents
-         (car_id, doc_type, expiry_date, file_name, file_url, public_id, resource_type, format, bytes, width, height)
-         VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
-         ON DUPLICATE KEY UPDATE
-           expiry_date = VALUES(expiry_date),
-           updated_at = CURRENT_TIMESTAMP`,
-        [driverCarId, docType, normalizedExpiryDate]
-      );
+      await upsertDriverCarDocument(pool, {
+        carId: driverCarId,
+        docType,
+        expiryDate: normalizedExpiryDate,
+      });
+
+      await logSiteActivity(pool, {
+        tableName: 'driver_car_documents',
+        operation: 'UPDATE',
+        pk: `${driverCarId}:${docType}`,
+        category: 'driver_document',
+        title: 'Driver car document expiry updated',
+        message: `${docType} expiry updated for car ${driverCarId}.`,
+        severity: 'info',
+        tags: { actor: 'admin', docType },
+        ip: getRequestIp(request),
+        next: { expiryDate: normalizedExpiryDate },
+      }).catch((err) => console.error('Driver car expiry audit error', err));
 
       return NextResponse.json({ ok: true, docType, expiryDate: normalizedExpiryDate });
+    }
+
+    if (documentsChecked) {
+      const [result] = await executeWithRetry<mysql.ResultSetHeader>(
+        `UPDATE drivers
+            SET documents_checked_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+          LIMIT 1`,
+        [driverId]
+      );
+      if (!result.affectedRows) {
+        return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
+      }
+
+      const [rows] = await queryWithRetry<mysql.RowDataPacket[]>(
+        `SELECT documents_checked_at
+           FROM drivers
+          WHERE id = ?
+          LIMIT 1`,
+        [driverId]
+      );
+
+      await logSiteActivity(pool, {
+        tableName: 'drivers',
+        operation: 'UPDATE',
+        pk: driverId,
+        category: 'driver',
+        title: 'Driver documents checked',
+        message: `Documents were marked as checked for driver ${driverId}.`,
+        severity: 'success',
+        tags: { actor: 'admin' },
+        ip: getRequestIp(request),
+        next: { documentsCheckedAt: rows[0]?.documents_checked_at || null },
+      }).catch((err) => console.error('Driver documents check audit error', err));
+
+      return NextResponse.json({
+        ok: true,
+        documentsCheckedAt: rows[0]?.documents_checked_at || null,
+      });
     }
 
     let updatedAt: string | null = null;
@@ -396,6 +480,18 @@ export async function PATCH(request: Request) {
       );
       status = rows[0]?.status || nextStatus;
       updatedAt = rows[0]?.updated_at || null;
+      await logSiteActivity(pool, {
+        tableName: 'drivers',
+        operation: 'UPDATE',
+        pk: driverId,
+        category: 'driver',
+        title: 'Driver status updated',
+        message: `Driver ${driverId} status changed to ${status}.`,
+        severity: status === 'blocked' ? 'warning' : 'info',
+        tags: { actor: 'admin', status },
+        ip: getRequestIp(request),
+        next: { status, updatedAt },
+      }).catch((err) => console.error('Driver status audit error', err));
     }
 
     return NextResponse.json({ ok: true, status, updatedAt });
@@ -539,6 +635,19 @@ export async function DELETE(request: Request) {
     );
 
     await conn.commit();
+
+    await logSiteActivity(pool, {
+      tableName: 'drivers',
+      operation: 'DELETE',
+      pk: driverId,
+      category: 'driver',
+      title: 'Driver deleted',
+      message: `${driverName} was deleted from the system.`,
+      severity: 'warning',
+      tags: { actor: 'admin' },
+      next: { driverName, userId },
+    }).catch((err) => console.error('Driver delete audit error', err));
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     await conn.rollback();

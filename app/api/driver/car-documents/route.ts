@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import crypto from 'crypto';
 import { getDbPool } from '@/lib/db';
+import { upsertDriverCarDocument } from '@/lib/driver-car-documents';
+import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
 export const runtime = 'nodejs';
 
@@ -103,35 +105,45 @@ export async function POST(request: Request) {
       ? `${upload.original_filename}${upload.format ? `.${upload.format}` : ''}`
       : null;
 
-    await pool.execute(
-      `INSERT INTO driver_car_documents
-       (car_id, doc_type, expiry_date, file_name, file_url, public_id, resource_type, format, bytes, width, height)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         expiry_date = VALUES(expiry_date),
-         file_name = VALUES(file_name),
-         file_url = VALUES(file_url),
-         public_id = VALUES(public_id),
-         resource_type = VALUES(resource_type),
-         format = VALUES(format),
-         bytes = VALUES(bytes),
-         width = VALUES(width),
-         height = VALUES(height),
-         updated_at = CURRENT_TIMESTAMP`,
-      [
-        carId,
+    await upsertDriverCarDocument(pool, {
+      carId,
+      docType,
+      expiryDate: expiryDate || null,
+      fileName,
+      fileUrl: upload.secure_url,
+      publicId: upload.public_id,
+      resourceType: upload.resource_type,
+      format: upload.format || null,
+      bytes: upload.bytes || null,
+      width: upload.width || null,
+      height: upload.height || null,
+    });
+
+    await logSiteActivity(pool, {
+      tableName: 'driver_car_documents',
+      operation: 'UPDATE',
+      pk: `${carId}:${docType}`,
+      category: 'driver_document',
+      title: 'Driver car document uploaded',
+      message: `${email} uploaded ${docType} for car ${carId}.`,
+      severity: 'info',
+      tags: {
+        actor: 'driver',
         docType,
-        expiryDate || null,
+        carId,
+      },
+      changedBy: driverId,
+      changedByEmail: email,
+      ip: getRequestIp(request),
+      next: {
+        docType,
         fileName,
-        upload.secure_url,
-        upload.public_id,
-        upload.resource_type,
-        upload.format || null,
-        upload.bytes || null,
-        upload.width || null,
-        upload.height || null,
-      ]
-    );
+        expiryDate: expiryDate || null,
+        url: upload.secure_url,
+      },
+    }).catch((err) => {
+      console.error('Driver car document audit error', err);
+    });
 
     return NextResponse.json({
       ok: true,

@@ -1842,6 +1842,7 @@ const CarsPage: React.FC = () => {
 const DriverDashboardPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [jobCount, setJobCount] = useState(0);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const { user, logout } = useAuth();
   const router = useRouter();
   const { showAlert } = useAlert();
@@ -1849,6 +1850,30 @@ const DriverDashboardPage: React.FC = () => {
   const handleLogout = () => {
     logout();
     router.push('/');
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!user?.email) return;
+    const confirmed = window.confirm('Are you sure you want to permanently delete your driver account?');
+    if (!confirmed) return;
+    setDeletingAccount(true);
+    try {
+      const res = await fetch('/api/account/delete', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, expectedRole: 'driver' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to delete account');
+      }
+      logout();
+      router.push('/');
+    } catch (err: any) {
+      showAlert(err?.message || 'Failed to delete account');
+    } finally {
+      setDeletingAccount(false);
+    }
   };
 
   const tabs = ['Jobs', 'Dashboard', 'Car(s)', 'Monthly Statement'];
@@ -1883,6 +1908,13 @@ const DriverDashboardPage: React.FC = () => {
                 className="px-4 py-2 font-semibold bg-transparent border border-amber-400 text-amber-400 rounded-md hover:bg-amber-400 hover:text-black transition-colors"
               >
                 Logout
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deletingAccount}
+                className="px-4 py-2 font-semibold bg-red-600 border border-red-500 text-white rounded-md hover:bg-red-500 transition-colors disabled:opacity-60"
+              >
+                {deletingAccount ? 'Deleting...' : 'Delete Account'}
               </button>
             </div>
             <nav className="mt-6 flex items-center space-x-2 overflow-x-auto pb-2">

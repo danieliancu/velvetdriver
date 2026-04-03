@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { getDbPool } from '@/lib/db';
+import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
 export const runtime = 'nodejs';
 
@@ -351,6 +352,34 @@ export async function POST(request: Request) {
     }
 
     await conn.commit();
+
+    await logSiteActivity(pool, {
+      tableName: 'drivers',
+      operation: 'INSERT',
+      pk: driverId,
+      category: 'driver',
+      title: 'New driver signup submitted',
+      message: `${firstMiddleNames} ${surname} submitted a new driver application.`,
+      severity: 'info',
+      tags: {
+        actor: 'driver',
+        status: 'pending',
+        vehicleReg: vehicleReg || null,
+      },
+      changedBy: userId,
+      changedByEmail: email,
+      ip: getRequestIp(request),
+      next: {
+        name: `${firstMiddleNames} ${surname}`.trim(),
+        phone,
+        email,
+        pcoLicenseNumber,
+        pcoExpiry,
+      },
+    }).catch((err) => {
+      console.error('Driver signup audit error', err);
+    });
+
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     if (conn) {
@@ -363,6 +392,10 @@ export async function POST(request: Request) {
     }
     if (err?.message?.startsWith('Missing')) {
       return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (typeof err?.message === 'string' && err.message.trim()) {
+      console.error('Driver signup error', err);
+      return NextResponse.json({ error: err.message.trim() }, { status: 500 });
     }
     console.error('Driver signup error', err);
     return NextResponse.json({ error: 'Failed to submit driver application' }, { status: 500 });

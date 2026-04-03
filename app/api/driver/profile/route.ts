@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool, DbRow } from '@/lib/db';
+import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
 const pool = getDbPool();
 
@@ -36,6 +37,7 @@ type CarRow = DbRow<{
 }>;
 
 type CarDocRow = DbRow<{
+  id: number;
   car_id: number;
   doc_type: string;
   expiry_date: string | null;
@@ -140,12 +142,17 @@ export async function GET(request: Request) {
     if (cars.length) {
       try {
         const [carDocs] = await pool.query<CarDocRow[]>(
-          `SELECT car_id, doc_type, expiry_date, file_url, format, file_name
+          `SELECT id, car_id, doc_type, expiry_date, file_url, format, file_name
            FROM driver_car_documents
-           WHERE car_id IN (${cars.map(() => '?').join(',')})`,
+           WHERE car_id IN (${cars.map(() => '?').join(',')})
+           ORDER BY updated_at DESC, id DESC`,
           cars.map((car) => car.driver_car_id)
         );
         carDocumentsByCar = carDocs.reduce((acc, doc) => {
+          const existingDocs = acc[doc.car_id] || [];
+          if (existingDocs.some((entry) => entry.docType === doc.doc_type)) {
+            return acc;
+          }
           if (!acc[doc.car_id]) acc[doc.car_id] = [];
           acc[doc.car_id].push({
             docType: doc.doc_type,
@@ -249,7 +256,19 @@ export async function PUT(request: Request) {
       await conn.beginTransaction();
 
       const [users] = await conn.query<mysql.RowDataPacket[]>(
-        'SELECT id FROM users WHERE email = ? LIMIT 1',
+        `SELECT u.id,
+                d.id AS driver_id,
+                u.phone AS user_phone,
+                d.first_and_middle_name,
+                d.surname,
+                d.address,
+                d.pco_license_no,
+                d.pco_expires_date,
+                d.driving_license_no
+           FROM users u
+           INNER JOIN drivers d ON d.user_id = u.id
+          WHERE u.email = ?
+          LIMIT 1`,
         [email]
       );
       const user = users[0];
@@ -299,6 +318,45 @@ export async function PUT(request: Request) {
       );
 
       await conn.commit();
+
+      await logSiteActivity(pool, {
+        tableName: 'drivers',
+        operation: 'UPDATE',
+        pk: user.driver_id || user.id,
+        category: 'driver',
+        title: 'Driver profile updated',
+        message: `${firstName} ${lastName} updated their driver profile.`,
+        severity: 'info',
+        tags: {
+          actor: 'driver',
+        },
+        changedBy: user.id,
+        changedByEmail: nextEmail || email,
+        ip: getRequestIp(request),
+        old: {
+          email,
+          phone: user.user_phone,
+          firstName: user.first_and_middle_name,
+          lastName: user.surname,
+          address: user.address,
+          pcoLicenceNo: user.pco_license_no,
+          pcoExpiry: user.pco_expires_date,
+          drivingLicense: user.driving_license_no,
+        },
+        next: {
+          email: nextEmail || email,
+          phone,
+          firstName,
+          lastName,
+          address,
+          pcoLicenceNo,
+          pcoExpiry,
+          drivingLicense,
+        },
+      }).catch((err) => {
+        console.error('Driver profile audit error', err);
+      });
+
       return NextResponse.json({ ok: true, email: nextEmail || email });
     } catch (err) {
       await conn.rollback();

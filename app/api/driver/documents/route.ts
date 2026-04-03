@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import crypto from 'crypto';
 import { getDbPool } from '@/lib/db';
+import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
 export const runtime = 'nodejs';
 
@@ -125,6 +126,30 @@ export async function POST(request: Request) {
         upload.height || null,
       ]
     );
+
+    await logSiteActivity(pool, {
+      tableName: 'driver_documents',
+      operation: 'UPDATE',
+      pk: `${driverId}:${docType}`,
+      category: 'driver_document',
+      title: 'Driver document uploaded',
+      message: `${email} uploaded ${docType}.`,
+      severity: 'info',
+      tags: {
+        actor: 'driver',
+        docType,
+      },
+      changedBy: driverId,
+      changedByEmail: email,
+      ip: getRequestIp(request),
+      next: {
+        docType,
+        fileName,
+        url: upload.secure_url,
+      },
+    }).catch((err) => {
+      console.error('Driver document audit error', err);
+    });
 
     return NextResponse.json({
       ok: true,

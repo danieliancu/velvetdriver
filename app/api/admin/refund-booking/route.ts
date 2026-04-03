@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import Stripe from 'stripe';
 import { getDbPool } from '@/lib/db';
+import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
 const pool = getDbPool();
 
@@ -365,6 +366,30 @@ export async function POST(request: Request) {
         warnings.push('Driver email missing, cancellation email skipped.');
       }
     }
+
+    await logSiteActivity(pool, {
+      tableName: 'client_journeys',
+      operation: 'UPDATE',
+      pk: journeyId,
+      category: 'booking',
+      title: action === 'refund' ? 'Booking refunded and cancelled' : 'Booking cancelled',
+      message: `${bookingCode} was ${action === 'refund' ? 'refunded and cancelled' : 'cancelled and hold released'}.`,
+      severity: 'warning',
+      tags: {
+        actor: 'admin',
+        action,
+        amount: refundAmount,
+      },
+      ip: getRequestIp(request),
+      next: {
+        bookingRef: bookingCode,
+        status: 'Cancelled',
+        refundAmount,
+        action,
+      },
+    }).catch((err) => {
+      console.error('Refund booking audit error', err);
+    });
 
     return NextResponse.json({
       ok: true,

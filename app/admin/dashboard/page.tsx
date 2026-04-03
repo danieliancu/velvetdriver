@@ -215,6 +215,14 @@ const formatCarLabel = (car: {
   return makeModel || car.plateNo || 'Unknown car';
 };
 
+const getDriverDisplayCarLabel = (driver?: DriverDirectoryEntry) => {
+  if (!driver) return '';
+  const activeCar = driver.cars.find((car) => String(car.status || '').toLowerCase() === 'active');
+  const fallbackCar = !activeCar ? driver.cars[0] : null;
+  const selectedCar = activeCar || fallbackCar;
+  return selectedCar ? formatCarLabel(selectedCar) : '';
+};
+
 const appendSelectedCarInstruction = (message: string, selectedCarLabel?: string) => {
   if (!selectedCarLabel) return message;
   return `${message}\n\nPlease use the car ${selectedCarLabel}`;
@@ -746,6 +754,11 @@ const AdminDashboardPage: React.FC = () => {
     return driver?.name || driverId;
   };
 
+  const getDriverById = (driverId?: string) => {
+    if (!driverId) return null;
+    return availableDrivers.find((entry) => entry.id === driverId) || null;
+  };
+
   const handlePasteInfo = (
     driverKey: string,
     booking: LiveBooking,
@@ -1138,14 +1151,18 @@ const AdminDashboardPage: React.FC = () => {
                           <div className="flex-1 space-y-3">
                             <p className="text-sm tracking-wide text-white flex items-center gap-3 flex-wrap">
                               <span className="inline-flex h-6 items-center font-semibold">{booking.id}</span>
-                              {booking.isRefundable ? (
+                              {booking.isRefundable || booking.canReleaseHold ? (
                                 <button
                                   type="button"
                                   onClick={() => requestRefund(booking)}
                                   disabled={refundBusy[booking.id]}
                                   className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
-                                  {refundBusy[booking.id] ? 'Refunding...' : 'Refund'}
+                                  {refundBusy[booking.id]
+                                    ? booking.paymentAction === 'cancel_hold'
+                                      ? 'Cancelling...'
+                                      : 'Refunding...'
+                                    : 'Cancel Job'}
                                 </button>
                               ) : null}
                               {bookingCreatedAt ? (
@@ -1472,104 +1489,128 @@ const AdminDashboardPage: React.FC = () => {
                       key={`allocated-${booking.id}`}
                       className="rounded-xl border border-emerald-400/20 bg-black/40 p-4"
                     >
-                      <div className="flex flex-wrap items-center justify-start gap-2">
-                        <div>
-                          <p className="text-sm font-semibold text-white">{booking.id}</p>
-                          <p className="text-xs text-gray-400">
-                            {booking.date} {booking.time}
-                          </p>
-                        </div>
-                        {booking.isRefundable || booking.canReleaseHold ? (
-                          <button
-                            type="button"
-                            onClick={() => requestRefund(booking)}
-                            disabled={refundBusy[booking.id]}
-                            className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {refundBusy[booking.id]
-                              ? booking.paymentAction === 'cancel_hold'
-                                ? 'Releasing...'
-                                : 'Refunding...'
-                              : booking.paymentAction === 'cancel_hold'
-                                ? 'Cancel hold'
-                                : 'Refund'}
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => openEditBookingModal(booking)}
-                          className="rounded-full border border-amber-400 bg-amber-400 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-black transition hover:bg-amber-300"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => requestCancelAllocation(booking)}
-                          disabled={cancelAllocationBusy[booking.id]}
-                          className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleCompleteAllocation(booking)}
-                          disabled={completeAllocationBusy[booking.id]}
-                          className="rounded-full border border-emerald-400 bg-emerald-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {completeAllocationBusy[booking.id] ? 'Completing...' : 'Job Completed'}
-                        </button>
-                      </div>
-                      <p className="mt-2 text-sm text-gray-300">
-                        Pickup: <span className="text-white">{booking.pickup}</span>
-                      </p>
-                      <p className="text-sm text-gray-300">
-                        Drop-off: <span className="text-white">{booking.dropOff}</span>
-                      </p>
-                      <p className="text-sm text-gray-300">
-                        Passenger: <span className="text-white">{booking.passenger}</span>
-                      </p>
-                      <p className="text-sm text-gray-300">
-                        Driver: <span className="text-emerald-300">{getDriverNameById(booking.driverId)}</span>
-                      </p>
-                      <p className="text-sm text-gray-300">
-                        Price: <span className="text-white">{booking.priceDetails}</span>
-                      </p>
-                      {booking.currentEstimate !== null && booking.currentEstimate !== undefined ? (
-                        <p className="text-sm text-gray-300">
-                          Current Estimate: <span className="text-white">{formatCurrencyValue(booking.currentEstimate)}</span>
-                        </p>
-                      ) : null}
-                      {booking.authorizedAmount !== null && booking.authorizedAmount !== undefined ? (
-                        <p className="text-sm text-gray-300">
-                          Authorized Hold:{' '}
-                          <span className="text-amber-300">{formatCurrencyValue(booking.authorizedAmount)}</span>
-                        </p>
-                      ) : null}
-                      <p className="text-sm text-gray-300">
-                        Payment:{' '}
-                        <span className={HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase()) ? 'text-amber-300' : 'text-white'}>
-                          {HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase())
-                            ? 'Card on hold / pre-authorized'
-                            : booking.paymentStatus || 'Unknown'}
-                        </span>
-                      </p>
-                      {booking.paymentFailureReason ? (
-                        <p className="text-sm text-red-300">
-                          Payment issue: <span className="text-red-200">{booking.paymentFailureReason}</span>
-                        </p>
-                      ) : null}
-                      {booking.driverPrice !== null && booking.driverPrice !== undefined ? (
-                        <p className="text-sm text-gray-300">
-                          Driver Price:{' '}
-                          <span className="text-emerald-300">
-                            GBP {Number(booking.driverPrice).toFixed(2)}
-                            {booking.driverCommissionApplied !== null &&
-                            booking.driverCommissionApplied !== undefined
-                              ? ` (${formatDriverCommission(booking.driverCommissionApplied)}%)`
-                              : ''}
-                          </span>
-                        </p>
-                      ) : null}
+                      {(() => {
+                        const driverInfo = getDriverById(booking.driverId);
+                        const driverCarLabel = getDriverDisplayCarLabel(driverInfo || undefined);
+                        return (
+                          <div className="flex flex-col gap-5 lg:flex-row">
+                            <div className="flex-1">
+                              <div className="flex flex-wrap items-center justify-start gap-2">
+                                <div>
+                                  <p className="text-sm font-semibold text-white">{booking.id}</p>
+                                  <p className="text-xs text-gray-400">
+                                    {booking.date} {booking.time}
+                                  </p>
+                                </div>
+                                {booking.isRefundable || booking.canReleaseHold ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => requestRefund(booking)}
+                                    disabled={refundBusy[booking.id]}
+                                    className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {refundBusy[booking.id]
+                                      ? booking.paymentAction === 'cancel_hold'
+                                        ? 'Releasing...'
+                                        : 'Refunding...'
+                                      : booking.paymentAction === 'cancel_hold'
+                                        ? 'Cancel Job'
+                                        : 'Refund'}
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() => openEditBookingModal(booking)}
+                                  className="rounded-full border border-amber-400 bg-amber-400 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-black transition hover:bg-amber-300"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => requestCancelAllocation(booking)}
+                                  disabled={cancelAllocationBusy[booking.id]}
+                                  className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Detached Driver
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCompleteAllocation(booking)}
+                                  disabled={completeAllocationBusy[booking.id]}
+                                  className="rounded-full border border-emerald-400 bg-emerald-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {completeAllocationBusy[booking.id] ? 'Completing...' : 'Job Completed'}
+                                </button>
+                              </div>
+                              <p className="mt-2 text-sm text-gray-300">
+                                Pickup: <span className="text-white">{booking.pickup}</span>
+                              </p>
+                              <p className="text-sm text-gray-300">
+                                Drop-off: <span className="text-white">{booking.dropOff}</span>
+                              </p>
+                              <p className="text-sm text-gray-300">
+                                Passenger: <span className="text-white">{booking.passenger}</span>
+                              </p>
+                              <p className="text-sm text-gray-300">
+                                Driver: <span className="text-emerald-300">{getDriverNameById(booking.driverId)}</span>
+                              </p>
+                              <p className="text-sm text-gray-300">
+                                Price: <span className="text-white">{booking.priceDetails}</span>
+                              </p>
+                              {booking.currentEstimate !== null && booking.currentEstimate !== undefined ? (
+                                <p className="text-sm text-gray-300">
+                                  Current Estimate: <span className="text-white">{formatCurrencyValue(booking.currentEstimate)}</span>
+                                </p>
+                              ) : null}
+                              {booking.authorizedAmount !== null && booking.authorizedAmount !== undefined ? (
+                                <p className="text-sm text-gray-300">
+                                  Authorized Hold:{' '}
+                                  <span className="text-amber-300">{formatCurrencyValue(booking.authorizedAmount)}</span>
+                                </p>
+                              ) : null}
+                              <p className="text-sm text-gray-300">
+                                Payment:{' '}
+                                <span className={HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase()) ? 'text-amber-300' : 'text-white'}>
+                                  {HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase())
+                                    ? 'Card on hold / pre-authorized'
+                                    : booking.paymentStatus || 'Unknown'}
+                                </span>
+                              </p>
+                              {booking.paymentFailureReason ? (
+                                <p className="text-sm text-red-300">
+                                  Payment issue: <span className="text-red-200">{booking.paymentFailureReason}</span>
+                                </p>
+                              ) : null}
+                              {booking.driverPrice !== null && booking.driverPrice !== undefined ? (
+                                <p className="text-sm text-gray-300">
+                                  Driver Price:{' '}
+                                  <span className="text-emerald-300">
+                                    GBP {Number(booking.driverPrice).toFixed(2)}
+                                    {booking.driverCommissionApplied !== null &&
+                                    booking.driverCommissionApplied !== undefined
+                                      ? ` (${formatDriverCommission(booking.driverCommissionApplied)}%)`
+                                      : ''}
+                                  </span>
+                                </p>
+                              ) : null}
+                            </div>
+                            <div className="space-y-3 rounded-2xl border border-white/10 bg-black/40 p-4 lg:basis-[45%]">
+                              <p className="text-sm font-semibold text-white">Driver contact</p>
+                              {driverInfo ? (
+                                <div className="space-y-1 text-xs text-gray-300">
+                                  <p>Name: {driverInfo.name}</p>
+                                  <p>Phone: {driverInfo.phone}</p>
+                                  <p>PCO licence number: {driverInfo.license}</p>
+                                  {driverCarLabel ? <p>{driverCarLabel}</p> : null}
+                                  <p>Email: {driverInfo.email}</p>
+                                </div>
+                              ) : (
+                                <p className="text-xs text-gray-500">No driver contact on file.</p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </article>
                   ))}
                 </div>
@@ -1698,7 +1739,7 @@ const AdminDashboardPage: React.FC = () => {
         <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-gray-900/90 p-6 shadow-2xl">
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-300 mb-3">
-              {pendingRefundBooking.paymentAction === 'cancel_hold' ? 'Cancel card hold' : 'Refund booking'}
+              Cancel job
             </p>
             <p className="text-lg text-white mb-2">
               {pendingRefundBooking.paymentAction === 'cancel_hold'
@@ -1726,11 +1767,9 @@ const AdminDashboardPage: React.FC = () => {
               >
                 {refundBusy[pendingRefundBooking.id]
                   ? pendingRefundBooking.paymentAction === 'cancel_hold'
-                    ? 'Releasing...'
+                    ? 'Cancelling...'
                     : 'Refunding...'
-                  : pendingRefundBooking.paymentAction === 'cancel_hold'
-                    ? 'Yes, release hold'
-                    : 'Yes, refund'}
+                  : 'Yes, cancel job'}
               </button>
             </div>
           </div>

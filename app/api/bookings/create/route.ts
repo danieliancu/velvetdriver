@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
 import { consumeClientCredit, getClientCreditBalance } from '@/lib/client-credit';
 import { persistBookingAuthorization } from '@/lib/ride-payments';
+import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
 const pool = getDbPool();
 const ADMIN_BOOKING_NOTIFICATION_EMAILS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
@@ -242,6 +243,35 @@ export async function POST(request: Request) {
     } catch (emailErr) {
       console.error('Admin booking create email error', emailErr);
     }
+
+    await logSiteActivity(pool, {
+      tableName: 'client_journeys',
+      operation: 'INSERT',
+      pk: rideId,
+      category: 'booking',
+      title: `New booking ${`VD-${String(rideId).padStart(4, '0')}`}`,
+      message: `${passengerName} created a booking from ${pickup} to ${destination}.`,
+      severity: 'success',
+      tags: {
+        actor: 'client',
+        paymentMethod,
+        serviceType: String(body.serviceType ?? 'Transfer'),
+      },
+      changedBy: clientId,
+      changedByEmail: clientLookupEmail || passengerEmail || null,
+      ip: getRequestIp(request),
+      next: {
+        passengerName,
+        passengerEmail,
+        passengerPhone,
+        pickup,
+        destination,
+        totalFare,
+        status: 'Upcoming',
+      },
+    }).catch((err) => {
+      console.error('Booking create audit error', err);
+    });
 
     return NextResponse.json({ success: true, journeyId: rideId });
   } catch (err: any) {

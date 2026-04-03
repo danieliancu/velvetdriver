@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
 import { calculateRideFare } from '@/lib/ride-fares';
 import { loadRideForPayment, logRideChange, updateRideAuthorization } from '@/lib/ride-payments';
+import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
 const pool = getDbPool();
 const ADMIN_BOOKING_MODIFY_EMAILS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
@@ -409,6 +410,35 @@ export async function POST(request: Request) {
       },
       driverEmail: driverRecipient.email,
       driverName: driverRecipient.name,
+    });
+
+    await logSiteActivity(pool, {
+      tableName: 'client_journeys',
+      operation: 'UPDATE',
+      pk: rideId,
+      category: 'booking',
+      title: 'Ride updated by admin',
+      message: `VD-${String(rideId).padStart(4, '0')} was updated by admin.`,
+      severity: 'info',
+      tags: {
+        actor: 'admin',
+        reason: body?.reason ? String(body.reason) : 'admin_route_update',
+      },
+      ip: getRequestIp(request),
+      old: {
+        pickup: existing.pickup,
+        destination: existing.destination,
+        journeyDate: String(existing.journey_date || ''),
+        fare: Number(existing.price ?? 0) || 0,
+      },
+      next: {
+        pickup,
+        destination,
+        journeyDate: journeyDate.toISOString(),
+        fare: Number(fare.estimatedFare ?? 0) || 0,
+      },
+    }).catch((err) => {
+      console.error('Ride update audit error', err);
     });
 
     return NextResponse.json({ ok: true, fare, payment: paymentResult, warnings: emailWarnings });

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
+import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
 const pool = getDbPool();
 
@@ -577,6 +578,30 @@ export async function POST(request: Request) {
         );
       }
     }
+
+    await logSiteActivity(pool, {
+      tableName: 'client_journeys',
+      operation: 'UPDATE',
+      pk: journeyId,
+      category: 'allocation',
+      title: 'Driver allocated to job',
+      message: `${driverName || driverId} was allocated to VD-${String(journeyId).padStart(4, '0')}.`,
+      severity: 'success',
+      tags: {
+        actor: 'admin',
+        commission: appliedCommission,
+        driverPrice: driverAmount,
+      },
+      ip: getRequestIp(request),
+      next: {
+        driverId,
+        driverName,
+        driverPrice: driverAmount,
+        bookingRef: `VD-${String(journeyId).padStart(4, '0')}`,
+      },
+    }).catch((err) => {
+      console.error('Allocate driver audit error', err);
+    });
 
     return NextResponse.json(warnings.length ? {
       ok: true,

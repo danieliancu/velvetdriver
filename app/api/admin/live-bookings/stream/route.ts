@@ -53,7 +53,23 @@ const formatDate = (iso: string) => {
 const formatPriceDetails = (price: number, extras?: unknown) => {
   const base = `GBP ${price.toFixed(2)}`;
   if (!Array.isArray(extras) || extras.length === 0) return base;
-  const cleanedExtras = extras.map((entry) => String(entry).replace(/^Extras applied:\s*/i, '').trim());
+  const cleanedExtras = extras
+    .map((entry) => {
+      if (typeof entry === 'string') {
+        return entry.replace(/^Extras applied:\s*/i, '').trim();
+      }
+      if (entry && typeof entry === 'object') {
+        const label = 'label' in entry ? String((entry as { label?: unknown }).label || '').trim() : '';
+        const amountRaw = 'amount' in entry ? Number((entry as { amount?: unknown }).amount) : NaN;
+        if (label && Number.isFinite(amountRaw) && amountRaw > 0) {
+          return `${label} GBP ${amountRaw.toFixed(2)}`;
+        }
+        if (label) return label;
+      }
+      return String(entry || '').replace(/^Extras applied:\s*/i, '').trim();
+    })
+    .filter(Boolean);
+  if (!cleanedExtras.length) return base;
   return `${base} ( ${cleanedExtras.join(' + ')} )`;
 };
 
