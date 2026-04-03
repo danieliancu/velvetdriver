@@ -3,6 +3,8 @@ import mysql from 'mysql2/promise';
 import { getDbPool, DbRow } from '@/lib/db';
 import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
+export const dynamic = 'force-dynamic';
+
 const pool = getDbPool();
 
 type DriverRow = DbRow<{

@@ -3,6 +3,8 @@ import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
 import { ensureDriverStatementsTable } from '@/lib/driver-statements';
 
+export const dynamic = 'force-dynamic';
+
 const pool = getDbPool();
 
 const formatDate = (value: string | null) => {
