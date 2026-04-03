@@ -8,6 +8,7 @@ import Input from '@/components/Input';
 import { useAlert } from '@/components/AlertProvider';
 
 const steps = ['Personal details', 'Licence documents', 'Your car', 'Create password'];
+const MAX_DRIVER_SIGNUP_PAYLOAD_BYTES = 4 * 1024 * 1024;
 
 const fileFields = Object.freeze({
   yourDetails: [
@@ -33,6 +34,61 @@ export default function DriverSignUpPage() {
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [fileData, setFileData] = useState<Record<string, File | null>>({});
   const [isFindingVehicle, setIsFindingVehicle] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const compressImageFile = async (file: File) => {
+    if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.type === 'image/svg+xml') {
+      return file;
+    }
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+      reader.readAsDataURL(file);
+    });
+
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error(`Failed to process ${file.name}`));
+      img.src = dataUrl;
+    });
+
+    const maxDimension = 1600;
+    const ratio = Math.min(1, maxDimension / Math.max(image.width, image.height));
+    const width = Math.max(1, Math.round(image.width * ratio));
+    const height = Math.max(1, Math.round(image.height * ratio));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return file;
+    }
+    context.drawImage(image, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, 'image/jpeg', 0.8);
+    });
+    if (!blob || blob.size >= file.size) {
+      return file;
+    }
+
+    const nextName = file.name.replace(/\.[^.]+$/, '') || 'upload';
+    return new File([blob], `${nextName}.jpg`, { type: 'image/jpeg' });
+  };
+
+  const prepareFilesForSubmit = async () => {
+    const entries = await Promise.all(
+      Object.entries(fileData).map(async ([key, file]) => {
+        if (!file) return [key, null] as const;
+        const prepared = await compressImageFile(file);
+        return [key, prepared] as const;
+      })
+    );
+    return Object.fromEntries(entries) as Record<string, File | null>;
+  };
 
   const handleFindVehicle = async () => {
     const registrationNumber = (formData.vehicleReg ?? '').trim().toUpperCase();
@@ -116,13 +172,21 @@ export default function DriverSignUpPage() {
       return;
     }
 
-    const payload = new FormData();
-    Object.entries(formData).forEach(([key, value]) => payload.append(key, value));
-    Object.entries(fileData).forEach(([key, file]) => {
-      if (file) payload.append(key, file);
-    });
-
     try {
+      setIsSubmitting(true);
+      const preparedFiles = await prepareFilesForSubmit();
+      const totalFileBytes = Object.values(preparedFiles).reduce((sum, file) => sum + (file?.size || 0), 0);
+      if (totalFileBytes > MAX_DRIVER_SIGNUP_PAYLOAD_BYTES) {
+        showAlert('Uploaded documents are too large for submission. Please use smaller images/PDFs or compress the files and try again.');
+        return;
+      }
+
+      const payload = new FormData();
+      Object.entries(formData).forEach(([key, value]) => payload.append(key, value));
+      Object.entries(preparedFiles).forEach(([key, file]) => {
+        if (file) payload.append(key, file);
+      });
+
       const res = await fetch('/api/driver/signup', { method: 'POST', body: payload });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -132,6 +196,8 @@ export default function DriverSignUpPage() {
       router.push('/driver/login');
     } catch (err: any) {
       showAlert(err?.message || 'Failed to submit application');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -407,9 +473,10 @@ export default function DriverSignUpPage() {
           )}
           <button
             type="submit"
-            className="px-8 py-3 text-lg font-semibold bg-amber-500 text-black rounded-md hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)]"
+            disabled={isSubmitting}
+            className="px-8 py-3 text-lg font-semibold bg-amber-500 text-black rounded-md hover:bg-amber-400 transition-all duration-300 transform hover:scale-105 shadow-[0_0_15px_rgba(251,191,36,0.5)] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {step === steps.length ? 'Submit' : 'Continue'}
+            {isSubmitting ? 'Uploading...' : step === steps.length ? 'Submit' : 'Continue'}
           </button>
         </div>
         {step === 1 && (
