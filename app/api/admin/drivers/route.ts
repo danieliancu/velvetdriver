@@ -125,6 +125,21 @@ const executeOptional = async (
   }
 };
 
+const splitDriverFullName = (value: string) => {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!normalized) {
+    return { firstAndMiddleName: '', surname: '' };
+  }
+  const parts = normalized.split(' ');
+  if (parts.length === 1) {
+    return { firstAndMiddleName: parts[0], surname: '' };
+  }
+  return {
+    firstAndMiddleName: parts.slice(0, -1).join(' '),
+    surname: parts[parts.length - 1],
+  };
+};
+
 export async function GET() {
   try {
     const [rows] = await queryWithRetry<DriverRow[]>(
@@ -325,17 +340,167 @@ export async function PATCH(request: Request) {
     const docType = body.docType !== undefined ? String(body.docType ?? '').trim() : null;
     const expiryDate = body.expiryDate !== undefined ? String(body.expiryDate ?? '').trim() : null;
     const documentsChecked = body.documentsChecked === true;
+    const hasProfileUpdate =
+      body.fullName !== undefined ||
+      body.email !== undefined ||
+      body.phone !== undefined ||
+      body.address !== undefined ||
+      body.dateOfBirth !== undefined;
     if (!driverId) {
       if (!driverCarId) {
         return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
       }
     }
-    if (commission === null && !nextStatus && !driverCarId && !documentsChecked) {
+    if (commission === null && !nextStatus && !driverCarId && !documentsChecked && !hasProfileUpdate) {
       return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
     }
 
     if (commission !== null && Number.isNaN(commission)) {
       return NextResponse.json({ error: 'Invalid commission' }, { status: 400 });
+    }
+
+    if (hasProfileUpdate) {
+      if (!driverId) {
+        return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
+      }
+
+      const fullName = String(body.fullName ?? '').trim().replace(/\s+/g, ' ');
+      const email = String(body.email ?? '').trim().toLowerCase();
+      const phone = String(body.phone ?? '').trim();
+      const address = String(body.address ?? '').trim();
+      const dateOfBirth = String(body.dateOfBirth ?? '').trim();
+
+      if (!fullName) {
+        return NextResponse.json({ error: 'Full name is required' }, { status: 400 });
+      }
+      if (!email) {
+        return NextResponse.json({ error: 'Email is required' }, { status: 400 });
+      }
+
+      const { firstAndMiddleName, surname } = splitDriverFullName(fullName);
+      const conn = await pool.getConnection();
+      try {
+        const [driverRows] = await conn.query<mysql.RowDataPacket[]>(
+          `SELECT d.id,
+                  d.user_id,
+                  d.first_and_middle_name,
+                  d.surname,
+                  d.phone,
+                  d.address,
+                  d.date_of_birth,
+                  u.email,
+                  u.updated_at
+             FROM drivers d
+             INNER JOIN users u ON u.id = d.user_id
+            WHERE d.id = ?
+            LIMIT 1`,
+          [driverId]
+        );
+        const driver = driverRows[0];
+        if (!driver?.id || !driver?.user_id) {
+          return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
+        }
+
+        const [existingEmailRows] = await conn.query<mysql.RowDataPacket[]>(
+          `SELECT id
+             FROM users
+            WHERE email = ?
+              AND id <> ?
+            LIMIT 1`,
+          [email, driver.user_id]
+        );
+        if (existingEmailRows.length) {
+          return NextResponse.json({ error: 'Email already in use' }, { status: 409 });
+        }
+
+        await conn.beginTransaction();
+
+        await conn.execute(
+          `UPDATE users
+              SET email = ?,
+                  phone = ?
+            WHERE id = ?
+            LIMIT 1`,
+          [email, phone || null, driver.user_id]
+        );
+
+        await conn.execute(
+          `UPDATE drivers
+              SET first_and_middle_name = ?,
+                  surname = ?,
+                  phone = ?,
+                  address = ?,
+                  date_of_birth = ?
+            WHERE id = ?
+            LIMIT 1`,
+          [firstAndMiddleName || null, surname || null, phone || null, address || null, dateOfBirth || null, driverId]
+        );
+
+        const [updatedRows] = await conn.query<mysql.RowDataPacket[]>(
+          `SELECT d.first_and_middle_name,
+                  d.surname,
+                  d.phone,
+                  d.address,
+                  d.date_of_birth,
+                  u.email,
+                  u.updated_at
+             FROM drivers d
+             INNER JOIN users u ON u.id = d.user_id
+            WHERE d.id = ?
+            LIMIT 1`,
+          [driverId]
+        );
+
+        await conn.commit();
+
+        const updated = updatedRows[0] || {};
+        const updatedName =
+          [updated.first_and_middle_name, updated.surname].filter(Boolean).join(' ').trim() || fullName;
+
+        await logSiteActivity(pool, {
+          tableName: 'drivers',
+          operation: 'UPDATE',
+          pk: driverId,
+          category: 'driver',
+          title: 'Driver profile updated by admin',
+          message: `Driver ${driverId} profile details were updated by admin.`,
+          severity: 'info',
+          tags: { actor: 'admin' },
+          ip: getRequestIp(request),
+          old: {
+            name: [driver.first_and_middle_name, driver.surname].filter(Boolean).join(' ').trim(),
+            email: driver.email,
+            phone: driver.phone,
+            address: driver.address,
+            dateOfBirth: driver.date_of_birth,
+          },
+          next: {
+            name: updatedName,
+            email: updated.email || email,
+            phone: updated.phone || null,
+            address: updated.address || null,
+            dateOfBirth: updated.date_of_birth || null,
+          },
+        }).catch((err) => console.error('Driver profile admin audit error', err));
+
+        return NextResponse.json({
+          ok: true,
+          driver: {
+            id: String(driverId),
+            name: updatedName,
+            email: updated.email || email,
+            phone: updated.phone || '-',
+            address: updated.address || '-',
+            dateOfBirth: updated.date_of_birth || '-',
+            updatedAt: updated.updated_at || driver.updated_at || null,
+          },
+        });
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
     }
 
     if (commission !== null) {

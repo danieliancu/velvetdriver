@@ -99,6 +99,15 @@ type DriverProfileData = {
 
 type DriverStatusAction = 'holiday' | 'resume' | 'block';
 
+type EditDriverState = {
+  driverId: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  address: string;
+  dateOfBirth: string;
+};
+
 type ConfirmationState =
   | { type: 'driver-status'; driverId: string; action: DriverStatusAction; message: string }
   | { type: 'vehicle-cease'; driverId: string; vrm: string; message: string }
@@ -246,6 +255,9 @@ const AdminDriversPage: React.FC = () => {
   const [commissions, setCommissions] = useState<Record<string, { value: string; editing: boolean }>>({});
   const [confirmation, setConfirmation] = useState<ConfirmationState>(null);
   const [documentsCheckSaving, setDocumentsCheckSaving] = useState<Record<string, boolean>>({});
+  const [editDriver, setEditDriver] = useState<EditDriverState | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const formatDate = (value: string) => {
     if (!value || value === '-') return '-';
@@ -386,6 +398,28 @@ const AdminDriversPage: React.FC = () => {
   const getActiveTab = (driverId: string) => activeTabs[driverId] ?? tabs[0];
   const handleTabChange = (driverId: string, tab: (typeof tabs)[number]) => {
     setActiveTabs((prev) => ({ ...prev, [driverId]: tab }));
+  };
+
+  const openEditDriverModal = (driver: DriverProfileData) => {
+    setEditError(null);
+    setEditDriver({
+      driverId: driver.id,
+      fullName: driver.name === '-' ? '' : driver.name,
+      email: driver.email === '-' ? '' : driver.email,
+      phone: driver.phone === '-' ? '' : driver.phone,
+      address: driver.address === '-' ? '' : driver.address,
+      dateOfBirth: normalizeDateInput(driver.dateOfBirth),
+    });
+  };
+
+  const closeEditDriverModal = () => {
+    if (editSaving) return;
+    setEditDriver(null);
+    setEditError(null);
+  };
+
+  const handleEditDriverFieldChange = (field: keyof Omit<EditDriverState, 'driverId'>, value: string) => {
+    setEditDriver((prev) => (prev ? { ...prev, [field]: value } : prev));
   };
 
   const filteredDrivers = useMemo(() => {
@@ -780,6 +814,64 @@ const AdminDriversPage: React.FC = () => {
       const current = prev[driverId] ?? { value: '20', editing: false };
       return { ...prev, [driverId]: { ...current, value } };
     });
+  };
+
+  const saveEditedDriver = async () => {
+    if (!editDriver) return;
+    setEditError(null);
+    setCommissionError(null);
+
+    const fullName = editDriver.fullName.trim();
+    const email = editDriver.email.trim();
+    if (!fullName) {
+      setEditError('Full name is required.');
+      return;
+    }
+    if (!email) {
+      setEditError('Email is required.');
+      return;
+    }
+
+    setEditSaving(true);
+    try {
+      const res = await fetch('/api/admin/drivers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driverId: editDriver.driverId,
+          fullName,
+          email,
+          phone: editDriver.phone.trim(),
+          address: editDriver.address.trim(),
+          dateOfBirth: editDriver.dateOfBirth,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to update driver');
+      }
+
+      setDriverProfiles((prev) =>
+        prev.map((driver) =>
+          driver.id === editDriver.driverId
+            ? {
+                ...driver,
+                name: data?.driver?.name || fullName,
+                email: data?.driver?.email || email,
+                phone: (data?.driver?.phone ?? editDriver.phone.trim()) || '-',
+                address: (data?.driver?.address ?? editDriver.address.trim()) || '-',
+                dateOfBirth: (data?.driver?.dateOfBirth ?? editDriver.dateOfBirth) || '-',
+                updatedAt: data?.driver?.updatedAt || driver.updatedAt,
+              }
+            : driver
+        )
+      );
+      setEditDriver(null);
+    } catch (err: any) {
+      setEditError(err?.message || 'Failed to update driver');
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   const handleConfirmAction = () => {
@@ -1306,10 +1398,10 @@ const AdminDriversPage: React.FC = () => {
                             ) : null}
                           </div>
                           <div>
-                            <p className="text-xs uppercase tracking-wider text-amber-300/70">
-                              Driver ID {driver.id.toUpperCase()}
+                            <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-wider text-amber-300/70">
+                              <span>Driver ID {driver.id.toUpperCase()}</span>
                               <span
-                                className={`ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                                   driver.status === 'holiday'
                                     ? 'border-amber-500/60 bg-amber-500/20 text-amber-200'
                                     : driver.status === 'blocked'
@@ -1319,7 +1411,14 @@ const AdminDriversPage: React.FC = () => {
                               >
                                 {driver.status || 'active'}
                               </span>
-                            </p>
+                              <button
+                                type="button"
+                                onClick={() => openEditDriverModal(driver)}
+                                className="inline-flex items-center rounded-full border border-amber-400 bg-amber-400 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-black transition hover:bg-amber-300"
+                              >
+                                Edit
+                              </button>
+                            </div>
                             <h2 className="text-2xl font-bold text-white">{driver.name}</h2>
                             <p className="text-sm text-gray-400">{driver.email}</p>
                           </div>
@@ -1383,6 +1482,94 @@ const AdminDriversPage: React.FC = () => {
             >
               Confirm
             </button>
+          </div>
+        </Modal>
+      )}
+      {editDriver && (
+        <Modal
+          isOpen={true}
+          onClose={closeEditDriverModal}
+          title="Edit driver"
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-[11px] uppercase tracking-wide text-amber-200/70">
+                Full name
+              </label>
+              <input
+                type="text"
+                value={editDriver.fullName}
+                onChange={(event) => handleEditDriverFieldChange('fullName', event.target.value)}
+                className="w-full rounded-xl border border-amber-900/60 bg-black/40 px-4 py-3 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] uppercase tracking-wide text-amber-200/70">
+                Email
+              </label>
+              <input
+                type="email"
+                value={editDriver.email}
+                onChange={(event) => handleEditDriverFieldChange('email', event.target.value)}
+                className="w-full rounded-xl border border-amber-900/60 bg-black/40 px-4 py-3 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] uppercase tracking-wide text-amber-200/70">
+                Phone
+              </label>
+              <input
+                type="text"
+                value={editDriver.phone}
+                onChange={(event) => handleEditDriverFieldChange('phone', event.target.value)}
+                className="w-full rounded-xl border border-amber-900/60 bg-black/40 px-4 py-3 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] uppercase tracking-wide text-amber-200/70">
+                Address
+              </label>
+              <input
+                type="text"
+                value={editDriver.address}
+                onChange={(event) => handleEditDriverFieldChange('address', event.target.value)}
+                className="w-full rounded-xl border border-amber-900/60 bg-black/40 px-4 py-3 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] uppercase tracking-wide text-amber-200/70">
+                Date of birth
+              </label>
+              <input
+                type="date"
+                value={editDriver.dateOfBirth}
+                onChange={(event) => handleEditDriverFieldChange('dateOfBirth', event.target.value)}
+                className="w-full rounded-xl border border-amber-900/60 bg-black/40 px-4 py-3 text-sm text-white focus:border-amber-400 focus:outline-none"
+              />
+            </div>
+            {editError ? (
+              <div className="rounded-2xl border border-red-500/50 bg-red-950/40 p-3 text-sm text-red-200">
+                {editError}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={closeEditDriverModal}
+                disabled={editSaving}
+                className="rounded-full border border-white/20 px-5 py-2 text-sm font-semibold text-gray-100 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveEditedDriver}
+                disabled={editSaving}
+                className="rounded-full border border-amber-400 bg-amber-400 px-6 py-2 text-sm font-semibold text-black transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {editSaving ? 'Saving...' : 'Save changes'}
+              </button>
+            </div>
           </div>
         </Modal>
       )}
