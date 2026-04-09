@@ -30,6 +30,57 @@ const buildNotes = (payload: any) => {
   return pieces.length ? pieces.join(' - ') : '-';
 };
 
+const parseDropOffs = (destination: string, payload: any) => {
+  if (Array.isArray(payload?.dropOffs)) {
+    return payload.dropOffs.map((stop: unknown) => String(stop || '').trim()).filter(Boolean);
+  }
+  const trimmedDestination = String(destination || '').trim();
+  return trimmedDestination ? [trimmedDestination] : [];
+};
+
+const buildJourneyLocationRows = (pickup: string, dropOffs: string[]) => {
+  const cleanedStops = dropOffs.map((stop) => String(stop || '').trim()).filter(Boolean);
+  const finalDestination = cleanedStops[cleanedStops.length - 1] || '';
+  const intermediateStops = cleanedStops.slice(0, -1);
+
+  const rows = [
+    `<tr>
+      <td style="padding:4px 0; font-weight:bold;">Pickup Location:</td>
+      <td style="padding:4px 0;">${escapeHtml(pickup)}</td>
+    </tr>`,
+  ];
+
+  if (!intermediateStops.length) {
+    rows.push(`<tr>
+      <td style="padding:4px 0; font-weight:bold;">Destination:</td>
+      <td style="padding:4px 0;">${escapeHtml(finalDestination)}</td>
+    </tr>`);
+    return rows.join('');
+  }
+
+  intermediateStops.forEach((stop, index) => {
+    rows.push(`<tr>
+      <td style="padding:4px 0; font-weight:bold;">To</td>
+      <td style="padding:4px 0;"></td>
+    </tr>`);
+    rows.push(`<tr>
+      <td style="padding:4px 0; font-weight:bold;">Stop ${index + 1}:</td>
+      <td style="padding:4px 0;">${escapeHtml(stop)}</td>
+    </tr>`);
+  });
+
+  rows.push(`<tr>
+    <td style="padding:4px 0; font-weight:bold;">To</td>
+    <td style="padding:4px 0;"></td>
+  </tr>`);
+  rows.push(`<tr>
+    <td style="padding:4px 0; font-weight:bold;">Destination:</td>
+    <td style="padding:4px 0;">${escapeHtml(finalDestination)}</td>
+  </tr>`);
+
+  return rows.join('');
+};
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -99,7 +150,8 @@ export async function POST(request: Request) {
     const code = `VD-${String(booking.id).padStart(4, '0')}`;
     const passengerName = booking.passenger_name || payload?.passengerName || 'Client';
     const pickup = booking.pickup || '';
-    const dropOff = booking.destination || '';
+    const dropOffs = parseDropOffs(String(booking.destination || ''), payload);
+    const journeyLocationRows = buildJourneyLocationRows(pickup, dropOffs);
     const passengerCount =
       Number(payload?.passengerCount || payload?.passengers || payload?.numberOfPassengers || 1) || 1;
     const notes = buildNotes(payload);
@@ -155,14 +207,7 @@ export async function POST(request: Request) {
                   <td style="padding:4px 0; font-weight:bold;">Pickup Date &amp; Time:</td>
                   <td style="padding:4px 0;">${escapeHtml(date)} at ${escapeHtml(time)}</td>
                 </tr>
-                <tr>
-                  <td style="padding:4px 0; font-weight:bold;">Pickup Location:</td>
-                  <td style="padding:4px 0;">${escapeHtml(pickup)}</td>
-                </tr>
-                <tr>
-                  <td style="padding:4px 0; font-weight:bold;">Destination:</td>
-                  <td style="padding:4px 0;">${escapeHtml(dropOff)}</td>
-                </tr>
+                ${journeyLocationRows}
                 <tr>
                   <td style="padding:4px 0; font-weight:bold;">Vehicle Type:</td>
                   <td style="padding:4px 0;">${escapeHtml(vehicleLabel)}</td>

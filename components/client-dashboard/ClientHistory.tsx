@@ -18,6 +18,12 @@ type PricePreview = {
   creditAmount: number;
 };
 
+type JourneyRouteSummary = {
+  pickup: string;
+  intermediateStops: string[];
+  destination: string;
+};
+
 const BOOKING_DRAFT_KEY = 'velvetdriver.booking.draft';
 const stripStopLabel = (value: string) => value.replace(/^Stop\s+\d+:\s*/i, '').trim();
 
@@ -29,6 +35,15 @@ const parseDestinationStops = (destination: string) => {
     .split(', ')
     .map((part) => stripStopLabel(part))
     .filter(Boolean);
+};
+
+const buildRouteSummary = (pickup: string, dropOffs: string[]): JourneyRouteSummary => {
+  const cleanedStops = dropOffs.map((stop) => String(stop || '').trim()).filter(Boolean);
+  return {
+    pickup: String(pickup || '').trim(),
+    intermediateStops: cleanedStops.slice(0, -1),
+    destination: cleanedStops[cleanedStops.length - 1] || '',
+  };
 };
 
 const StatusBadge: React.FC<{ status: RenderStatus }> = ({ status }) => {
@@ -97,6 +112,7 @@ const ClientHistory: React.FC<Props> = ({
   const [recalcLoading, setRecalcLoading] = useState(false);
   const [recalcError, setRecalcError] = useState<string | null>(null);
   const [submitLoading, setSubmitLoading] = useState(false);
+  const [showModifyConfirmation, setShowModifyConfirmation] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
@@ -160,11 +176,13 @@ const ClientHistory: React.FC<Props> = ({
       dropOffs.length &&
       dropOffs.every((stop) => stop.trim())
   );
+  const nextRouteSummary = useMemo(() => buildRouteSummary(pickup, dropOffs), [pickup, dropOffs]);
 
   const fetchPreview = React.useCallback(async () => {
     if (!selectedJourney || !clientEmail || !pickup.trim() || !date || !time || !dropOffs.length || dropOffs.some((stop) => !stop.trim())) return;
     setRecalcLoading(true);
     setRecalcError(null);
+    setShowModifyConfirmation(false);
     setShowPaymentForm(false);
     setStripeClientSecret(null);
     setStripePublishableKey(null);
@@ -262,6 +280,7 @@ const ClientHistory: React.FC<Props> = ({
     setPreview(null);
     setRecalcError(null);
     setSuccessMessage(null);
+    setShowModifyConfirmation(false);
     setShowPaymentForm(false);
     setStripeClientSecret(null);
     setStripePublishableKey(null);
@@ -288,6 +307,7 @@ const ClientHistory: React.FC<Props> = ({
     setRecalcError(null);
     setSubmitLoading(false);
     setSuccessMessage(null);
+    setShowModifyConfirmation(false);
     setShowPaymentForm(false);
     setStripeClientSecret(null);
     setStripePublishableKey(null);
@@ -372,6 +392,11 @@ const ClientHistory: React.FC<Props> = ({
       return;
     }
     await submitModification();
+  };
+
+  const requestConfirmChanges = () => {
+    if (!selectedJourneyCanModify || !preview || submitLoading || paymentIntentLoading || showPaymentForm) return;
+    setShowModifyConfirmation(true);
   };
 
   const FilterButton: React.FC<{ status: FilterStatus }> = ({ status }) => (
@@ -815,7 +840,7 @@ const ClientHistory: React.FC<Props> = ({
             {!successMessage ? (
               <button
                 type="button"
-                onClick={handleConfirmChanges}
+                onClick={requestConfirmChanges}
                 disabled={!selectedJourneyCanModify || submitLoading || !canPreview || paymentIntentLoading || showPaymentForm}
                 className="px-4 py-2 text-sm rounded-md bg-amber-500 text-black font-semibold hover:bg-amber-400 transition-colors disabled:opacity-50"
               >
@@ -828,6 +853,77 @@ const ClientHistory: React.FC<Props> = ({
                     : 'Confirm changes'}
               </button>
             ) : null}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showModifyConfirmation}
+        onClose={() => setShowModifyConfirmation(false)}
+        title="Confirm Booking Changes"
+      >
+        <div className="space-y-5">
+          <div className="rounded-xl border border-amber-900/40 bg-black/30 p-4 text-sm text-gray-200 space-y-3">
+            <p className="font-semibold text-amber-200">Please review your updated journey before we apply the change.</p>
+            <div className="space-y-2 text-sm">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">New Pickup Location</p>
+                <p>{nextRouteSummary.pickup || '-'}</p>
+              </div>
+              {nextRouteSummary.intermediateStops.map((stop, index) => (
+                <div key={`confirm-stop-${index}`}>
+                  <p className="text-[11px] uppercase tracking-wide text-gray-500">Stop {index + 1}</p>
+                  <p>{stop}</p>
+                </div>
+              ))}
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">New Destination</p>
+                <p>{nextRouteSummary.destination || '-'}</p>
+              </div>
+            </div>
+          </div>
+
+          {preview ? (
+            <div className="rounded-xl border border-gray-700/70 bg-black/30 p-4 text-sm text-gray-300 space-y-1">
+              <p>Current fare: GBP {preview.oldPrice.toFixed(2)}</p>
+              <p className="font-semibold text-amber-100">New fare: GBP {preview.newPrice.toFixed(2)}</p>
+              {preview.difference > 0 ? (
+                <p className="text-amber-200 font-semibold">Additional authorization required now: GBP {preview.payNowAmount.toFixed(2)}</p>
+              ) : preview.difference < 0 ? (
+                <p className="text-green-300">A credit will be added to your account after confirmation.</p>
+              ) : (
+                <p className="text-gray-300">There is no price change.</p>
+              )}
+            </div>
+          ) : null}
+
+          <p className="text-sm text-gray-400">
+            Do you want to confirm these booking changes?
+          </p>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowModifyConfirmation(false)}
+              disabled={submitLoading || paymentIntentLoading}
+              className="px-4 py-2 text-sm rounded-md border border-gray-600 text-gray-300 hover:bg-gray-800/50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmChanges}
+              disabled={submitLoading || paymentIntentLoading || !preview}
+              className="px-4 py-2 text-sm rounded-md bg-amber-500 text-black font-semibold hover:bg-amber-400 transition-colors disabled:opacity-50"
+            >
+              {paymentIntentLoading
+                ? 'Opening payment...'
+                : submitLoading
+                ? 'Updating...'
+                : preview && preview.difference > 0
+                  ? `Confirm and continue: GBP ${preview.payNowAmount.toFixed(2)}`
+                  : 'Yes, confirm changes'}
+            </button>
           </div>
         </div>
       </Modal>

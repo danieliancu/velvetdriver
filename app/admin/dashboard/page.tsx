@@ -326,6 +326,7 @@ const AdminDashboardPage: React.FC = () => {
   const [driverMessages, setDriverMessages] = useState<Record<string, string>>({});
   const [driversExpanded, setDriversExpanded] = useState<Record<string, boolean>>({});
   const [pendingDriverConfirmKey, setPendingDriverConfirmKey] = useState<string | null>(null);
+  const [confirmDriverBusy, setConfirmDriverBusy] = useState(false);
   const [allocationWarning, setAllocationWarning] = useState<string | null>(null);
   const [allocationSuccess, setAllocationSuccess] = useState<string | null>(null);
   const [pendingCancelAllocation, setPendingCancelAllocation] = useState<LiveBooking | null>(null);
@@ -651,8 +652,8 @@ const AdminDashboardPage: React.FC = () => {
     setPendingDriverConfirmKey(driverKey);
   };
 
-  const handleConfirmDriver = () => {
-    if (!pendingDriverConfirmKey) return;
+  const handleConfirmDriver = async () => {
+    if (!pendingDriverConfirmKey || confirmDriverBusy) return;
     const driverKey = pendingDriverConfirmKey;
     const lastDash = pendingDriverConfirmKey.lastIndexOf('-');
     if (lastDash <= 0) {
@@ -666,54 +667,55 @@ const AdminDashboardPage: React.FC = () => {
       setPendingDriverConfirmKey(null);
       return;
     }
-    fetch('/api/admin/allocate-driver', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        journeyId: booking.journeyId,
-        driverId,
-        commission: getCommissionValueForDriverKey(driverKey),
-      }),
-    })
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data?.error || 'Failed to allocate driver');
-        }
-        if (data?.warning) {
-          setAllocationWarning(String(data.warning));
-        } else {
-          setAllocationSuccess('Booking allocated successfully. Email sent to driver.');
-        }
-        setLiveBookings((prev) =>
-          prev.map((entry) =>
-            entry.id === booking.id
-              ? {
-                  ...entry,
-                  driverId,
-                  driverPrice:
-                    data?.driverPrice !== undefined && data?.driverPrice !== null
-                      ? Number(data.driverPrice)
-                      : entry.driverPrice ?? null,
-                  driverCommissionApplied:
-                    data?.commissionApplied !== undefined && data?.commissionApplied !== null
-                      ? Number(data.commissionApplied)
-                      : entry.driverCommissionApplied ?? null,
-                  updatedAt: new Date().toISOString(),
-                }
-              : entry
-          )
-        );
-      })
-      .catch((err) => {
-        console.error('Failed to allocate driver', err);
-      })
-      .finally(() => {
-        setPendingDriverConfirmKey(null);
+    setConfirmDriverBusy(true);
+    try {
+      const res = await fetch('/api/admin/allocate-driver', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          journeyId: booking.journeyId,
+          driverId,
+          commission: getCommissionValueForDriverKey(driverKey),
+        }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to allocate driver');
+      }
+      if (data?.warning) {
+        setAllocationWarning(String(data.warning));
+      } else {
+        setAllocationSuccess('Booking allocation updated successfully. Client and driver notifications were processed.');
+      }
+      setLiveBookings((prev) =>
+        prev.map((entry) =>
+          entry.id === booking.id
+            ? {
+                ...entry,
+                driverId,
+                driverPrice:
+                  data?.driverPrice !== undefined && data?.driverPrice !== null
+                    ? Number(data.driverPrice)
+                    : entry.driverPrice ?? null,
+                driverCommissionApplied:
+                  data?.commissionApplied !== undefined && data?.commissionApplied !== null
+                    ? Number(data.commissionApplied)
+                    : entry.driverCommissionApplied ?? null,
+                updatedAt: new Date().toISOString(),
+              }
+            : entry
+        )
+      );
+    } catch (err) {
+      console.error('Failed to allocate driver', err);
+    } finally {
+      setConfirmDriverBusy(false);
+      setPendingDriverConfirmKey(null);
+    }
   };
 
   const handleCancelDriver = () => {
+    if (confirmDriverBusy) return;
     setPendingDriverConfirmKey(null);
   };
 
@@ -1656,6 +1658,7 @@ const AdminDashboardPage: React.FC = () => {
               <button
                 type="button"
                 onClick={handleCancelDriver}
+                disabled={confirmDriverBusy}
                 className="rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-gray-200 hover:border-white/40 transition"
               >
                 No
@@ -1663,9 +1666,10 @@ const AdminDashboardPage: React.FC = () => {
               <button
                 type="button"
                 onClick={handleConfirmDriver}
+                disabled={confirmDriverBusy}
                 className="rounded-full border border-amber-400 bg-amber-400 px-5 py-2 text-sm font-semibold text-black shadow-[0_0_20px_rgba(251,191,36,0.4)] hover:shadow-[0_0_30px_rgba(251,191,36,0.6)] transition"
               >
-                Yes
+                {confirmDriverBusy ? 'Saving...' : 'Yes'}
               </button>
             </div>
           </div>

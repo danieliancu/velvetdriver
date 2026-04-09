@@ -31,6 +31,59 @@ const buildNotes = (payload: any) => {
   return pieces.length ? pieces.join(' - ') : '-';
 };
 
+const parseDropOffs = (destination: string, payload: any) => {
+  if (Array.isArray(payload?.dropOffs)) {
+    return payload.dropOffs.map((stop: unknown) => String(stop || '').trim()).filter(Boolean);
+  }
+  const trimmedDestination = String(destination || '').trim();
+  return trimmedDestination ? [trimmedDestination] : [];
+};
+
+const buildJourneyLocationRows = (pickup: string, dropOffs: string[]) => {
+  const cleanedStops = dropOffs.map((stop) => String(stop || '').trim()).filter(Boolean);
+  const finalDestination = cleanedStops[cleanedStops.length - 1] || '';
+  const intermediateStops = cleanedStops.slice(0, -1);
+
+  const rows = [
+    `<tr>
+      <td style="padding:4px 0; font-weight:bold;">Pickup Location:</td>
+      <td style="padding:4px 0;">${escapeHtml(pickup)}</td>
+    </tr>`,
+  ];
+
+  if (!intermediateStops.length) {
+    rows.push(`<tr>
+      <td style="padding:4px 0; font-weight:bold;">Destination:</td>
+      <td style="padding:4px 0;">${escapeHtml(finalDestination)}</td>
+    </tr>`);
+    return rows.join('');
+  }
+
+  intermediateStops.forEach((stop, index) => {
+    rows.push(`<tr>
+      <td style="padding:4px 0; font-weight:bold;">To</td>
+      <td style="padding:4px 0;"></td>
+    </tr>`);
+    rows.push(`<tr>
+      <td style="padding:4px 0; font-weight:bold;">Stop ${index + 1}:</td>
+      <td style="padding:4px 0;">${escapeHtml(stop)}</td>
+    </tr>`);
+  });
+
+  rows.push(`<tr>
+    <td style="padding:4px 0; font-weight:bold;">To</td>
+    <td style="padding:4px 0;"></td>
+  </tr>`);
+  rows.push(`<tr>
+    <td style="padding:4px 0; font-weight:bold;">Destination:</td>
+    <td style="padding:4px 0;">${escapeHtml(finalDestination)}</td>
+  </tr>`);
+
+  return rows.join('');
+};
+
+const normalizeForCompare = (value: unknown) => String(value || '').trim().toLowerCase();
+
 
 export async function POST(request: Request) {
   try {
@@ -105,6 +158,10 @@ export async function POST(request: Request) {
               cj.created_at,
               cj.pickup,
               cj.destination,
+              cj.driver_name,
+              cj.car,
+              cj.plate,
+              cj.driver_commission_applied,
               cj.passenger_name,
               cj.passenger_email,
               cj.passenger_phone,
@@ -211,6 +268,10 @@ export async function POST(request: Request) {
     const { date, time } = formatDate(String(booking.journey_date));
     const bookingCode = `VD-${String(booking.id).padStart(4, '0')}`;
     const passengerName = booking.passenger_name || payload?.passengerName || 'Client';
+    const journeyLocationRows = buildJourneyLocationRows(
+      String(booking.pickup || ''),
+      parseDropOffs(String(booking.destination || ''), payload)
+    );
     const passengerCount =
       Number(payload?.passengerCount || payload?.passengers || payload?.numberOfPassengers || 1) || 1;
     const notes = buildNotes(payload);
@@ -224,6 +285,31 @@ export async function POST(request: Request) {
     const carMakeModel = [car.make, car.model].filter(Boolean).join(' ').trim() || '-';
     const carColour = car.colour || '-';
     const carRegistration = car.vehicle_registration || '-';
+    const previousDriverName = String(booking.driver_name || '').trim();
+    const previousCommissionApplied =
+      booking.driver_commission_applied !== null && booking.driver_commission_applied !== undefined
+        ? Number(booking.driver_commission_applied)
+        : null;
+    const previousCarMakeModel = String(booking.car || '').trim();
+    const previousCarRegistration = String(booking.plate || '').trim();
+    const hadAssignedDriver = previousDriverName && normalizeForCompare(previousDriverName) !== 'pending assignment';
+    const sameDriver =
+      normalizeForCompare(previousDriverName) === normalizeForCompare(driverName || driverId) ||
+      normalizeForCompare(previousDriverName) === normalizeForCompare(driverId);
+    const sameCommission =
+      previousCommissionApplied !== null && Math.abs(previousCommissionApplied - appliedCommission) < 0.0001;
+    const sameCar =
+      normalizeForCompare(previousCarMakeModel) === normalizeForCompare(carMakeModel) &&
+      normalizeForCompare(previousCarRegistration) === normalizeForCompare(carRegistration);
+
+    if (hadAssignedDriver && sameDriver && sameCommission && sameCar) {
+      return NextResponse.json({
+        ok: true,
+        warning: 'This chauffeur is already allocated with the same commission. No duplicate emails were sent.',
+        driverPrice: driverAmount,
+        commissionApplied: appliedCommission,
+      });
+    }
 
     const [result] = await pool.execute<mysql.ResultSetHeader>(
       `UPDATE client_journeys
@@ -241,12 +327,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
     }
 
-    const clientSubject = `Velvet Drivers - Chauffeur allocated ${bookingCode}`;
+    const isReallocation = Boolean(hadAssignedDriver);
+    const clientSubject = isReallocation
+      ? `Velvet Drivers - Chauffeur updated ${bookingCode}`
+      : `Velvet Drivers - Chauffeur allocated ${bookingCode}`;
+    const clientTitle = isReallocation ? 'Chauffeur Update' : 'Chauffeur Allocation';
+    const clientIntro = isReallocation
+      ? `We are writing to let you know that your chauffeur details have been updated for your upcoming journey with
+                <strong>Velvet Drivers Limited</strong>. Please find your latest chauffeur and vehicle details below.`
+      : `We are pleased to confirm that your chauffeur has now been allocated for your upcoming journey with
+                <strong>Velvet Drivers Limited</strong>. Please find your full chauffeur and vehicle details below.`;
+    const previousChauffeurRows = isReallocation
+      ? `<tr>
+                  <td width="40%" style="padding:4px 0; font-weight:bold;">Previous Driver:</td>
+                  <td width="60%" style="padding:4px 0;">${escapeHtml(previousDriverName)}</td>
+                </tr>`
+      : '';
     const clientHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Velvet Drivers - Chauffeur Allocation</title>
+  <title>Velvet Drivers - ${clientTitle}</title>
 </head>
 <body style="margin:0; padding:0; background-color:#f4f4f4; font-family:Arial, sans-serif;">
 
@@ -260,7 +361,7 @@ export async function POST(request: Request) {
                 Velvet Drivers
               </h1>
               <p style="margin:8px 0 0; font-size:13px; color:#f2f2f2;">
-                Chauffeur Allocation
+                ${clientTitle}
               </p>
             </td>
           </tr>
@@ -268,10 +369,7 @@ export async function POST(request: Request) {
           <tr>
             <td style="padding:24px 26px 10px; color:#333333; font-size:14px; line-height:1.6;">
               <p style="margin-top:0;">Dear ${escapeHtml(passengerName)},</p>
-              <p>
-                We are pleased to confirm that your chauffeur has now been allocated for your upcoming journey with
-                <strong>Velvet Drivers Limited</strong>. Please find your full chauffeur and vehicle details below.
-              </p>
+              <p>${clientIntro}</p>
             </td>
           </tr>
 
@@ -289,14 +387,7 @@ export async function POST(request: Request) {
                   <td style="padding:4px 0; font-weight:bold;">Pickup Date &amp; Time:</td>
                   <td style="padding:4px 0;">${escapeHtml(date)} at ${escapeHtml(time)}</td>
                 </tr>
-                <tr>
-                  <td style="padding:4px 0; font-weight:bold;">Pickup Location:</td>
-                  <td style="padding:4px 0;">${escapeHtml(booking.pickup || '')}</td>
-                </tr>
-                <tr>
-                  <td style="padding:4px 0; font-weight:bold;">Destination:</td>
-                  <td style="padding:4px 0;">${escapeHtml(booking.destination || '')}</td>
-                </tr>
+                ${journeyLocationRows}
                 <tr>
                   <td style="padding:4px 0; font-weight:bold;">Vehicle Type:</td>
                   <td style="padding:4px 0;">${escapeHtml(vehicleLabel)}</td>
@@ -323,6 +414,7 @@ export async function POST(request: Request) {
                   <td width="40%" style="padding:4px 0; font-weight:bold;">Driver Name:</td>
                   <td width="60%" style="padding:4px 0;">${escapeHtml(driverName || 'Assigned driver')}</td>
                 </tr>
+                ${previousChauffeurRows}
                 <tr>
                   <td style="padding:4px 0; font-weight:bold;">Velvet Drivers Chauffeur ID:</td>
                   <td style="padding:4px 0;">${escapeHtml(chauffeurId)}</td>
@@ -458,7 +550,17 @@ export async function POST(request: Request) {
 </body>
 </html>`;
 
-    const clientText = `Your chauffeur has been allocated for booking ${bookingCode}.`;
+    const clientText = [
+      isReallocation
+        ? `Your chauffeur details were updated for booking ${bookingCode}.`
+        : `Your chauffeur has been allocated for booking ${bookingCode}.`,
+      isReallocation && previousDriverName ? `Previous driver: ${previousDriverName}` : '',
+      `New driver: ${driverName || 'Assigned driver'}`,
+      `Vehicle: ${carMakeModel}`,
+      `Registration: ${carRegistration}`,
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     if (hasEmailService && recipient) {
       const clientEmailRes = await fetch('https://api.resend.com/emails', {
