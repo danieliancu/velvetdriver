@@ -151,6 +151,7 @@ export async function POST(request: Request) {
     const passengerName = booking.passenger_name || payload?.passengerName || 'Client';
     const pickup = booking.pickup || '';
     const dropOffs = parseDropOffs(String(booking.destination || ''), payload);
+    const finalDestination = dropOffs[dropOffs.length - 1] || '';
     const journeyLocationRows = buildJourneyLocationRows(pickup, dropOffs);
     const passengerCount =
       Number(payload?.passengerCount || payload?.passengers || payload?.numberOfPassengers || 1) || 1;
@@ -305,7 +306,7 @@ export async function POST(request: Request) {
 </body>
 </html>`;
 
-    const text = `Booking confirmed for ${passengerName}. Reference ${code}. Pickup ${pickup}. Drop-off ${dropOff}.`;
+    const text = `Booking confirmed for ${passengerName}. Reference ${code}. Pickup ${pickup}. Drop-off ${finalDestination}.`;
 
     const resendRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
