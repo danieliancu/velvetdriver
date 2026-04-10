@@ -4,6 +4,7 @@ import { detectAirportCodeFromText, type AirportCode, buildDefaultAirportSurchar
 import { getDbPool } from '@/lib/db';
 import { computeGoogleRoute } from '@/lib/google-routes';
 import { addClientCredit } from '@/lib/client-credit';
+import { parseDestinationStops } from '@/lib/journey-locations';
 
 const pool = getDbPool();
 const AUTHORIZED_PAYMENT_STATUSES = new Set([
@@ -68,17 +69,6 @@ const detectDropAirportCodes = (dropOffs: string[]): AirportCode[] =>
   dropOffs
     .map((stop) => detectAirportCodeFromText(stop))
     .filter((code): code is AirportCode => Boolean(code));
-
-const stripStopLabel = (value: string) => value.replace(/^Stop\s+\d+:\s*/i, '').trim();
-const parseDestinationStops = (destination: string) => {
-  const raw = String(destination || '').trim();
-  if (!raw) return [''];
-  if (!raw.includes('Stop ')) return [raw];
-  return raw
-    .split(', ')
-    .map((part) => stripStopLabel(part))
-    .filter(Boolean);
-};
 
 const ADMIN_BOOKING_MODIFY_EMAILS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
 

@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise';
 import Stripe from 'stripe';
 import { getDbPool } from '@/lib/db';
 import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
+import { buildJourneyLocationLines, resolveDropOffs } from '@/lib/journey-locations';
 
 const pool = getDbPool();
 
@@ -280,6 +281,14 @@ export async function POST(request: Request) {
     const recipient = String(booking.client_email || booking.passenger_email || '').trim();
     const passengerName = String(booking.passenger_name || payload?.passengerName || 'Client').trim();
     const { date, time } = formatDate(String(booking.journey_date || ''));
+    const routeLines = buildJourneyLocationLines(
+      String(booking.pickup || ''),
+      resolveDropOffs(String(booking.destination || ''), payload)
+    );
+    const routeHtml = routeLines
+      .map((line) => `<strong>${escapeHtml(line.label)}:</strong> ${escapeHtml(line.value)}`)
+      .join('<br />');
+    const routeText = routeLines.map((line) => `${line.label}: ${line.value}`).join('\n');
 
     const warnings: string[] = [];
 
@@ -304,7 +313,7 @@ export async function POST(request: Request) {
           <p>${escapeHtml(clientMessage)}</p>
           <p><strong>Reference:</strong> ${escapeHtml(bookingCode)}<br />
              <strong>Journey:</strong> ${escapeHtml(date)} at ${escapeHtml(time)}<br />
-             <strong>Route:</strong> ${escapeHtml(String(booking.pickup || ''))} to ${escapeHtml(String(booking.destination || ''))}<br />
+             ${routeHtml}<br />
              <strong>${action === 'refund' ? 'Refunded Amount' : 'Released Hold Amount'}:</strong> GBP ${refundAmount.toFixed(2)}</p>
           <p>${action === 'refund' ? 'The refund may take a short time to appear depending on your card issuer.' : 'The hold release timing depends on the card issuer and may take a short time to show on the customer account.'}</p>
         </td></tr>
@@ -316,7 +325,7 @@ export async function POST(request: Request) {
       const clientText =
         `Booking ${bookingCode} was cancelled and ${action === 'refund' ? 'refunded' : 'the card hold was released'}.\n` +
         `${action === 'refund' ? 'Refunded amount' : 'Released hold amount'}: GBP ${refundAmount.toFixed(2)}.\n` +
-        `Route: ${booking.pickup} -> ${booking.destination}.`;
+        `${routeText}`;
       try {
         await sendEmail({ to: recipient, subject: clientSubject, html: clientHtml, text: clientText });
       } catch (err: any) {
@@ -347,7 +356,7 @@ export async function POST(request: Request) {
           <p>${escapeHtml(driverMessage)}</p>
           <p><strong>Reference:</strong> ${escapeHtml(bookingCode)}<br />
              <strong>Journey:</strong> ${escapeHtml(date)} at ${escapeHtml(time)}<br />
-             <strong>Route:</strong> ${escapeHtml(String(booking.pickup || ''))} to ${escapeHtml(String(booking.destination || ''))}</p>
+             ${routeHtml}</p>
         </td></tr>
       </table>
     </td></tr>
@@ -356,7 +365,7 @@ export async function POST(request: Request) {
 </html>`;
         const driverText =
           `Job ${bookingCode} has been cancelled and removed from queue.\n` +
-          `Route: ${booking.pickup} -> ${booking.destination}.`;
+          `${routeText}`;
         try {
           await sendEmail({ to: driver.email, subject: driverSubject, html: driverHtml, text: driverText });
         } catch (err: any) {

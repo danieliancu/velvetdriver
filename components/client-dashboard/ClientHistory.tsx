@@ -7,6 +7,7 @@ import type { Journey, SavedQuote } from '@/types';
 import Modal from '@/components/Modal';
 import StripePaymentForm from '@/components/payments/StripePaymentForm';
 import { attachGooglePlacesAutocomplete, loadGoogleMapsPlaces } from '@/lib/google-places-autocomplete';
+import { buildJourneyLocationLines, parseDestinationStops } from '@/lib/journey-locations';
 
 type RenderStatus = Journey['status'] | 'Modified';
 
@@ -25,17 +26,6 @@ type JourneyRouteSummary = {
 };
 
 const BOOKING_DRAFT_KEY = 'velvetdriver.booking.draft';
-const stripStopLabel = (value: string) => value.replace(/^Stop\s+\d+:\s*/i, '').trim();
-
-const parseDestinationStops = (destination: string) => {
-  const raw = String(destination || '').trim();
-  if (!raw) return [''];
-  if (!raw.includes('Stop ')) return [raw];
-  return raw
-    .split(', ')
-    .map((part) => stripStopLabel(part))
-    .filter(Boolean);
-};
 
 const buildRouteSummary = (pickup: string, dropOffs: string[]): JourneyRouteSummary => {
   const cleanedStops = dropOffs.map((stop) => String(stop || '').trim()).filter(Boolean);
@@ -588,9 +578,13 @@ const ClientHistory: React.FC<Props> = ({
                     <td className="p-4 align-top">{journey.date}</td>
                     <td className="p-4 align-top">{journey.pickup}</td>
                     <td className="p-4 align-top">
-                      {journey.destination.includes('Stop ')
-                        ? journey.destination.split(', ').map((stop, i) => <div key={i}>{stop}</div>)
-                        : journey.destination}
+                      {buildJourneyLocationLines(journey.pickup, parseDestinationStops(journey.destination))
+                        .filter((line) => line.kind !== 'pickup')
+                        .map((line) => (
+                          <div key={`${journey.id}-${line.label}-${line.value}`}>
+                            {line.label}: {line.value}
+                          </div>
+                        ))}
                     </td>
                     <td className="p-4 align-top">{journey.serviceType}</td>
                     <td className="p-4 align-top">{journey.driver}</td>

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
+import { resolveDropOffs } from '@/lib/journey-locations';
 
 const pool = getDbPool();
 
@@ -52,14 +53,6 @@ const parsePayload = (value: unknown) => {
   } catch {
     return null;
   }
-};
-
-const parseDropOffs = (destination: string, payload: any) => {
-  if (Array.isArray(payload?.dropOffs)) {
-    return payload.dropOffs.map((stop: unknown) => String(stop || '').trim()).filter(Boolean);
-  }
-  const trimmedDestination = String(destination || '').trim();
-  return trimmedDestination ? [trimmedDestination] : [];
 };
 
 const HOLD_PAYMENT_STATUSES = new Set([
@@ -155,7 +148,7 @@ export async function GET() {
       const isPaid = paymentStatus === 'succeeded';
       const isRefundable = isPaid && Boolean(paymentIntentId) && !alreadyRefunded;
       const canReleaseHold = HOLD_PAYMENT_STATUSES.has(paymentStatus) && Boolean(paymentIntentId) && !alreadyRefunded;
-      const dropOffs = parseDropOffs(String(row.destination || ''), payload);
+      const dropOffs = resolveDropOffs(String(row.destination || ''), payload);
       const rawDriverName = String(row.driver_name ?? '').trim();
       const driverId =
         rawDriverName && rawDriverName.toLowerCase() !== 'pending assignment' ? rawDriverName : '';

@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import AdminPageHeader from '@/components/AdminPageHeader';
 import { attachGooglePlacesAutocomplete, loadGoogleMapsPlaces } from '@/lib/google-places-autocomplete';
+import { buildJourneyLocationLines } from '@/lib/journey-locations';
 
 type DriverDirectoryEntry = {
   id: string;
@@ -193,8 +194,10 @@ const resolveWhatsappPriceType = (paymentMethod?: string) => {
 };
 
 const buildBookingSummary = (booking: LiveBooking, commissionPercent = 0) => {
-  const pickupLine = formatLocationWithLink('Pickup', booking.pickup);
-  const dropOffLine = formatLocationWithLink('Drop-off', booking.dropOff);
+  const routeLines = buildJourneyLocationLines(booking.pickup, booking.dropOffs);
+  const routeBlock = routeLines
+    .map((line) => formatLocationWithLink(line.label, line.value))
+    .join('\n\n');
   const jobType = resolveWhatsappJobType(booking.vehicle);
   const priceType = resolveWhatsappPriceType(booking.paymentMethod);
   const amount = formatDriverNetAmount(booking.priceDetails, commissionPercent);
@@ -202,7 +205,7 @@ const buildBookingSummary = (booking: LiveBooking, commissionPercent = 0) => {
     amount !== null ? `${priceType}  GBP ${amount.toFixed(2)}` : `${priceType}  ${booking.priceDetails}`;
   const notes = booking.notes?.trim() ? booking.notes.trim() : '-';
 
-  return `JOB TYPE: ${jobType}\nTime: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${pickupLine}\n\nTO\n\n${dropOffLine}\nPrice: ${priceLine}\n\nNotes: ${notes}`;
+  return `JOB TYPE: ${jobType}\nTime: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${routeBlock}\nPrice: ${priceLine}\n\nNotes: ${notes}`;
 };
 
 const formatCarLabel = (car: {
@@ -1173,12 +1176,11 @@ const AdminDashboardPage: React.FC = () => {
                                 </span>
                               ) : null}
                             </p>
-                            <p className="text-sm text-gray-300">
-                              Pickup: <span className="font-semibold text-white">{booking.pickup}</span>
-                            </p>
-                            <p className="text-sm text-gray-300">
-                              Drop-off: <span className="font-semibold text-white">{booking.dropOff}</span>
-                            </p>
+                            {buildJourneyLocationLines(booking.pickup, booking.dropOffs).map((line) => (
+                              <p key={`${booking.id}-${line.label}-${line.value}`} className="text-sm text-gray-300">
+                                {line.label}: <span className="font-semibold text-white">{line.value}</span>
+                              </p>
+                            ))}
                             <p className="text-sm text-gray-300">
                               Time: <span className="font-semibold text-white">{booking.time}</span>
                             </p>
@@ -1544,12 +1546,14 @@ const AdminDashboardPage: React.FC = () => {
                                   {completeAllocationBusy[booking.id] ? 'Completing...' : 'Job Completed'}
                                 </button>
                               </div>
-                              <p className="mt-2 text-sm text-gray-300">
-                                Pickup: <span className="text-white">{booking.pickup}</span>
-                              </p>
-                              <p className="text-sm text-gray-300">
-                                Drop-off: <span className="text-white">{booking.dropOff}</span>
-                              </p>
+                              {buildJourneyLocationLines(booking.pickup, booking.dropOffs).map((line, index) => (
+                                <p
+                                  key={`allocated-${booking.id}-${line.label}-${line.value}`}
+                                  className={`${index === 0 ? 'mt-2 ' : ''}text-sm text-gray-300`}
+                                >
+                                  {line.label}: <span className="text-white">{line.value}</span>
+                                </p>
+                              ))}
                               <p className="text-sm text-gray-300">
                                 Passenger: <span className="text-white">{booking.passenger}</span>
                               </p>

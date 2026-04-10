@@ -4,6 +4,7 @@ import { getDbPool } from '@/lib/db';
 import { consumeClientCredit, getClientCreditBalance } from '@/lib/client-credit';
 import { persistBookingAuthorization } from '@/lib/ride-payments';
 import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
+import { buildJourneyLocationLines } from '@/lib/journey-locations';
 
 const pool = getDbPool();
 const ADMIN_BOOKING_NOTIFICATION_EMAILS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
@@ -36,7 +37,7 @@ async function sendAdminBookingCreatedEmail(input: {
   passengerEmail: string;
   passengerPhone: string;
   pickup: string;
-  destination: string;
+  dropOffs: string[];
   serviceType: string;
   totalFare: number;
   paymentMethod: string;
@@ -51,6 +52,7 @@ async function sendAdminBookingCreatedEmail(input: {
   const formattedDate = formatDateForEmail(input.date);
   const formattedTime = formatTimeForEmail(input.time);
   const paymentMethodLabel = input.paymentMethod || 'Not specified';
+  const routeLines = buildJourneyLocationLines(input.pickup, input.dropOffs);
   const html = `
     <h2>New booking received (${escapeHtml(bookingCode)})</h2>
     <p>A new booking was created on the website.</p>
@@ -60,8 +62,9 @@ async function sendAdminBookingCreatedEmail(input: {
     <p><strong>Passenger:</strong> ${escapeHtml(input.passengerName || 'N/A')}</p>
     <p><strong>Email:</strong> ${escapeHtml(input.passengerEmail || 'N/A')}</p>
     <p><strong>Phone:</strong> ${escapeHtml(input.passengerPhone || 'N/A')}</p>
-    <p><strong>Pickup:</strong> ${escapeHtml(input.pickup || 'N/A')}</p>
-    <p><strong>Destination:</strong> ${escapeHtml(input.destination || 'N/A')}</p>
+    ${routeLines
+      .map((line) => `<p><strong>${escapeHtml(line.label)}:</strong> ${escapeHtml(line.value || 'N/A')}</p>`)
+      .join('')}
     <p><strong>Service:</strong> ${escapeHtml(input.serviceType || 'Transfer')}</p>
     <p><strong>Estimated fare:</strong> GBP ${input.totalFare.toFixed(2)}</p>
     <p><strong>Payment method:</strong> ${escapeHtml(paymentMethodLabel)}</p>
@@ -75,8 +78,7 @@ async function sendAdminBookingCreatedEmail(input: {
     `Passenger: ${input.passengerName || 'N/A'}`,
     `Email: ${input.passengerEmail || 'N/A'}`,
     `Phone: ${input.passengerPhone || 'N/A'}`,
-    `Pickup: ${input.pickup || 'N/A'}`,
-    `Destination: ${input.destination || 'N/A'}`,
+    ...routeLines.map((line) => `${line.label}: ${line.value || 'N/A'}`),
     `Service: ${input.serviceType || 'Transfer'}`,
     `Estimated fare: GBP ${input.totalFare.toFixed(2)}`,
     `Payment method: ${paymentMethodLabel}`,
@@ -233,7 +235,7 @@ export async function POST(request: Request) {
         passengerEmail,
         passengerPhone,
         pickup,
-        destination,
+        dropOffs,
         serviceType: String(body.serviceType ?? 'Transfer'),
         totalFare,
         paymentMethod,

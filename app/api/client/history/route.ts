@@ -1,19 +1,9 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
+import { parseDestinationStops } from '@/lib/journey-locations';
 
 const pool = getDbPool();
-
-const stripStopLabel = (value: string) => value.replace(/^Stop\s+\d+:\s*/i, '').trim();
-const parseDestinationStops = (destination: string) => {
-  const raw = String(destination || '').trim();
-  if (!raw) return [''];
-  if (!raw.includes('Stop ')) return [raw];
-  return raw
-    .split(', ')
-    .map((part) => stripStopLabel(part))
-    .filter(Boolean);
-};
 
 const TIME_EDIT_WINDOW_MS = 2 * 60 * 60 * 1000;
 

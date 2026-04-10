@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
 import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
+import { buildJourneyLocationLines, resolveDropOffs } from '@/lib/journey-locations';
 
 const pool = getDbPool();
 
@@ -31,55 +32,15 @@ const buildNotes = (payload: any) => {
   return pieces.length ? pieces.join(' - ') : '-';
 };
 
-const parseDropOffs = (destination: string, payload: any) => {
-  if (Array.isArray(payload?.dropOffs)) {
-    return payload.dropOffs.map((stop: unknown) => String(stop || '').trim()).filter(Boolean);
-  }
-  const trimmedDestination = String(destination || '').trim();
-  return trimmedDestination ? [trimmedDestination] : [];
-};
-
 const buildJourneyLocationRows = (pickup: string, dropOffs: string[]) => {
-  const cleanedStops = dropOffs.map((stop) => String(stop || '').trim()).filter(Boolean);
-  const finalDestination = cleanedStops[cleanedStops.length - 1] || '';
-  const intermediateStops = cleanedStops.slice(0, -1);
-
-  const rows = [
-    `<tr>
-      <td style="padding:4px 0; font-weight:bold;">Pickup Location:</td>
-      <td style="padding:4px 0;">${escapeHtml(pickup)}</td>
-    </tr>`,
-  ];
-
-  if (!intermediateStops.length) {
-    rows.push(`<tr>
-      <td style="padding:4px 0; font-weight:bold;">Destination:</td>
-      <td style="padding:4px 0;">${escapeHtml(finalDestination)}</td>
-    </tr>`);
-    return rows.join('');
-  }
-
-  intermediateStops.forEach((stop, index) => {
-    rows.push(`<tr>
-      <td style="padding:4px 0; font-weight:bold;">To</td>
-      <td style="padding:4px 0;"></td>
-    </tr>`);
-    rows.push(`<tr>
-      <td style="padding:4px 0; font-weight:bold;">Stop ${index + 1}:</td>
-      <td style="padding:4px 0;">${escapeHtml(stop)}</td>
-    </tr>`);
-  });
-
-  rows.push(`<tr>
-    <td style="padding:4px 0; font-weight:bold;">To</td>
-    <td style="padding:4px 0;"></td>
-  </tr>`);
-  rows.push(`<tr>
-    <td style="padding:4px 0; font-weight:bold;">Destination:</td>
-    <td style="padding:4px 0;">${escapeHtml(finalDestination)}</td>
-  </tr>`);
-
-  return rows.join('');
+  return buildJourneyLocationLines(pickup, dropOffs)
+    .map(
+      (line) => `<tr>
+      <td style="padding:4px 0; font-weight:bold;">${escapeHtml(line.label)}:</td>
+      <td style="padding:4px 0;">${escapeHtml(line.value)}</td>
+    </tr>`
+    )
+    .join('');
 };
 
 const normalizeForCompare = (value: unknown) => String(value || '').trim().toLowerCase();
@@ -268,10 +229,18 @@ export async function POST(request: Request) {
     const { date, time } = formatDate(String(booking.journey_date));
     const bookingCode = `VD-${String(booking.id).padStart(4, '0')}`;
     const passengerName = booking.passenger_name || payload?.passengerName || 'Client';
-    const journeyLocationRows = buildJourneyLocationRows(
+    const routeLines = buildJourneyLocationLines(
       String(booking.pickup || ''),
-      parseDropOffs(String(booking.destination || ''), payload)
+      resolveDropOffs(String(booking.destination || ''), payload)
     );
+    const journeyLocationRows = routeLines
+      .map(
+        (line) => `<tr>
+      <td style="padding:4px 0; font-weight:bold;">${escapeHtml(line.label)}:</td>
+      <td style="padding:4px 0;">${escapeHtml(line.value)}</td>
+    </tr>`
+      )
+      .join('');
     const passengerCount =
       Number(payload?.passengerCount || payload?.passengers || payload?.numberOfPassengers || 1) || 1;
     const notes = buildNotes(payload);
@@ -620,8 +589,7 @@ export async function POST(request: Request) {
                 <tr><td width="40%" style="padding:4px 0; font-weight:bold;">Booking Reference:</td><td width="60%" style="padding:4px 0;">${escapeHtml(bookingCode)}</td></tr>
                 <tr><td style="padding:4px 0; font-weight:bold;">Pickup Date & Time:</td><td style="padding:4px 0;">${escapeHtml(date)} at ${escapeHtml(time)}</td></tr>
                 <tr><td style="padding:4px 0; font-weight:bold;">Passenger:</td><td style="padding:4px 0;">${escapeHtml(passengerName)}</td></tr>
-                <tr><td style="padding:4px 0; font-weight:bold;">Pickup:</td><td style="padding:4px 0;">${escapeHtml(booking.pickup || '')}</td></tr>
-                <tr><td style="padding:4px 0; font-weight:bold;">Drop-off:</td><td style="padding:4px 0;">${escapeHtml(booking.destination || '')}</td></tr>
+                ${journeyLocationRows}
                 <tr><td style="padding:4px 0; font-weight:bold;">Vehicle Type:</td><td style="padding:4px 0;">${escapeHtml(vehicleLabel)}</td></tr>
                 <tr><td style="padding:4px 0; font-weight:bold;">Allocated Driver Pay:</td><td style="padding:4px 0;">&pound;${driverAmount.toFixed(2)}</td></tr>
                 <tr><td style="padding:4px 0; font-weight:bold; vertical-align:top;">Notes:</td><td style="padding:4px 0;">${escapeHtml(notes)}</td></tr>
@@ -651,8 +619,7 @@ export async function POST(request: Request) {
         `New job allocated ${bookingCode}\n` +
         `Date/Time: ${date} ${time}\n` +
         `Passenger: ${passengerName}\n` +
-        `Pickup: ${booking.pickup || ''}\n` +
-        `Drop-off: ${booking.destination || ''}\n` +
+        `${routeLines.map((line) => `${line.label}: ${line.value}`).join('\n')}\n` +
         `Vehicle: ${vehicleLabel}\n` +
         `Driver Pay: GBP ${driverAmount.toFixed(2)}\n` +
         `Notes: ${notes}`;
