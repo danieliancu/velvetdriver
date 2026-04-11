@@ -74,6 +74,21 @@ type StatementRow = DbRow<{
   statement_pdf_url: string | null;
 }>;
 
+type JourneyRow = DbRow<{
+  id: number;
+  driver_name: string | null;
+  journey_date: string | null;
+  pickup: string | null;
+  destination: string | null;
+  passenger_name: string | null;
+  passenger_phone: string | null;
+  price: number | null;
+  driver_price: number | null;
+  booking_payload: string | null;
+  vehicle_label: string | null;
+  status: string | null;
+}>;
+
 const DOC_LABELS: Record<string, string> = {
   pco_license: 'PCO Licence',
   driving_license_front: 'Driving Licence Front',
@@ -168,11 +183,73 @@ export async function GET() {
     );
 
     const driverIds = rows.map((row) => row.driver_id);
+    const driverAliases = rows.flatMap((row) => {
+      const fullName = [row.first_and_middle_name, row.surname]
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return [String(row.driver_id).trim().toLowerCase(), fullName].filter(Boolean);
+    });
+    const driverAliasToId = rows.reduce((acc, row) => {
+      const fullName = [row.first_and_middle_name, row.surname]
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      acc.set(String(row.driver_id).trim().toLowerCase(), row.driver_id);
+      if (fullName) acc.set(fullName, row.driver_id);
+      return acc;
+    }, new Map<string, number>());
     let documentsByDriver: Record<number, Array<{ name: string; url: string; type: string }>> = {};
     let profilePhotoByDriver: Record<number, string> = {};
     let carsByDriver: Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; status: string; vehicleTypeId: number | null; vehicleTypeLabel: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>> = {};
+    let upcomingJobsByDriver: Record<number, Array<{ id: number; code: string; jobType: string; pickup: string; destination: string; client: string; phone: string; priceType: string; time: string; date: string; pay: number }>> = {};
+    let completedJobsByDriver: Record<number, Array<{ id: number; code: string; jobType: string; pickup: string; destination: string; client: string; phone: string; priceType: string; time: string; date: string; pay: number }>> = {};
     let statementsByDriver: Record<number, Array<{ date: string; ref: string; pickup: string; dropoff: string; vehicle: string; miles: number; wait: number; fare: number; status: 'Paid' | 'Unpaid'; pdfUrl: string | null }>> = {};
     let pricingVehicles: Array<{ id: number; label: string }> = [];
+    const mapJourney = (row: JourneyRow) => {
+      let payload: any = null;
+      if (row.booking_payload) {
+        try {
+          payload = typeof row.booking_payload === 'string' ? JSON.parse(row.booking_payload) : row.booking_payload;
+        } catch {
+          payload = null;
+        }
+      }
+      const journeyDate = row.journey_date ? new Date(row.journey_date) : null;
+      const date = journeyDate && !Number.isNaN(journeyDate.getTime())
+        ? journeyDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        : '';
+      const time = journeyDate && !Number.isNaN(journeyDate.getTime())
+        ? journeyDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+        : '';
+      const paymentMethod = String(payload?.paymentMethod || payload?.paymentType || '').trim().toLowerCase();
+      const vehicleLabel = String(row.vehicle_label || payload?.vehicle || payload?.vehicleLabel || payload?.vehicleTypeLabel || '').trim().toLowerCase();
+      const jobType = vehicleLabel.includes('luxury mpv')
+        ? 'LUXURY MPV'
+        : vehicleLabel.includes('luxury')
+          ? 'LUXURY'
+          : 'EXECUTIVE';
+      const priceType = paymentMethod.includes('account')
+        ? 'ACCOUNT'
+        : paymentMethod.includes('cash') || paymentMethod.includes('card')
+          ? 'CASH/CARD'
+          : 'PAYED';
+      return {
+        id: Number(row.id),
+        code: `VD-${String(row.id).padStart(4, '0')}`,
+        jobType,
+        pickup: row.pickup || '-',
+        destination: row.destination || '-',
+        client: row.passenger_name || 'Client',
+        phone: row.passenger_phone || payload?.passengerPhone || '-',
+        priceType,
+        time,
+        date,
+        pay: Number(row.driver_price ?? row.price ?? 0) || 0,
+      };
+    };
     if (driverIds.length) {
       const [docs] = await queryWithRetry<DocumentRow[]>(
         `SELECT driver_id, doc_type, file_url, format, file_name
@@ -260,6 +337,66 @@ export async function GET() {
         return acc;
       }, {} as Record<number, Array<{ id: number; vrm: string; make: string; model: string; colour: string; keeper: string; status: string; vehicleTypeId: number | null; vehicleTypeLabel: string; documents: Array<{ docType: string; name: string; url: string; type: string; expiryDate: string | null }> }>>);
 
+      if (driverAliases.length) {
+        const placeholders = driverAliases.map(() => '?').join(',');
+        const [upcomingRows] = await queryWithRetry<JourneyRow[]>(
+          `SELECT cj.id,
+                  cj.driver_name,
+                  cj.journey_date,
+                  cj.pickup,
+                  cj.destination,
+                  cj.passenger_name,
+                  cj.passenger_phone,
+                  cj.price,
+                  cj.driver_price,
+                  cj.booking_payload,
+                  pv.label AS vehicle_label,
+                  cj.status
+             FROM client_journeys cj
+             LEFT JOIN pricing_vehicles pv ON pv.id = cj.vehicle_type_id
+            WHERE cj.status = 'Upcoming'
+              AND cj.journey_date > NOW()
+              AND LOWER(TRIM(cj.driver_name)) IN (${placeholders})
+            ORDER BY cj.journey_date ASC, cj.id ASC`,
+          driverAliases
+        );
+        upcomingJobsByDriver = upcomingRows.reduce((acc, row) => {
+          const driverKey = driverAliasToId.get(String(row.driver_name || '').trim().toLowerCase());
+          if (!driverKey) return acc;
+          if (!acc[driverKey]) acc[driverKey] = [];
+          acc[driverKey].push(mapJourney(row));
+          return acc;
+        }, {} as Record<number, Array<{ id: number; code: string; jobType: string; pickup: string; destination: string; client: string; phone: string; priceType: string; time: string; date: string; pay: number }>>);
+
+        const [completedRows] = await queryWithRetry<JourneyRow[]>(
+          `SELECT cj.id,
+                  cj.driver_name,
+                  cj.journey_date,
+                  cj.pickup,
+                  cj.destination,
+                  cj.passenger_name,
+                  cj.passenger_phone,
+                  cj.price,
+                  cj.driver_price,
+                  cj.booking_payload,
+                  pv.label AS vehicle_label,
+                  cj.status
+             FROM client_journeys cj
+             LEFT JOIN pricing_vehicles pv ON pv.id = cj.vehicle_type_id
+            WHERE cj.status = 'Completed'
+              AND LOWER(TRIM(cj.driver_name)) IN (${placeholders})
+            ORDER BY cj.journey_date DESC, cj.id DESC`,
+          driverAliases
+        );
+        completedJobsByDriver = completedRows.reduce((acc, row) => {
+          const driverKey = driverAliasToId.get(String(row.driver_name || '').trim().toLowerCase());
+          if (!driverKey) return acc;
+          if (!acc[driverKey]) acc[driverKey] = [];
+          acc[driverKey].push(mapJourney(row));
+          return acc;
+        }, {} as Record<number, Array<{ id: number; code: string; jobType: string; pickup: string; destination: string; client: string; phone: string; priceType: string; time: string; date: string; pay: number }>>);
+      }
+
       const [pricingRows] = await queryWithRetry<PricingVehicleRow[]>(
         `SELECT id, label FROM pricing_vehicles ORDER BY id`
       );
@@ -319,6 +456,8 @@ export async function GET() {
       documents: documentsByDriver[row.driver_id] || [],
       profilePhotoUrl: profilePhotoByDriver[row.driver_id] || null,
       carDetails: carsByDriver[row.driver_id] || [],
+      upcomingJobs: upcomingJobsByDriver[row.driver_id] || [],
+      completedJobs: completedJobsByDriver[row.driver_id] || [],
       statementRows: statementsByDriver[row.driver_id] || [],
     }));
 
@@ -334,6 +473,8 @@ export async function PATCH(request: Request) {
     const body = await request.json();
     const driverId = Number(body.driverId);
     const nextStatus = body.status !== undefined ? String(body.status ?? '').trim().toLowerCase() : null;
+    const statementRef = body.statementRef !== undefined ? String(body.statementRef ?? '').trim() : null;
+    const statementStatus = body.statementStatus !== undefined ? String(body.statementStatus ?? '').trim().toLowerCase() : null;
     const commission = body.commission !== undefined ? Number(body.commission) : null;
     const driverCarId = Number(body.driverCarId);
     const vehicleTypeId = body.vehicleTypeId !== undefined ? Number(body.vehicleTypeId) : null;
@@ -351,7 +492,7 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
       }
     }
-    if (commission === null && !nextStatus && !driverCarId && !documentsChecked && !hasProfileUpdate) {
+    if (commission === null && !nextStatus && !driverCarId && !documentsChecked && !hasProfileUpdate && !statementRef) {
       return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
     }
 
@@ -523,6 +664,44 @@ export async function PATCH(request: Request) {
         ip: getRequestIp(request),
         next: { commission },
       }).catch((err) => console.error('Driver commission audit error', err));
+    }
+
+    if (statementRef) {
+      if (!driverId) {
+        return NextResponse.json({ error: 'Driver not found' }, { status: 404 });
+      }
+      const allowedStatementStatus = new Set(['paid', 'unpaid']);
+      if (!statementStatus || !allowedStatementStatus.has(statementStatus)) {
+        return NextResponse.json({ error: 'Invalid statement status' }, { status: 400 });
+      }
+
+      const nextStatementStatus = statementStatus === 'paid' ? 'Paid' : 'Unpaid';
+      const [result] = await executeWithRetry<mysql.ResultSetHeader>(
+        `UPDATE driver_statements
+            SET status = ?
+          WHERE driver_id = ?
+            AND booking_ref = ?
+          LIMIT 1`,
+        [nextStatementStatus, driverId, statementRef]
+      );
+      if (!result.affectedRows) {
+        return NextResponse.json({ error: 'Statement not found' }, { status: 404 });
+      }
+
+      await logSiteActivity(pool, {
+        tableName: 'driver_statements',
+        operation: 'UPDATE',
+        pk: `${driverId}:${statementRef}`,
+        category: 'driver',
+        title: 'Driver statement status updated',
+        message: `Statement ${statementRef} for driver ${driverId} marked as ${nextStatementStatus}.`,
+        severity: 'info',
+        tags: { actor: 'admin', status: nextStatementStatus },
+        ip: getRequestIp(request),
+        next: { status: nextStatementStatus },
+      }).catch((err) => console.error('Driver statement audit error', err));
+
+      return NextResponse.json({ ok: true, status: nextStatementStatus });
     }
 
     if (driverCarId && vehicleTypeId) {

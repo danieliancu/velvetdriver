@@ -14,12 +14,16 @@ type LogEntry = {
 
 type DriverJob = {
   id: string;
+  code: string;
+  jobType: string;
   pickup: string;
   destination: string;
   client: string;
+  phone: string;
+  priceType: string;
+  date: string;
   time: string;
   pay: number;
-  notes: string;
 };
 
 type DriverCar = {
@@ -148,23 +152,25 @@ const JobCard: React.FC<{ job: DriverJob }> = ({ job }) => (
     <div className="flex flex-col gap-2">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h3 className="text-lg font-bold text-amber-300">{job.pickup}</h3>
+          <p className="text-xs font-semibold uppercase tracking-wider text-amber-300">{job.jobType}</p>
+          <h3 className="text-lg font-bold text-white">{job.pickup}</h3>
           <p className="text-sm text-white/80">to {job.destination}</p>
         </div>
         <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">#{job.id}</p>
       </div>
       <div className="flex flex-wrap items-center gap-3 text-xs text-gray-300">
+        <span className="flex items-center gap-1">Ref: {job.code}</span>
         <span className="flex items-center gap-1">
-          <Clock size={14} /> {job.time}
+          <Clock size={14} /> {job.date} {job.time}
         </span>
         <span className="flex items-center gap-1">
           <User size={14} /> {job.client}
         </span>
         <span className="flex items-center gap-1">
-          <DollarSign size={14} /> £{job.pay.toFixed(2)}
+          <DollarSign size={14} /> {job.priceType} GBP {job.pay.toFixed(2)}
         </span>
+        <span className="flex items-center gap-1">Phone: {job.phone}</span>
       </div>
-      <p className="text-sm text-gray-400">{job.notes}</p>
     </div>
   </div>
 );
@@ -244,6 +250,7 @@ const AdminDriversPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [commissionError, setCommissionError] = useState<string | null>(null);
+  const [statementError, setStatementError] = useState<string | null>(null);
   const [commissionSaving, setCommissionSaving] = useState<Record<string, boolean>>({});
   const [photoUploading, setPhotoUploading] = useState<Record<string, boolean>>({});
   const [photoError, setPhotoError] = useState<Record<string, string | null>>({});
@@ -357,9 +364,50 @@ const AdminDriversPage: React.FC = () => {
               Array.isArray(car.documents) ? car.documents.find((doc: any) => doc.docType === 'phv_car_licence')?.expiryDate : null
             ),
           })),
-          upcomingJobs: [],
-          completedJobs: [],
-          statementRows: [],
+          upcomingJobs: Array.isArray(driver.upcomingJobs)
+            ? driver.upcomingJobs.map((job: any) => ({
+                id: String(job.id),
+                code: job.code || `VD-${String(job.id).padStart(4, '0')}`,
+                jobType: job.jobType || 'EXECUTIVE',
+                pickup: job.pickup || '-',
+                destination: job.destination || '-',
+                client: job.client || 'Client',
+                phone: job.phone || '-',
+                priceType: job.priceType || 'PAYED',
+                date: job.date || '',
+                time: job.time || '',
+                pay: Number(job.pay ?? 0),
+              }))
+            : [],
+          completedJobs: Array.isArray(driver.completedJobs)
+            ? driver.completedJobs.map((job: any) => ({
+                id: String(job.id),
+                code: job.code || `VD-${String(job.id).padStart(4, '0')}`,
+                jobType: job.jobType || 'EXECUTIVE',
+                pickup: job.pickup || '-',
+                destination: job.destination || '-',
+                client: job.client || 'Client',
+                phone: job.phone || '-',
+                priceType: job.priceType || 'PAYED',
+                date: job.date || '',
+                time: job.time || '',
+                pay: Number(job.pay ?? 0),
+              }))
+            : [],
+          statementRows: Array.isArray(driver.statementRows)
+            ? driver.statementRows.map((row: any) => ({
+                date: row.date || '-',
+                ref: row.ref || '',
+                pickup: row.pickup || '-',
+                dropoff: row.dropoff || '-',
+                vehicle: row.vehicle || '-',
+                miles: Number(row.miles ?? 0),
+                wait: Number(row.wait ?? 0),
+                fare: Number(row.fare ?? 0),
+                status: row.status === 'Paid' ? 'Paid' : 'Unpaid',
+                pdfUrl: row.pdfUrl || null,
+              }))
+            : [],
           documents: driver.documents || [],
           logs: [],
           commission: Number(driver.commission ?? 20),
@@ -439,14 +487,42 @@ const AdminDriversPage: React.FC = () => {
     return rowStatuses[driverId]?.[ref] ?? driverProfiles.find((d) => d.id === driverId)?.statementRows.find((r) => r.ref === ref)?.status ?? 'Unpaid';
   };
 
-  const toggleRowStatus = (driverId: string, ref: string) => {
+  const toggleRowStatus = async (driverId: string, ref: string) => {
+    const currentStatus = getRowStatus(driverId, ref);
+    const nextStatus: 'Paid' | 'Unpaid' = currentStatus === 'Paid' ? 'Unpaid' : 'Paid';
+    setStatementError(null);
     setRowStatuses((prev) => ({
       ...prev,
       [driverId]: {
         ...prev[driverId],
-        [ref]: prev[driverId]?.[ref] === 'Paid' ? 'Unpaid' : 'Paid'
-      }
+        [ref]: nextStatus,
+      },
     }));
+
+    try {
+      const res = await fetch('/api/admin/drivers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driverId: Number(driverId),
+          statementRef: ref,
+          statementStatus: nextStatus,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to update statement status');
+      }
+    } catch (err: any) {
+      setRowStatuses((prev) => ({
+        ...prev,
+        [driverId]: {
+          ...prev[driverId],
+          [ref]: currentStatus,
+        },
+      }));
+      setStatementError(err?.message || 'Failed to update statement status');
+    }
   };
 
   const applyDriverStatusChange = async (driverId: string, action: DriverStatusAction) => {
@@ -1217,7 +1293,7 @@ const AdminDriversPage: React.FC = () => {
                       <td className="py-2 px-3 text-right">
                         <button
                           type="button"
-                          onClick={() => toggleRowStatus(driver.id, row.ref)}
+                          onClick={() => void toggleRowStatus(driver.id, row.ref)}
                           className={`px-3 py-1 text-xs font-semibold uppercase tracking-wider rounded-full transition ${
                             row.status === 'Paid'
                               ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/40'
@@ -1367,6 +1443,11 @@ const AdminDriversPage: React.FC = () => {
               {commissionError ? (
                 <div className="rounded-2xl border border-red-500/50 bg-red-950/40 p-4 text-center text-red-200 text-sm">
                   {commissionError}
+                </div>
+              ) : null}
+              {statementError ? (
+                <div className="rounded-2xl border border-red-500/50 bg-red-950/40 p-4 text-center text-red-200 text-sm">
+                  {statementError}
                 </div>
               ) : null}
               {loading ? (
