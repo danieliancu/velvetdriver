@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
+import { upsertDriverCarDocument } from '@/lib/driver-car-documents';
 
 const pool = getDbPool();
 
@@ -160,6 +161,12 @@ export async function PATCH(request: Request) {
     const model = String(body.model ?? '').trim();
     const colour = String(body.colour ?? '').trim();
     const keeperInfo = String(body.keeperInfo ?? '').trim();
+    const hasMotExpiry = Object.prototype.hasOwnProperty.call(body, 'motExpiry');
+    const hasInsuranceExpiry = Object.prototype.hasOwnProperty.call(body, 'insuranceExpiry');
+    const hasPhvExpiry = Object.prototype.hasOwnProperty.call(body, 'phvExpiry');
+    const motExpiry = String(body.motExpiry ?? '').trim();
+    const insuranceExpiry = String(body.insuranceExpiry ?? '').trim();
+    const phvExpiry = String(body.phvExpiry ?? '').trim();
 
     if (!email || !driverCarId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -218,12 +225,48 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Car not found' }, { status: 404 });
     }
 
-    await pool.execute(
-      `UPDATE cars
-       SET vehicle_registration = ?, make = ?, model = ?, colour = ?, keeper_info = ?
-       WHERE id = ?`,
-      [vehicleReg, make, model, colour || null, keeperInfo || null, carId]
-    );
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      await conn.execute(
+        `UPDATE cars
+         SET vehicle_registration = ?, make = ?, model = ?, colour = ?, keeper_info = ?
+         WHERE id = ?`,
+        [vehicleReg, make, model, colour || null, keeperInfo || null, carId]
+      );
+
+      if (hasMotExpiry) {
+        await upsertDriverCarDocument(conn, {
+          carId,
+          docType: 'mot',
+          expiryDate: motExpiry || null,
+        });
+      }
+
+      if (hasInsuranceExpiry) {
+        await upsertDriverCarDocument(conn, {
+          carId,
+          docType: 'insurance',
+          expiryDate: insuranceExpiry || null,
+        });
+      }
+
+      if (hasPhvExpiry) {
+        await upsertDriverCarDocument(conn, {
+          carId,
+          docType: 'phv_car_licence',
+          expiryDate: phvExpiry || null,
+        });
+      }
+
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
 
     return NextResponse.json({ ok: true });
   } catch (err) {

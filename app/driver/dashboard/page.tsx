@@ -1097,6 +1097,9 @@ const CarsPage: React.FC = () => {
                     model: car.model,
                     colour: car.colour,
                     keeperInfo: car.keeperInfo,
+                    motExpiry: car.motExpiry,
+                    insuranceExpiry: car.insuranceExpiry,
+                    phvExpiry: car.phvExpiry,
                 }),
             });
             if (!res.ok) {
