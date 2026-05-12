@@ -354,9 +354,21 @@ const AdminDashboardPage: React.FC = () => {
   const [editReason, setEditReason] = useState('admin_route_update');
   const [editNote, setEditNote] = useState('');
   const [editBookingBusy, setEditBookingBusy] = useState(false);
+  const [editPreviewFare, setEditPreviewFare] = useState<number | null>(null);
+  const [editPreviewDifference, setEditPreviewDifference] = useState<number | null>(null);
+  const [editPreviewLoading, setEditPreviewLoading] = useState(false);
+  const [editPreviewError, setEditPreviewError] = useState<string | null>(null);
   const editPickupInputRef = useRef<HTMLInputElement | null>(null);
   const editDropOffInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const editTimeLocked = pendingEditBooking ? !canEditJourneyTime(pendingEditBooking.journeyDate) : false;
+  const editBookingCurrentFare = pendingEditBooking
+    ? pendingEditBooking.currentEstimate ?? parseBookingPriceAmount(pendingEditBooking.priceDetails)
+    : null;
+  const editBookingTitle = pendingEditBooking
+    ? pendingEditBooking.driverId
+      ? 'Edit allocated ride'
+      : 'Edit ride'
+    : '';
 
   const applyLiveBookingsResponse = useCallback((data: { bookings?: LiveBookingResponse[] }) => {
     const bookings: LiveBooking[] = (data.bookings || []).map((item: LiveBookingResponse) => ({
@@ -572,6 +584,62 @@ const AdminDashboardPage: React.FC = () => {
       cleanupFns = [];
     };
   }, [pendingEditBooking, editDropOffs.length]);
+
+  useEffect(() => {
+    if (!pendingEditBooking?.journeyId) return;
+
+    const pickup = editPickup.trim();
+    const dropOffs = editDropOffs.map((stop) => stop.trim()).filter(Boolean);
+    if (!pickup || !dropOffs.length || !editDate || !editTime) {
+      setEditPreviewFare(null);
+      setEditPreviewDifference(null);
+      setEditPreviewError(null);
+      setEditPreviewLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setEditPreviewLoading(true);
+      setEditPreviewError(null);
+      try {
+        const res = await fetch('/api/admin/rides/preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            rideId: pendingEditBooking.journeyId,
+            pickup,
+            dropOffs,
+            serviceType: 'Transfer',
+            vehicleTypeId: pendingEditBooking.vehicleTypeId ?? null,
+            journeyDate: new Date(`${editDate}T${editTime}`).toISOString(),
+            journeyTime: editTime,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error || 'Failed to preview ride');
+        }
+        setEditPreviewFare(Number(data?.newFare ?? 0));
+        setEditPreviewDifference(Number(data?.difference ?? 0));
+      } catch (err: any) {
+        if (controller.signal.aborted) return;
+        setEditPreviewFare(null);
+        setEditPreviewDifference(null);
+        setEditPreviewError(err?.message || 'Failed to preview ride');
+      } finally {
+        if (!controller.signal.aborted) {
+          setEditPreviewLoading(false);
+        }
+      }
+    }, 450);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [pendingEditBooking, editPickup, editDropOffs, editDate, editTime]);
 
   const handleBookedByChange = async (booking: LiveBooking, staffIdValue: string) => {
     const previous = bookedBySelection[booking.id] || '';
@@ -976,6 +1044,10 @@ const AdminDashboardPage: React.FC = () => {
     setEditTime(dt.time);
     setEditReason('admin_route_update');
     setEditNote('');
+    setEditPreviewFare(booking.currentEstimate ?? parseBookingPriceAmount(booking.priceDetails));
+    setEditPreviewDifference(null);
+    setEditPreviewError(null);
+    setEditPreviewLoading(false);
   };
 
   const closeEditBookingModal = () => {
@@ -986,6 +1058,10 @@ const AdminDashboardPage: React.FC = () => {
     setEditTime('');
     setEditReason('admin_route_update');
     setEditNote('');
+    setEditPreviewFare(null);
+    setEditPreviewDifference(null);
+    setEditPreviewError(null);
+    setEditPreviewLoading(false);
   };
 
   const updateEditDropOff = (index: number, value: string) => {
@@ -1026,13 +1102,13 @@ const AdminDashboardPage: React.FC = () => {
           rideId: pendingEditBooking.journeyId,
           pickup,
           dropOffs,
-            reason: editReason.trim() || 'admin_route_update',
-            note: editNote.trim() || null,
-            vehicleTypeId: pendingEditBooking.vehicleTypeId ?? null,
-            serviceType: 'Transfer',
-            journeyDate: nextJourneyDate.toISOString(),
-          }),
-        });
+          reason: editReason.trim() || 'admin_route_update',
+          note: editNote.trim() || null,
+          vehicleTypeId: pendingEditBooking.vehicleTypeId ?? null,
+          serviceType: 'Transfer',
+          journeyDate: nextJourneyDate.toISOString(),
+        }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data?.error || 'Failed to update ride');
@@ -1170,6 +1246,13 @@ const AdminDashboardPage: React.FC = () => {
                                     : 'Cancel Job'}
                                 </button>
                               ) : null}
+                              <button
+                                type="button"
+                                onClick={() => openEditBookingModal(booking)}
+                                className="rounded-full border border-amber-400 bg-amber-400 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-black transition hover:bg-amber-300"
+                              >
+                                Edit
+                              </button>
                               {bookingCreatedAt ? (
                                 <span className="inline-flex h-6 items-center rounded-full border border-white/25 px-3.5 text-xs font-normal text-gray-300">
                                   {bookingCreatedAt}
@@ -1787,11 +1870,50 @@ const AdminDashboardPage: React.FC = () => {
       {pendingEditBooking && (
         <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="w-full max-w-2xl rounded-2xl border border-white/10 bg-gray-900/90 p-6 shadow-2xl">
-            <p className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-amber-300">Edit allocated ride</p>
+            <p className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-amber-300">{editBookingTitle}</p>
             <p className="mb-6 text-lg text-white">
               Update route and stops for {pendingEditBooking.id}. Fare will be recalculated and the authorization hold will be checked against the new estimate.
             </p>
+            <div className="mb-6 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Current amount</p>
+                  <p className="mt-1 text-2xl font-semibold text-white">
+                    {editBookingCurrentFare !== null ? formatCurrencyValue(editBookingCurrentFare) : 'Unavailable'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Live preview</p>
+                  <p className="mt-1 text-2xl font-semibold text-white">
+                    {editPreviewLoading
+                      ? 'Recalculating...'
+                      : editPreviewFare !== null
+                        ? formatCurrencyValue(editPreviewFare)
+                        : 'Unavailable'}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-amber-100/80">
+                {editPreviewDifference !== null && Number.isFinite(editPreviewDifference) ? (
+                  <span>
+                    Change:{' '}
+                    <span className={editPreviewDifference > 0 ? 'text-red-200' : 'text-emerald-200'}>
+                      {editPreviewDifference > 0 ? '+' : ''}
+                      {formatCurrencyValue(Math.abs(editPreviewDifference))}
+                    </span>
+                  </span>
+                ) : null}
+                {editPreviewError ? <span className="text-red-200">{editPreviewError}</span> : null}
+                {!editPreviewLoading && !editPreviewError ? (
+                  <span>This is the amount that will be checked against the authorization hold on save.</span>
+                ) : null}
+              </div>
+            </div>
             <div className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Route</p>
+                <p className="text-[11px] text-gray-400">Pickup and stops are entered one after the other, top to bottom.</p>
+              </div>
               <label className="block">
                 <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">Pickup</span>
                 <input
