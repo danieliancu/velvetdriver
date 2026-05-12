@@ -2,12 +2,12 @@ import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
 import { consumeClientCredit, getClientCreditBalance } from '@/lib/client-credit';
-import { persistBookingAuthorization } from '@/lib/ride-payments';
+import { persistBookingAuthorization, persistFixedPayNowPayment, persistFlexibleSetup } from '@/lib/ride-payments';
 import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 import { buildJourneyLocationLines } from '@/lib/journey-locations';
 
 const pool = getDbPool();
-const ADMIN_BOOKING_NOTIFICATION_EMAILS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
+const ADMIN_BOOKING_NOTIFICATION_EMAILS = ['roxy.viulet@gmail.com', 'daniiancu1978@gmail.com'];
 
 const escapeHtml = (value: string) =>
   value
@@ -120,6 +120,10 @@ export async function POST(request: Request) {
     const passengerPhone = String(body.passengerPhone ?? '').trim();
     const paymentMethod = String(body.paymentMethod ?? '').trim();
     const paymentIntentId = String(body.paymentIntentId ?? '').trim();
+    const setupIntentId = String(body.setupIntentId ?? '').trim();
+    const paymentFlow = String(body.paymentFlow ?? '').trim();
+    const normalizedPaymentFlow =
+      paymentFlow === 'fixed_pay_now' || paymentFlow === 'flexible_after_journey' ? paymentFlow : '';
     const totalFare = Math.max(0, Number(body.totalFare ?? 0));
     const requestedAppliedCredit = Math.max(0, Number(body.appliedCreditAmount ?? 0));
     if (!pickup || !dropOffs.length || !date || !time || !passengerName || !passengerEmail || !passengerPhone) {
@@ -144,6 +148,12 @@ export async function POST(request: Request) {
       appliedCreditAmount = Math.min(totalFare, availableCredit, requestedAppliedCredit);
     }
     const amountDueNow = Math.max(0, Math.round((totalFare - appliedCreditAmount) * 100) / 100);
+    if (normalizedPaymentFlow === 'fixed_pay_now' && amountDueNow > 0 && !paymentIntentId) {
+      return NextResponse.json({ error: 'Missing completed payment intent' }, { status: 400 });
+    }
+    if (normalizedPaymentFlow === 'flexible_after_journey' && amountDueNow > 0 && !setupIntentId) {
+      return NextResponse.json({ error: 'Missing completed card setup' }, { status: 400 });
+    }
     if (paymentMethod.toLowerCase() === 'card authorization' && amountDueNow > 0 && !paymentIntentId) {
       return NextResponse.json({ error: 'Missing authorized payment intent' }, { status: 400 });
     }
@@ -159,11 +169,17 @@ export async function POST(request: Request) {
       appliedCreditAmount,
       amountDueNow,
       paymentStatus:
-        paymentMethod.toLowerCase() === 'card authorization'
+        normalizedPaymentFlow === 'fixed_pay_now'
+          ? 'captured'
+          : normalizedPaymentFlow === 'flexible_after_journey'
+            ? 'card_saved'
+        : paymentMethod.toLowerCase() === 'card authorization'
           ? 'authorized'
           : paymentMethod.toLowerCase() === 'credit'
             ? 'captured'
             : 'authorization_pending',
+      paymentFlow: normalizedPaymentFlow || (paymentMethod.toLowerCase() === 'card authorization' ? 'legacy_authorization' : 'manual'),
+      setupIntentId: setupIntentId || undefined,
     };
 
     await conn.beginTransaction();
@@ -180,8 +196,16 @@ export async function POST(request: Request) {
         pickup,
         destination,
         String(body.serviceType ?? 'Transfer'),
-        paymentMethod.toLowerCase() === 'card authorization' ? 'payment_authorized' : 'booked',
-        paymentMethod.toLowerCase() === 'card authorization'
+        normalizedPaymentFlow === 'fixed_pay_now'
+          ? 'payment_captured'
+          : normalizedPaymentFlow === 'flexible_after_journey'
+            ? 'payment_pending'
+            : paymentMethod.toLowerCase() === 'card authorization' ? 'payment_authorized' : 'booked',
+        normalizedPaymentFlow === 'fixed_pay_now'
+          ? 'captured'
+          : normalizedPaymentFlow === 'flexible_after_journey'
+            ? 'card_saved'
+        : paymentMethod.toLowerCase() === 'card authorization'
           ? 'authorized'
           : paymentMethod.toLowerCase() === 'credit'
             ? 'captured'
@@ -208,7 +232,11 @@ export async function POST(request: Request) {
       });
     }
 
-    if (paymentMethod.toLowerCase() === 'card authorization' && amountDueNow > 0) {
+    if (normalizedPaymentFlow === 'fixed_pay_now' && amountDueNow > 0) {
+      await persistFixedPayNowPayment(conn, { rideId, paymentIntentId, amount: amountDueNow });
+    } else if (normalizedPaymentFlow === 'flexible_after_journey' && amountDueNow > 0) {
+      await persistFlexibleSetup(conn, { rideId, setupIntentId, estimatedAmount: amountDueNow });
+    } else if (paymentMethod.toLowerCase() === 'card authorization' && amountDueNow > 0) {
       await persistBookingAuthorization(conn, { rideId, paymentIntentId, estimatedAmount: amountDueNow });
     } else if (paymentMethod.toLowerCase() === 'credit') {
       await conn.execute(

@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useRef } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 
 type NavItem = {
@@ -36,9 +36,13 @@ const Logo = () => (
   <img src="/assets/logo.png" alt="Velvet Drivers Logo" className="w-[220px] h-auto" />
 );
 
+const NAV_SCROLL_STORAGE_KEY = 'admin-nav-scroll';
+
 const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCount, notificationsBadgeCount }) => {
   const { logout } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  const navRef = useRef<HTMLElement | null>(null);
   const defaultLiveBadgeCount = 2; // keep visible when no live count is passed from page
   const computedLiveBadge = liveBadgeCount ?? defaultLiveBadgeCount;
   const computedNotificationsBadge = notificationsBadgeCount ?? 0;
@@ -128,6 +132,34 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
     router.push('/');
   };
 
+  const handleNavClick = (to: string) => {
+    if (to === pathname) return;
+
+    const left = navRef.current?.scrollLeft ?? 0;
+    sessionStorage.setItem(NAV_SCROLL_STORAGE_KEY, JSON.stringify({ left, to }));
+    router.push(to);
+  };
+
+  useEffect(() => {
+    const nav = navRef.current;
+    const saved = sessionStorage.getItem(NAV_SCROLL_STORAGE_KEY);
+
+    if (!nav || !saved) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(saved) as { left?: number; to?: string };
+      if (parsed.to === pathname && typeof parsed.left === 'number') {
+        nav.scrollLeft = parsed.left;
+      }
+    } catch {
+      // Ignore invalid session storage data and fall back to the default scroll position.
+    } finally {
+      sessionStorage.removeItem(NAV_SCROLL_STORAGE_KEY);
+    }
+  }, [pathname]);
+
   return (
     <div className="relative overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-b from-black via-[#2d0303] to-black">
       <div className="border-b border-gray-900/80 px-6 py-8" style={{ display:"none" }}>
@@ -150,7 +182,7 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
               Logout
             </button>
           </div>
-          <nav className="mt-6 flex items-center space-x-2 overflow-x-auto pb-2">
+          <nav ref={navRef} className="mt-6 flex items-center space-x-2 overflow-x-auto pb-2">
             {navItems.map((item) => {
               const isActive = active === item.id;
               const baseClasses =
@@ -161,7 +193,7 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => router.push(item.to)}
+                  onClick={() => handleNavClick(item.to)}
                   className={`${baseClasses} ${isActive ? activeClasses : inactiveClasses}`}
                 >
                   {item.label}

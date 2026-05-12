@@ -31,6 +31,7 @@ export interface Journey {
   modifiedAt?: string | null;
   canModify?: boolean;
   canEditTime?: boolean;
+  paymentFlow?: string;
   price: number;
   flightNumber?: string;
   passengers?: number;

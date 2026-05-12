@@ -260,46 +260,49 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
         </div>
       ) : (
         <div className="space-y-6">
-          {groupedBookings.map(([date, entries]) => (
-            <div key={date} className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-5">
-              <button
-                type="button"
-                onClick={() => setCollapsedDates((prev) => ({ ...prev, [date]: !prev[date] }))}
-                className="flex w-full items-center justify-between text-left"
-                aria-expanded={!collapsedDates[date]}
-              >
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-gray-400">Date</p>
-                  <h2 className="text-xl font-semibold text-white">{formatDateHeading(date)}</h2>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-gray-400">
-                  <p>{entries.length} bookings</p>
-                  {collapsedDates[date] ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-                </div>
-              </button>
+          {groupedBookings.map(([date, entries]) => {
+            const isCollapsed = collapsedDates[date] ?? true;
 
-              {!collapsedDates[date] && (
-                <div className="space-y-4">
-                  {entries.map((booking) => {
-                    const driverInfo = booking.driverId ? drivers[booking.driverId] : null;
-                    const bookingCreated = formatDateTime(booking.createdAt);
-                    const bookingAccepted = formatDateTime(booking.updatedAt);
-                    const journeyDate = booking.date || formatDateOnly(booking.journeyDate);
-                    return (
-                      <div
-                        key={booking.id}
-                        className="rounded-2xl border border-white/10 bg-black/60 p-5 shadow-inner shadow-black/40"
-                      >
-                        <div className="flex flex-col gap-6 lg:flex-row">
-                          <div className="flex-1 space-y-4">
-                            <div className="space-y-1 text-sm text-gray-200">
-                              <p>
-                                <span className="font-semibold text-white">Booking #{booking.code}.</span>{' '}
-                                Date of booking : {bookingCreated || booking.createdAt || '-'}
-                                {bookingAccepted ? `. Accepted: ${bookingAccepted}` : ''}
-                              </p>
-                              <p>Booked and dispatched by: {booking.bookedBy}</p>
-                            </div>
+            return (
+              <div key={date} className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-5">
+                <button
+                  type="button"
+                  onClick={() => setCollapsedDates((prev) => ({ ...prev, [date]: !(prev[date] ?? true) }))}
+                  className="flex w-full items-center justify-between text-left"
+                  aria-expanded={!isCollapsed}
+                >
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-gray-400">Date</p>
+                    <h2 className="text-xl font-semibold text-white">{formatDateHeading(date)}</h2>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-gray-400">
+                    <p>{entries.length} bookings</p>
+                    {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+                  </div>
+                </button>
+
+                {!isCollapsed && (
+                  <div className="space-y-4">
+                    {entries.map((booking) => {
+                      const driverInfo = booking.driverId ? drivers[booking.driverId] : null;
+                      const bookingCreated = formatDateTime(booking.createdAt);
+                      const bookingAccepted = formatDateTime(booking.updatedAt);
+                      const journeyDate = booking.date || formatDateOnly(booking.journeyDate);
+                      return (
+                        <div
+                          key={booking.id}
+                          className="rounded-2xl border border-white/10 bg-black/60 p-5 shadow-inner shadow-black/40"
+                        >
+                          <div className="flex flex-col gap-6 lg:flex-row">
+                            <div className="flex-1 space-y-4">
+                              <div className="space-y-1 text-sm text-gray-200">
+                                <p>
+                                  <span className="font-semibold text-white">Booking #{booking.code}.</span>{' '}
+                                  Date of booking : {bookingCreated || booking.createdAt || '-'}
+                                  {bookingAccepted ? `. Accepted: ${bookingAccepted}` : ''}
+                                </p>
+                                <p>Booked and dispatched by: {booking.bookedBy}</p>
+                              </div>
 
                             <div className="space-y-1 text-sm text-gray-200">
                               <p>
@@ -350,7 +353,8 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

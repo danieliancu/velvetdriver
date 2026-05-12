@@ -107,6 +107,7 @@ export async function GET(request: Request) {
         modifiedAt: hasModifications ? lastModifiedAt!.toISOString() : null,
         canModify,
         canEditTime,
+        paymentFlow: String(payload?.paymentFlow || '').trim(),
         price: Number(row.price),
         flightNumber: String(payload?.flightNumber || '').trim(),
         passengers: Math.max(0, Number(payload?.passengers) || 0),

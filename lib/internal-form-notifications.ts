@@ -1,4 +1,4 @@
-const INTERNAL_FORM_NOTIFICATION_RECIPIENTS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
+const INTERNAL_FORM_NOTIFICATION_RECIPIENTS = ['roxy.viulet@gmail.com', 'daniiancu1978@gmail.com'];
 
 const escapeHtml = (value: string) =>
   value

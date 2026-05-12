@@ -1,0 +1,8 @@
+ALTER TABLE client_journeys
+  ADD COLUMN payment_flow VARCHAR(40) NULL AFTER payment_status,
+  ADD COLUMN setup_intent_id VARCHAR(64) NULL AFTER primary_payment_intent_id,
+  ADD KEY idx_client_journeys_payment_flow (payment_flow);
+
+ALTER TABLE ride_payments
+  MODIFY payment_role VARCHAR(60) NOT NULL,
+  MODIFY status VARCHAR(80) NOT NULL;

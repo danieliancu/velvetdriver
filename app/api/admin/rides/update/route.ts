@@ -6,7 +6,7 @@ import { loadRideForPayment, logRideChange, updateRideAuthorization } from '@/li
 import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 
 const pool = getDbPool();
-const ADMIN_BOOKING_MODIFY_EMAILS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
+const ADMIN_BOOKING_MODIFY_EMAILS = ['roxy.viulet@gmail.com', 'daniiancu1978@gmail.com'];
 const TIME_EDIT_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 const escapeHtml = (value: string) =>
@@ -269,6 +269,21 @@ export async function POST(request: Request) {
     );
     const existing = existingRows[0];
     if (!existing) throw new Error('Ride not found');
+    let bookingPayload: Record<string, any> = {};
+    if (existing.booking_payload) {
+      try {
+        bookingPayload =
+          typeof existing.booking_payload === 'string'
+            ? JSON.parse(existing.booking_payload)
+            : existing.booking_payload;
+      } catch {
+        bookingPayload = {};
+      }
+    }
+    if (String(bookingPayload.paymentFlow || '').toLowerCase() === 'fixed_pay_now') {
+      await conn.rollback();
+      return NextResponse.json({ error: 'Fixed Price bookings cannot have fare-changing edits.' }, { status: 409 });
+    }
 
     const pickup = String(body?.pickup ?? existing.pickup ?? '').trim();
     const dropOffs = Array.isArray(body?.dropOffs)
@@ -321,17 +336,6 @@ export async function POST(request: Request) {
       ]
     );
 
-    let bookingPayload: Record<string, any> = {};
-    if (existing.booking_payload) {
-      try {
-        bookingPayload =
-          typeof existing.booking_payload === 'string'
-            ? JSON.parse(existing.booking_payload)
-            : existing.booking_payload;
-      } catch {
-        bookingPayload = {};
-      }
-    }
     await conn.execute(
       `UPDATE client_journeys
           SET booking_payload = ?

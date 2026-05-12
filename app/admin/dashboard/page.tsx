@@ -40,10 +40,12 @@ type LiveBooking = {
   updatedAt?: string | null;
   priceDetails: string;
   paymentMethod?: string;
+  paymentFlow?: string;
   isPaid?: boolean;
   isRefundable?: boolean;
   canReleaseHold?: boolean;
-  paymentAction?: 'refund' | 'cancel_hold' | null;
+  canCancelNoCharge?: boolean;
+  paymentAction?: 'refund' | 'cancel_hold' | 'cancel_no_charge' | null;
   bookedBy: string;
   bookedByStaffId?: number | null;
   drivers: string[];
@@ -85,10 +87,12 @@ type LiveBookingResponse = {
   updatedAt?: string | null;
   priceDetails: string;
   paymentMethod?: string;
+  paymentFlow?: string;
   isPaid?: boolean;
   isRefundable?: boolean;
   canReleaseHold?: boolean;
-  paymentAction?: 'refund' | 'cancel_hold' | null;
+  canCancelNoCharge?: boolean;
+  paymentAction?: 'refund' | 'cancel_hold' | 'cancel_no_charge' | null;
   bookedBy: string;
   bookedByStaffId?: number | null;
   vehicle?: string;
@@ -344,6 +348,8 @@ const AdminDashboardPage: React.FC = () => {
   const [vehicleLabelById, setVehicleLabelById] = useState<Record<number, string>>({});
   const [cancelAllocationBusy, setCancelAllocationBusy] = useState<Record<string, boolean>>({});
   const [completeAllocationBusy, setCompleteAllocationBusy] = useState<Record<string, boolean>>({});
+  const [pendingCompleteBooking, setPendingCompleteBooking] = useState<LiveBooking | null>(null);
+  const [completeFinalFare, setCompleteFinalFare] = useState('');
   const [refundBusy, setRefundBusy] = useState<Record<string, boolean>>({});
   const [pendingRefundBooking, setPendingRefundBooking] = useState<LiveBooking | null>(null);
   const [pendingEditBooking, setPendingEditBooking] = useState<LiveBooking | null>(null);
@@ -369,6 +375,8 @@ const AdminDashboardPage: React.FC = () => {
       ? 'Edit allocated ride'
       : 'Edit ride'
     : '';
+  const pendingCompleteFlow = String(pendingCompleteBooking?.paymentFlow || '').toLowerCase();
+  const pendingCompleteIsFlexible = pendingCompleteFlow === 'flexible_after_journey';
 
   const applyLiveBookingsResponse = useCallback((data: { bookings?: LiveBookingResponse[] }) => {
     const bookings: LiveBooking[] = (data.bookings || []).map((item: LiveBookingResponse) => ({
@@ -388,9 +396,11 @@ const AdminDashboardPage: React.FC = () => {
       updatedAt: item.updatedAt ?? null,
       priceDetails: item.priceDetails,
       paymentMethod: item.paymentMethod || '',
+      paymentFlow: item.paymentFlow || '',
       isPaid: Boolean(item.isPaid),
       isRefundable: Boolean(item.isRefundable),
       canReleaseHold: Boolean(item.canReleaseHold),
+      canCancelNoCharge: Boolean(item.canCancelNoCharge),
       paymentAction: item.paymentAction || null,
       bookedBy: item.bookedBy,
       bookedByStaffId: item.bookedByStaffId ?? null,
@@ -991,17 +1001,33 @@ const AdminDashboardPage: React.FC = () => {
     setPendingCancelAllocation(booking);
   };
 
-  const handleCompleteAllocation = async (booking: LiveBooking) => {
+  const requestCompleteAllocation = (booking: LiveBooking) => {
     if (!booking.journeyId) return;
-    const confirmed = window.confirm('Mark this job as completed?');
-    if (!confirmed) return;
+    const defaultFinalFare = booking.currentEstimate ?? parseBookingPriceAmount(booking.priceDetails) ?? 0;
+    setPendingCompleteBooking(booking);
+    setCompleteFinalFare(defaultFinalFare.toFixed(2));
+  };
+
+  const closeCompleteModal = () => {
+    setPendingCompleteBooking(null);
+    setCompleteFinalFare('');
+  };
+
+  const confirmCompleteAllocation = async () => {
+    const booking = pendingCompleteBooking;
+    if (!booking?.journeyId) return;
+    const finalFare = Number(completeFinalFare);
+    if (!Number.isFinite(finalFare) || finalFare < 0) {
+      setAllocationWarning('Enter a valid final fare.');
+      return;
+    }
 
     setCompleteAllocationBusy((prev) => ({ ...prev, [booking.id]: true }));
     try {
       const res = await fetch('/api/admin/complete-booking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ journeyId: booking.journeyId }),
+        body: JSON.stringify({ journeyId: booking.journeyId, finalFare }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1009,9 +1035,14 @@ const AdminDashboardPage: React.FC = () => {
       }
 
       setLiveBookings((prev) => prev.filter((entry) => entry.id !== booking.id));
+      closeCompleteModal();
       if (data?.warning) {
         setAllocationWarning(String(data.warning));
         setAllocationSuccess('Job marked as completed.');
+      } else if (data?.payment?.strategy === 'flexible_final_charge_succeeded') {
+        setAllocationSuccess('Flexible fare charged and job marked as completed.');
+      } else if (data?.payment?.strategy === 'captured') {
+        setAllocationSuccess('Card hold captured and job marked as completed.');
       } else {
         setAllocationSuccess('Job marked as completed and statement generated.');
       }
@@ -1034,6 +1065,10 @@ const AdminDashboardPage: React.FC = () => {
   };
 
   const openEditBookingModal = (booking: LiveBooking) => {
+    if (String(booking.paymentFlow || '').toLowerCase() === 'fixed_pay_now') {
+      setAllocationWarning('Fixed Price bookings cannot have fare-changing edits after booking.');
+      return;
+    }
     const dt = toDateTimeInputs(booking.journeyDate);
     setPendingEditBooking(booking);
     setEditPickup(booking.pickup || '');
@@ -1232,7 +1267,7 @@ const AdminDashboardPage: React.FC = () => {
                           <div className="flex-1 space-y-3">
                             <p className="text-sm tracking-wide text-white flex items-center gap-3 flex-wrap">
                               <span className="inline-flex h-6 items-center font-semibold">{booking.id}</span>
-                              {booking.isRefundable || booking.canReleaseHold ? (
+                              {booking.isRefundable || booking.canReleaseHold || booking.canCancelNoCharge ? (
                                 <button
                                   type="button"
                                   onClick={() => requestRefund(booking)}
@@ -1240,7 +1275,7 @@ const AdminDashboardPage: React.FC = () => {
                                   className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   {refundBusy[booking.id]
-                                    ? booking.paymentAction === 'cancel_hold'
+                                    ? booking.paymentAction === 'cancel_hold' || booking.paymentAction === 'cancel_no_charge'
                                       ? 'Cancelling...'
                                       : 'Refunding...'
                                     : 'Cancel Job'}
@@ -1249,7 +1284,13 @@ const AdminDashboardPage: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => openEditBookingModal(booking)}
-                                className="rounded-full border border-amber-400 bg-amber-400 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-black transition hover:bg-amber-300"
+                                disabled={String(booking.paymentFlow || '').toLowerCase() === 'fixed_pay_now'}
+                                className="rounded-full border border-amber-400 bg-amber-400 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-black transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+                                title={
+                                  String(booking.paymentFlow || '').toLowerCase() === 'fixed_pay_now'
+                                    ? 'Fixed Price bookings cannot have fare-changing edits.'
+                                    : undefined
+                                }
                               >
                                 Edit
                               </button>
@@ -1589,7 +1630,7 @@ const AdminDashboardPage: React.FC = () => {
                                     {booking.date} {booking.time}
                                   </p>
                                 </div>
-                                {booking.isRefundable || booking.canReleaseHold ? (
+                                {booking.isRefundable || booking.canReleaseHold || booking.canCancelNoCharge ? (
                                   <button
                                     type="button"
                                     onClick={() => requestRefund(booking)}
@@ -1597,10 +1638,10 @@ const AdminDashboardPage: React.FC = () => {
                                     className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
                                   >
                                     {refundBusy[booking.id]
-                                      ? booking.paymentAction === 'cancel_hold'
+                                      ? booking.paymentAction === 'cancel_hold' || booking.paymentAction === 'cancel_no_charge'
                                         ? 'Releasing...'
                                         : 'Refunding...'
-                                      : booking.paymentAction === 'cancel_hold'
+                                      : booking.paymentAction === 'cancel_hold' || booking.paymentAction === 'cancel_no_charge'
                                         ? 'Cancel Job'
                                         : 'Refund'}
                                   </button>
@@ -1608,7 +1649,13 @@ const AdminDashboardPage: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => openEditBookingModal(booking)}
-                                  className="rounded-full border border-amber-400 bg-amber-400 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-black transition hover:bg-amber-300"
+                                  disabled={String(booking.paymentFlow || '').toLowerCase() === 'fixed_pay_now'}
+                                  className="rounded-full border border-amber-400 bg-amber-400 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-black transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+                                  title={
+                                    String(booking.paymentFlow || '').toLowerCase() === 'fixed_pay_now'
+                                      ? 'Fixed Price bookings cannot have fare-changing edits.'
+                                      : undefined
+                                  }
                                 >
                                   Edit
                                 </button>
@@ -1622,7 +1669,7 @@ const AdminDashboardPage: React.FC = () => {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => handleCompleteAllocation(booking)}
+                                  onClick={() => requestCompleteAllocation(booking)}
                                   disabled={completeAllocationBusy[booking.id]}
                                   className="rounded-full border border-emerald-400 bg-emerald-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
@@ -1651,7 +1698,7 @@ const AdminDashboardPage: React.FC = () => {
                                   Current Estimate: <span className="text-white">{formatCurrencyValue(booking.currentEstimate)}</span>
                                 </p>
                               ) : null}
-                              {booking.authorizedAmount !== null && booking.authorizedAmount !== undefined ? (
+                              {booking.authorizedAmount !== null && booking.authorizedAmount !== undefined && booking.authorizedAmount > 0 ? (
                                 <p className="text-sm text-gray-300">
                                   Authorized Hold:{' '}
                                   <span className="text-amber-300">{formatCurrencyValue(booking.authorizedAmount)}</span>
@@ -1660,9 +1707,13 @@ const AdminDashboardPage: React.FC = () => {
                               <p className="text-sm text-gray-300">
                                 Payment:{' '}
                                 <span className={HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase()) ? 'text-amber-300' : 'text-white'}>
-                                  {HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase())
-                                    ? 'Card on hold / pre-authorized'
-                                    : booking.paymentStatus || 'Unknown'}
+                                  {String(booking.paymentFlow || '').toLowerCase() === 'fixed_pay_now'
+                                    ? 'Fixed Price - paid'
+                                    : String(booking.paymentFlow || '').toLowerCase() === 'flexible_after_journey'
+                                      ? 'Flexible Fare - card saved'
+                                      : HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase())
+                                        ? 'Card on hold / pre-authorized'
+                                        : booking.paymentStatus || 'Unknown'}
                                 </span>
                               </p>
                               {booking.paymentFailureReason ? (
@@ -1826,6 +1877,52 @@ const AdminDashboardPage: React.FC = () => {
         </div>
       )}
 
+      {pendingCompleteBooking && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-gray-900/90 p-6 shadow-2xl">
+            <p className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-amber-300">Complete job</p>
+            <p className="mb-4 text-lg text-white">Confirm final fare for {pendingCompleteBooking.id}</p>
+            <label className="mb-4 block">
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">
+                Final fare
+              </span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={completeFinalFare}
+                onChange={(event) => setCompleteFinalFare(event.target.value)}
+                className="w-full rounded-xl border border-white/15 bg-black/70 px-3 py-2 text-sm text-gray-100"
+              />
+            </label>
+            <p className="mb-6 text-sm text-gray-300">
+              {pendingCompleteIsFlexible
+                ? 'This will charge the saved card off-session for the final fare, then mark the job as completed.'
+                : HOLD_PAYMENT_STATUSES.has(String(pendingCompleteBooking.paymentStatus || '').toLowerCase())
+                  ? 'This will capture the existing Stripe authorization hold, then mark the job as completed.'
+                  : 'This will mark the job as completed. No additional Stripe charge will be made.'}
+            </p>
+            <div className="flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeCompleteModal}
+                className="rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-gray-200 transition hover:border-white/40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmCompleteAllocation}
+                disabled={completeAllocationBusy[pendingCompleteBooking.id]}
+                className="rounded-full border border-emerald-400 bg-emerald-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {completeAllocationBusy[pendingCompleteBooking.id] ? 'Completing...' : 'Confirm completion'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pendingRefundBooking && (
         <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-gray-900/90 p-6 shadow-2xl">
@@ -1835,11 +1932,15 @@ const AdminDashboardPage: React.FC = () => {
             <p className="text-lg text-white mb-2">
               {pendingRefundBooking.paymentAction === 'cancel_hold'
                 ? `Release the Stripe authorization hold and cancel ${pendingRefundBooking.id}?`
+                : pendingRefundBooking.paymentAction === 'cancel_no_charge'
+                  ? `Cancel ${pendingRefundBooking.id} without charging the saved card?`
                 : `Confirm full refund and cancellation for ${pendingRefundBooking.id}?`}
             </p>
             <p className="text-sm text-gray-300 mb-6">
               {pendingRefundBooking.paymentAction === 'cancel_hold'
                 ? 'The authorized card hold will be released in Stripe, the client will receive a cancellation email, and the assigned driver will be notified.'
+                : pendingRefundBooking.paymentAction === 'cancel_no_charge'
+                  ? 'No Stripe payment has been taken yet. The booking will be cancelled and the saved card will not be charged.'
                 : 'The client will receive a refund email, the assigned driver will be notified, and the job will be removed from queue.'}
             </p>
             <div className="flex flex-wrap gap-3 justify-end">
@@ -1857,7 +1958,7 @@ const AdminDashboardPage: React.FC = () => {
                 className="rounded-full border border-red-400 bg-red-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {refundBusy[pendingRefundBooking.id]
-                  ? pendingRefundBooking.paymentAction === 'cancel_hold'
+                  ? pendingRefundBooking.paymentAction === 'cancel_hold' || pendingRefundBooking.paymentAction === 'cancel_no_charge'
                     ? 'Cancelling...'
                     : 'Refunding...'
                   : 'Yes, cancel job'}

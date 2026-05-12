@@ -1,6 +1,6 @@
 import mysql from 'mysql2/promise';
 
-const EXPIRY_NOTIFICATION_RECIPIENTS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
+const EXPIRY_NOTIFICATION_RECIPIENTS = ['roxy.viulet@gmail.com', 'daniiancu1978@gmail.com'];
 
 type ExpiringDocument = {
   driverId: number;

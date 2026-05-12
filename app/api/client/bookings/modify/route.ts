@@ -70,7 +70,7 @@ const detectDropAirportCodes = (dropOffs: string[]): AirportCode[] =>
     .map((stop) => detectAirportCodeFromText(stop))
     .filter((code): code is AirportCode => Boolean(code));
 
-const ADMIN_BOOKING_MODIFY_EMAILS = ['roxy.viulet@gmail.com', 'dani.iancu@yahoo.com'];
+const ADMIN_BOOKING_MODIFY_EMAILS = ['roxy.viulet@gmail.com', 'daniiancu1978@gmail.com'];
 
 const escapeHtml = (value: string) =>
   value
@@ -532,6 +532,14 @@ export async function POST(request: Request) {
         payload = {};
       }
     }
+    const paymentFlow = String(payload.paymentFlow || '').toLowerCase();
+    const isFlexibleFare = paymentFlow === 'flexible_after_journey';
+    if (paymentFlow === 'fixed_pay_now') {
+      return NextResponse.json(
+        { error: 'Fixed Price bookings cannot be changed after booking.' },
+        { status: 409 }
+      );
+    }
 
     const pricing = await loadPricing();
     const vehicle =
@@ -597,7 +605,7 @@ export async function POST(request: Request) {
     if (Number.isNaN(journeyDate.getTime())) {
       return NextResponse.json({ error: 'Invalid pickup time.' }, { status: 400 });
     }
-    if (difference > 0 && !AUTHORIZED_PAYMENT_STATUSES.has(paymentStatus)) {
+    if (difference > 0 && !isFlexibleFare && !AUTHORIZED_PAYMENT_STATUSES.has(paymentStatus)) {
       return NextResponse.json(
         { error: 'Additional payment is required before the booking can be updated.', requiresPayment: true, amountDue: difference },
         { status: 402 }
@@ -655,13 +663,22 @@ export async function POST(request: Request) {
       modificationHistory: [...history, historyEntry],
       modificationPayment:
         difference > 0
-          ? {
-              status: AUTHORIZED_PAYMENT_STATUSES.has(paymentStatus) ? 'authorized' : paymentStatus || 'pending',
-              amount: difference,
-              paymentIntentId: paymentIntentId || null,
-              paymentMethod: paymentMethod || 'Card authorization',
-              paidAt: nowIso,
-            }
+          ? isFlexibleFare
+            ? {
+                status: 'card_saved',
+                amount: difference,
+                paymentIntentId: null,
+                paymentMethod: 'Flexible Fare - Pay After Journey',
+                note: 'No charge taken now; final fare will be charged after journey.',
+                updatedAt: nowIso,
+              }
+            : {
+                status: AUTHORIZED_PAYMENT_STATUSES.has(paymentStatus) ? 'authorized' : paymentStatus || 'pending',
+                amount: difference,
+                paymentIntentId: paymentIntentId || null,
+                paymentMethod: paymentMethod || 'Card authorization',
+                paidAt: nowIso,
+              }
           : difference < 0
             ? { status: 'credit', amount: Math.abs(difference), note: 'Credit will be applied to your next booking.', createdAt: nowIso }
             : { status: 'none', amount: 0 },

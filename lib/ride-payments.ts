@@ -36,9 +36,38 @@ type RidePaymentRow = mysql.RowDataPacket & {
 };
 
 const ACTIVE_AUTH_STATUSES = ['authorized', 'authorization_updated', 'additional_authorization_created', 'partially_captured'];
+const CAPTURED_STATUSES = ['captured', 'partially_captured', 'extra_charge_succeeded', 'final_charge_succeeded'];
 const roundMoney = (value: number) => Math.round(value * 100) / 100;
 const toDateTime = (unixSeconds?: number | null) =>
   unixSeconds ? new Date(unixSeconds * 1000).toISOString().slice(0, 19).replace('T', ' ') : null;
+
+async function getClientJourneyColumns(conn: mysql.Pool | mysql.PoolConnection) {
+  const [rows] = await conn.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_NAME
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'client_journeys'`
+  );
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '')));
+}
+
+async function updateOptionalJourneyFields(
+  conn: mysql.Pool | mysql.PoolConnection,
+  rideId: number,
+  updates: Record<string, string | number | null>
+) {
+  const existingColumns = await getClientJourneyColumns(conn);
+  const entries = Object.entries(updates).filter(([column]) => existingColumns.has(column));
+  if (!entries.length) return;
+
+  await conn.execute(
+    `UPDATE client_journeys
+        SET ${entries.map(([column]) => `\`${column.replace(/`/g, '``')}\` = ?`).join(', ')}
+      WHERE id = ?
+      LIMIT 1`,
+    [...entries.map(([, value]) => value), rideId]
+  );
+}
 
 export async function loadRideForPayment(
   conn: mysql.Pool | mysql.PoolConnection,
@@ -163,6 +192,18 @@ async function findOrCreateStripeCustomer(input: { name?: string | null; email?:
   return customer.id;
 }
 
+const getIntentCustomerId = (intent: Stripe.PaymentIntent) =>
+  typeof intent.customer === 'string' ? intent.customer : intent.customer?.id || null;
+
+const getIntentPaymentMethodId = (intent: Stripe.PaymentIntent) =>
+  typeof intent.payment_method === 'string' ? intent.payment_method : intent.payment_method?.id || null;
+
+const getSetupCustomerId = (intent: Stripe.SetupIntent) =>
+  typeof intent.customer === 'string' ? intent.customer : intent.customer?.id || null;
+
+const getSetupPaymentMethodId = (intent: Stripe.SetupIntent) =>
+  typeof intent.payment_method === 'string' ? intent.payment_method : intent.payment_method?.id || null;
+
 async function writePaymentFromIntent(
   conn: mysql.Pool | mysql.PoolConnection,
   rideId: number,
@@ -218,7 +259,9 @@ async function writePaymentFromIntent(
       status === 'authorized' || status === 'authorization_updated' || status === 'additional_authorization_created'
         ? new Date().toISOString().slice(0, 19).replace('T', ' ')
         : null,
-      intent.status === 'succeeded' ? new Date().toISOString().slice(0, 19).replace('T', ' ') : null,
+      intent.status === 'succeeded' || CAPTURED_STATUSES.includes(status)
+        ? new Date().toISOString().slice(0, 19).replace('T', ' ')
+        : null,
       JSON.stringify(intent.metadata || {}),
     ]
   );
@@ -227,9 +270,9 @@ async function writePaymentFromIntent(
 async function recomputeRidePaymentSummary(conn: mysql.Pool | mysql.PoolConnection, rideId: number) {
   const [summaryRows] = await conn.query<mysql.RowDataPacket[]>(
     `SELECT
-        COALESCE(SUM(CASE WHEN status IN ('authorized', 'authorization_updated', 'additional_authorization_created', 'partially_captured', 'captured')
+        COALESCE(SUM(CASE WHEN status IN ('authorized', 'authorization_updated', 'additional_authorization_created', 'partially_captured', 'captured', 'final_charge_succeeded')
           THEN authorized_amount ELSE 0 END), 0) AS authorized_total,
-        COALESCE(SUM(CASE WHEN status IN ('captured', 'partially_captured', 'extra_charge_succeeded')
+        COALESCE(SUM(CASE WHEN status IN ('captured', 'partially_captured', 'extra_charge_succeeded', 'final_charge_succeeded')
           THEN captured_amount ELSE 0 END), 0) AS captured_total
        FROM ride_payments
       WHERE ride_id = ?`,
@@ -246,6 +289,84 @@ async function recomputeRidePaymentSummary(conn: mysql.Pool | mysql.PoolConnecti
     [authorizedTotal, capturedTotal, rideId]
   );
   return { authorizedTotal, capturedTotal };
+}
+
+export async function createFixedPayNowIntent(input: {
+  amount: number;
+  currency?: string;
+  passengerName?: string;
+  passengerEmail?: string;
+  pickup?: string;
+  dropOffs?: string[];
+  rideId?: number | null;
+  customerId?: string | null;
+}) {
+  const stripe = requireStripe();
+  const customerId = await findOrCreateStripeCustomer({
+    name: input.passengerName,
+    email: input.passengerEmail,
+    existingCustomerId: input.customerId,
+  });
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: toStripeAmount(input.amount),
+    currency: String(input.currency || 'gbp').toLowerCase(),
+    capture_method: 'automatic',
+    automatic_payment_methods: { enabled: true },
+    customer: customerId || undefined,
+    metadata: {
+      rideId: input.rideId ? String(input.rideId) : 'pending',
+      paymentFlow: 'fixed_pay_now',
+      pickup: String(input.pickup || ''),
+      dropOff: Array.isArray(input.dropOffs) ? String(input.dropOffs[input.dropOffs.length - 1] || '') : '',
+      passengerEmail: String(input.passengerEmail || ''),
+    },
+  });
+
+  return {
+    customerId,
+    clientSecret: paymentIntent.client_secret,
+    paymentIntentId: paymentIntent.id,
+    publishableKey: stripePublishableKey,
+  };
+}
+
+export async function createFlexibleSetupIntent(input: {
+  passengerName?: string;
+  passengerEmail?: string;
+  pickup?: string;
+  dropOffs?: string[];
+  rideId?: number | null;
+  customerId?: string | null;
+}) {
+  const stripe = requireStripe();
+  const customerId = await findOrCreateStripeCustomer({
+    name: input.passengerName,
+    email: input.passengerEmail,
+    existingCustomerId: input.customerId,
+  });
+  if (!customerId) {
+    throw new Error('Passenger email is required to save a card for later payment');
+  }
+
+  const setupIntent = await stripe.setupIntents.create({
+    customer: customerId,
+    usage: 'off_session',
+    automatic_payment_methods: { enabled: true },
+    metadata: {
+      rideId: input.rideId ? String(input.rideId) : 'pending',
+      paymentFlow: 'flexible_setup',
+      pickup: String(input.pickup || ''),
+      dropOff: Array.isArray(input.dropOffs) ? String(input.dropOffs[input.dropOffs.length - 1] || '') : '',
+      passengerEmail: String(input.passengerEmail || ''),
+    },
+  });
+
+  return {
+    customerId,
+    clientSecret: setupIntent.client_secret,
+    setupIntentId: setupIntent.id,
+    publishableKey: stripePublishableKey,
+  };
 }
 
 export async function createBookingAuthorization(input: {
@@ -337,6 +458,7 @@ export async function persistBookingAuthorization(
   );
 
   await updateBookingPayloadPayment(conn, input.rideId, {
+    paymentFlow: 'booking_authorization',
     paymentIntentId: intent.id,
     paymentStatus: 'authorized',
     paymentMethod: 'Card authorization',
@@ -344,6 +466,9 @@ export async function persistBookingAuthorization(
     paymentCurrency: String(intent.currency || 'gbp').toUpperCase(),
     stripeCustomerId,
     stripePaymentMethodId,
+  });
+  await updateOptionalJourneyFields(conn, input.rideId, {
+    payment_flow: 'booking_authorization',
   });
   await recomputeRidePaymentSummary(conn, input.rideId);
   await logPaymentEvent(conn, {
@@ -358,6 +483,149 @@ export async function persistBookingAuthorization(
     metadata: { ...intent.metadata, rideId: String(input.rideId), paymentFlow: 'booking_authorization' },
   });
   return intent;
+}
+
+export async function persistFixedPayNowPayment(
+  conn: mysql.Pool | mysql.PoolConnection,
+  input: {
+    rideId: number;
+    paymentIntentId: string;
+    amount: number;
+  }
+) {
+  const stripe = requireStripe();
+  const intent = await stripe.paymentIntents.retrieve(input.paymentIntentId);
+  if (intent.status !== 'succeeded') {
+    throw new Error('Payment has not been completed');
+  }
+
+  await writePaymentFromIntent(conn, input.rideId, 'fixed_pay_now', intent, 'captured');
+  const stripeCustomerId = getIntentCustomerId(intent);
+  const stripePaymentMethodId = getIntentPaymentMethodId(intent);
+  const paidAmount = fromStripeAmount(intent.amount_received || intent.amount);
+
+  await conn.execute(
+    `UPDATE client_journeys
+        SET payment_status = 'captured',
+            ride_status = 'payment_captured',
+            original_estimated_fare = COALESCE(original_estimated_fare, ?),
+            current_estimated_fare = ?,
+            originally_authorized_amount = 0,
+            latest_authorized_amount = 0,
+            captured_amount = ?,
+            stripe_customer_id = COALESCE(stripe_customer_id, ?),
+            stripe_payment_method_id = COALESCE(stripe_payment_method_id, ?),
+            primary_payment_intent_id = COALESCE(primary_payment_intent_id, ?),
+            captured_at = NOW()
+      WHERE id = ?
+      LIMIT 1`,
+    [
+      roundMoney(input.amount),
+      roundMoney(input.amount),
+      roundMoney(paidAmount),
+      stripeCustomerId,
+      stripePaymentMethodId,
+      intent.id,
+      input.rideId,
+    ]
+  );
+
+  await updateBookingPayloadPayment(conn, input.rideId, {
+    paymentFlow: 'fixed_pay_now',
+    paymentIntentId: intent.id,
+    paymentStatus: 'captured',
+    paymentMethod: 'Fixed Price - Pay Now',
+    paymentAmount: roundMoney(paidAmount),
+    paymentCurrency: String(intent.currency || 'gbp').toUpperCase(),
+    stripeCustomerId,
+    stripePaymentMethodId,
+  });
+  await updateOptionalJourneyFields(conn, input.rideId, {
+    payment_flow: 'fixed_pay_now',
+  });
+  await recomputeRidePaymentSummary(conn, input.rideId);
+  await logPaymentEvent(conn, {
+    rideId: input.rideId,
+    eventType: 'fixed_payment.persisted',
+    source: 'api',
+    status: 'captured',
+    message: `Fixed pay-now payment stored for ${intent.id}`,
+    payload: { paymentIntentId: intent.id, amount: paidAmount },
+  });
+  await stripe.paymentIntents.update(intent.id, {
+    metadata: { ...intent.metadata, rideId: String(input.rideId), paymentFlow: 'fixed_pay_now' },
+  });
+  return intent;
+}
+
+export async function persistFlexibleSetup(
+  conn: mysql.Pool | mysql.PoolConnection,
+  input: {
+    rideId: number;
+    setupIntentId: string;
+    estimatedAmount: number;
+  }
+) {
+  const stripe = requireStripe();
+  const setupIntent = await stripe.setupIntents.retrieve(input.setupIntentId);
+  if (setupIntent.status !== 'succeeded') {
+    throw new Error('Card setup has not been completed');
+  }
+
+  const stripeCustomerId = getSetupCustomerId(setupIntent);
+  const stripePaymentMethodId = getSetupPaymentMethodId(setupIntent);
+  if (!stripeCustomerId || !stripePaymentMethodId) {
+    throw new Error('Card setup did not return a reusable payment method');
+  }
+
+  await conn.execute(
+    `UPDATE client_journeys
+        SET payment_status = 'card_saved',
+            ride_status = 'payment_pending',
+            original_estimated_fare = COALESCE(original_estimated_fare, ?),
+            current_estimated_fare = ?,
+            originally_authorized_amount = 0,
+            latest_authorized_amount = 0,
+            captured_amount = 0,
+            stripe_customer_id = COALESCE(stripe_customer_id, ?),
+            stripe_payment_method_id = COALESCE(stripe_payment_method_id, ?)
+      WHERE id = ?
+      LIMIT 1`,
+    [
+      roundMoney(input.estimatedAmount),
+      roundMoney(input.estimatedAmount),
+      stripeCustomerId,
+      stripePaymentMethodId,
+      input.rideId,
+    ]
+  );
+  await updateOptionalJourneyFields(conn, input.rideId, {
+    payment_flow: 'flexible_after_journey',
+    setup_intent_id: setupIntent.id,
+  });
+
+  await updateBookingPayloadPayment(conn, input.rideId, {
+    paymentFlow: 'flexible_after_journey',
+    setupIntentId: setupIntent.id,
+    paymentStatus: 'card_saved',
+    paymentMethod: 'Flexible Fare - Pay After Journey',
+    paymentAmount: 0,
+    paymentCurrency: 'GBP',
+    stripeCustomerId,
+    stripePaymentMethodId,
+  });
+  await logPaymentEvent(conn, {
+    rideId: input.rideId,
+    eventType: 'flexible_setup.persisted',
+    source: 'api',
+    status: 'card_saved',
+    message: `Flexible fare card setup stored for ${setupIntent.id}`,
+    payload: { setupIntentId: setupIntent.id, estimatedAmount: roundMoney(input.estimatedAmount) },
+  });
+  await stripe.setupIntents.update(setupIntent.id, {
+    metadata: { ...setupIntent.metadata, rideId: String(input.rideId), paymentFlow: 'flexible_setup' },
+  });
+  return setupIntent;
 }
 
 async function activeAuthorizations(
@@ -386,8 +654,51 @@ export async function updateRideAuthorization(
     paymentIntentId?: string | null;
   }
 ) {
-  const stripe = requireStripe();
   const ride = await loadRideForPayment(conn, input.rideId);
+  let bookingPayload: Record<string, any> = {};
+  if (ride.booking_payload) {
+    try {
+      bookingPayload =
+        typeof ride.booking_payload === 'string'
+          ? JSON.parse(ride.booking_payload)
+          : (ride.booking_payload as Record<string, any>);
+    } catch {
+      bookingPayload = {};
+    }
+  }
+  const paymentFlow = String(bookingPayload.paymentFlow || '').toLowerCase();
+  if (paymentFlow === 'fixed_pay_now') {
+    throw new Error('Fixed Price bookings cannot have fare-changing edits.');
+  }
+  if (paymentFlow === 'flexible_after_journey') {
+    await conn.execute(
+      `UPDATE client_journeys
+          SET current_estimated_fare = ?,
+              payment_status = CASE
+                WHEN payment_status IN ('card_saved', 'payment_pending') THEN payment_status
+                ELSE 'card_saved'
+              END,
+              ride_status = 'fare_updated',
+              payment_failure_reason = NULL
+        WHERE id = ?
+        LIMIT 1`,
+      [roundMoney(input.newEstimatedAmount), input.rideId]
+    );
+    await updateBookingPayloadPayment(conn, input.rideId, {
+      paymentStatus: 'card_saved',
+      currentEstimatedFare: roundMoney(input.newEstimatedAmount),
+    });
+    await logPaymentEvent(conn, {
+      rideId: input.rideId,
+      eventType: 'flexible_fare.updated',
+      source: input.source,
+      status: 'card_saved',
+      message: 'Flexible fare estimate updated; final charge will happen after journey',
+      payload: { newEstimatedAmount: roundMoney(input.newEstimatedAmount) },
+    });
+    return { ok: true, strategy: 'flexible_estimate_updated', requiresAction: false };
+  }
+  const stripe = requireStripe();
   const authorizations = await activeAuthorizations(conn, input.rideId);
   const currentAuthorized = roundMoney(
     authorizations.reduce((sum, row) => sum + Number(row.capturable_amount ?? row.authorized_amount ?? 0), 0)
@@ -675,6 +986,145 @@ export async function captureRidePayment(
   return { ok: true, capturedTotal, remainingToCapture: 0, strategy: 'captured' };
 }
 
+export async function chargeFlexibleRidePayment(
+  conn: mysql.Pool | mysql.PoolConnection,
+  input: { rideId: number; finalFare: number }
+) {
+  const stripe = requireStripe();
+  const ride = await loadRideForPayment(conn, input.rideId);
+  const finalFare = roundMoney(input.finalFare);
+  if (finalFare < 0) {
+    throw new Error('Invalid final fare');
+  }
+  if (finalFare === 0) {
+    await conn.execute(
+      `UPDATE client_journeys
+          SET final_fare = 0,
+              fare_finalized_at = NOW(),
+              captured_amount = 0,
+              captured_at = NOW(),
+              payment_status = 'final_charge_succeeded',
+              ride_status = 'payment_captured',
+              status = 'Completed',
+              payment_failure_reason = NULL
+        WHERE id = ?
+        LIMIT 1`,
+      [input.rideId]
+    );
+    await updateBookingPayloadPayment(conn, input.rideId, {
+      paymentFlow: 'flexible_after_journey',
+      paymentStatus: 'final_charge_succeeded',
+      finalFare: 0,
+      capturedAmount: 0,
+      paymentAmount: 0,
+      paymentCurrency: 'GBP',
+    });
+    await updateOptionalJourneyFields(conn, input.rideId, {
+      payment_flow: 'flexible_after_journey',
+    });
+    await logPaymentEvent(conn, {
+      rideId: input.rideId,
+      eventType: 'flexible_final_charge.zero_amount',
+      source: 'api',
+      status: 'final_charge_succeeded',
+      message: 'Flexible fare completed with zero final fare',
+      payload: { finalFare: 0 },
+    });
+    return { ok: true, capturedTotal: 0, remainingToCapture: 0, strategy: 'flexible_final_charge_succeeded' };
+  }
+  if (!ride.stripe_customer_id || !ride.stripe_payment_method_id) {
+    await conn.execute(
+      `UPDATE client_journeys
+          SET final_fare = ?,
+              fare_finalized_at = NOW(),
+              payment_status = 'final_charge_failed',
+              ride_status = 'payment_issue',
+              payment_failure_reason = 'Missing saved Stripe payment method for final flexible fare'
+        WHERE id = ?
+        LIMIT 1`,
+      [finalFare, input.rideId]
+    );
+    return { ok: false, capturedTotal: 0, remainingToCapture: finalFare, strategy: 'missing_saved_payment_method' };
+  }
+
+  try {
+    const finalCharge = await stripe.paymentIntents.create({
+      amount: toStripeAmount(finalFare),
+      currency: 'gbp',
+      customer: ride.stripe_customer_id,
+      payment_method: ride.stripe_payment_method_id,
+      confirm: true,
+      off_session: true,
+      metadata: {
+        rideId: String(input.rideId),
+        paymentFlow: 'flexible_final_charge',
+      },
+    });
+
+    if (finalCharge.status !== 'succeeded') {
+      throw new Error(`Final charge was not completed (${finalCharge.status})`);
+    }
+
+    await writePaymentFromIntent(conn, input.rideId, 'flexible_final_charge', finalCharge, 'final_charge_succeeded');
+    await recomputeRidePaymentSummary(conn, input.rideId);
+    await conn.execute(
+      `UPDATE client_journeys
+          SET final_fare = ?,
+              fare_finalized_at = NOW(),
+              captured_amount = ?,
+              captured_at = NOW(),
+              payment_status = 'final_charge_succeeded',
+              ride_status = 'payment_captured',
+              status = 'Completed',
+              primary_payment_intent_id = ?,
+              payment_failure_reason = NULL
+        WHERE id = ?
+        LIMIT 1`,
+      [finalFare, finalFare, finalCharge.id, input.rideId]
+    );
+    await updateBookingPayloadPayment(conn, input.rideId, {
+      paymentFlow: 'flexible_after_journey',
+      paymentIntentId: finalCharge.id,
+      finalPaymentIntentId: finalCharge.id,
+      paymentStatus: 'final_charge_succeeded',
+      finalFare,
+      capturedAmount: finalFare,
+      paymentAmount: finalFare,
+      paymentCurrency: String(finalCharge.currency || 'gbp').toUpperCase(),
+    });
+    await updateOptionalJourneyFields(conn, input.rideId, {
+      payment_flow: 'flexible_after_journey',
+    });
+    await logPaymentEvent(conn, {
+      rideId: input.rideId,
+      eventType: 'flexible_final_charge.succeeded',
+      source: 'api',
+      status: 'final_charge_succeeded',
+      message: `Flexible fare final charge succeeded for ${finalCharge.id}`,
+      payload: { paymentIntentId: finalCharge.id, finalFare },
+    });
+    return { ok: true, capturedTotal: finalFare, remainingToCapture: 0, strategy: 'flexible_final_charge_succeeded' };
+  } catch (error: any) {
+    await conn.execute(
+      `UPDATE client_journeys
+          SET final_fare = ?,
+              fare_finalized_at = NOW(),
+              payment_status = 'final_charge_failed',
+              ride_status = 'payment_issue',
+              payment_failure_reason = ?
+        WHERE id = ?
+        LIMIT 1`,
+      [finalFare, error?.message || 'Flexible final charge failed', input.rideId]
+    );
+    await updateBookingPayloadPayment(conn, input.rideId, {
+      paymentStatus: 'final_charge_failed',
+      finalFare,
+      paymentFailureReason: error?.message || 'Flexible final charge failed',
+    });
+    return { ok: false, capturedTotal: 0, remainingToCapture: finalFare, strategy: 'flexible_final_charge_failed' };
+  }
+}
+
 export async function syncPaymentIntentToDb(
   conn: mysql.Pool | mysql.PoolConnection,
   paymentIntent: Stripe.PaymentIntent,
@@ -682,15 +1132,26 @@ export async function syncPaymentIntentToDb(
 ) {
   const rideId = Number(paymentIntent.metadata?.rideId || 0);
   if (!rideId) return;
-  const role = String(paymentIntent.metadata?.paymentFlow || '').includes('additional')
+  const paymentFlow = String(paymentIntent.metadata?.paymentFlow || '');
+  const role = paymentFlow.includes('additional')
     ? 'additional_authorization'
-    : String(paymentIntent.metadata?.paymentFlow || '').includes('extra_charge')
+    : paymentFlow.includes('flexible_final_charge')
+      ? 'flexible_final_charge'
+    : paymentFlow.includes('extra_charge')
       ? 'extra_charge'
+      : paymentFlow.includes('fixed_pay_now')
+        ? 'fixed_pay_now'
       : 'authorization';
 
   let status = 'authorization_pending';
   if (paymentIntent.status === 'requires_capture') status = role === 'authorization' ? 'authorized' : 'additional_authorization_created';
-  if (paymentIntent.status === 'succeeded') status = role === 'extra_charge' ? 'extra_charge_succeeded' : 'captured';
+  if (paymentIntent.status === 'succeeded') {
+    status = role === 'extra_charge'
+      ? 'extra_charge_succeeded'
+      : role === 'flexible_final_charge'
+        ? 'final_charge_succeeded'
+        : 'captured';
+  }
   if (paymentIntent.status === 'canceled') status = paymentIntent.cancellation_reason === 'abandoned' ? 'expired' : 'canceled';
   if (paymentIntent.status === 'requires_payment_method') status = 'failed';
 
@@ -702,7 +1163,7 @@ export async function syncPaymentIntentToDb(
             stripe_payment_method_id = COALESCE(stripe_payment_method_id, ?),
             primary_payment_intent_id = COALESCE(primary_payment_intent_id, ?),
             payment_status = CASE
-              WHEN ? IN ('authorized', 'additional_authorization_created', 'captured', 'extra_charge_succeeded', 'failed', 'expired', 'canceled')
+              WHEN ? IN ('authorized', 'additional_authorization_created', 'captured', 'extra_charge_succeeded', 'final_charge_succeeded', 'failed', 'expired', 'canceled')
                 THEN ?
               ELSE payment_status
             END,

@@ -7,10 +7,10 @@ type Props = {
   amount: number;
   clientSecret: string;
   disabled: boolean;
-  onSuccess: (paymentIntent: { id: string; status: string }) => void;
+  onSuccess: (intent: { id: string; status: string }) => void;
   onError: (message: string) => void;
   buttonLabel?: string;
-  mode?: 'payment' | 'authorization';
+  mode?: 'payment' | 'authorization' | 'setup';
 };
 
 const StripePaymentForm = ({
@@ -27,6 +27,7 @@ const StripePaymentForm = ({
   const [submitting, setSubmitting] = useState(false);
   const [paymentRequest, setPaymentRequest] = useState<any>(null);
   const successfulStatus = mode === 'authorization' ? 'requires_capture' : 'succeeded';
+  const isSetupMode = mode === 'setup';
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -34,6 +35,29 @@ const StripePaymentForm = ({
     setSubmitting(true);
     onError('');
     try {
+      if (isSetupMode) {
+        const { error, setupIntent } = await stripe.confirmSetup({
+          elements,
+          redirect: 'if_required',
+          confirmParams: {
+            return_url: window.location.href,
+          },
+        });
+
+        if (error) {
+          onError(error.message || 'Card setup failed.');
+          return;
+        }
+
+        if (!setupIntent || setupIntent.status !== 'succeeded') {
+          onError('Card was not saved. Please try again.');
+          return;
+        }
+
+        onSuccess({ id: setupIntent.id, status: setupIntent.status });
+        return;
+      }
+
       const { error, paymentIntent } = await stripe.confirmPayment({
         elements,
         redirect: 'if_required',
@@ -59,6 +83,10 @@ const StripePaymentForm = ({
   };
 
   useEffect(() => {
+    if (isSetupMode) {
+      setPaymentRequest(null);
+      return;
+    }
     if (!stripe || !clientSecret) return;
     const pr = stripe.paymentRequest({
       country: 'GB',
@@ -109,13 +137,15 @@ const StripePaymentForm = ({
     return () => {
       pr.off('paymentmethod');
     };
-  }, [stripe, clientSecret, amount, onError, onSuccess, successfulStatus, mode]);
+  }, [stripe, clientSecret, amount, onError, onSuccess, successfulStatus, mode, isSetupMode]);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="rounded-lg border border-white/10 bg-black/30 p-4">
-        <p className="text-sm text-gray-300">Amount due</p>
-        <p className="text-2xl font-semibold text-amber-200">GBP{amount.toFixed(2)}</p>
+        <p className="text-sm text-gray-300">{isSetupMode ? 'Card setup' : 'Amount due'}</p>
+        <p className="text-2xl font-semibold text-amber-200">
+          {isSetupMode ? 'No charge now' : `GBP${amount.toFixed(2)}`}
+        </p>
       </div>
       {paymentRequest ? (
         <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-2">

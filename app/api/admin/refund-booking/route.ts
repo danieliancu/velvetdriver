@@ -9,6 +9,7 @@ const pool = getDbPool();
 
 const stripeSecret = process.env.STRIPE_SECRET_KEY;
 const stripe = stripeSecret ? new Stripe(stripeSecret, { apiVersion: '2023-10-16' }) : null;
+const ADMIN_CANCELLATION_EMAILS = ['roxy.viulet@gmail.com', 'daniiancu1978@gmail.com'];
 
 const formatDate = (iso: string) => {
   const date = new Date(iso);
@@ -186,10 +187,20 @@ export async function POST(request: Request) {
     }
 
     const paymentIntentId = String(payload?.paymentIntentId || '').trim();
+    const paymentFlow = String(payload?.paymentFlow || '').trim().toLowerCase();
     const paymentStatus = String(booking.payment_status || payload?.paymentStatus || '').trim().toLowerCase();
-    const isCapturedPayment = paymentStatus === 'succeeded' || paymentStatus === 'captured' || paymentStatus === 'extra_charge_succeeded';
+    const isCapturedPayment =
+      paymentStatus === 'succeeded' ||
+      paymentStatus === 'captured' ||
+      paymentStatus === 'extra_charge_succeeded' ||
+      paymentStatus === 'final_charge_succeeded';
     const isHoldAuthorization = HOLD_PAYMENT_STATUSES.has(paymentStatus);
-    if (!paymentIntentId || (!isCapturedPayment && !isHoldAuthorization)) {
+    const isFlexibleNoChargeCancellation =
+      paymentFlow === 'flexible_after_journey' &&
+      !isCapturedPayment &&
+      !isHoldAuthorization &&
+      ['card_saved', 'payment_pending', 'authorization_pending'].includes(paymentStatus || 'card_saved');
+    if ((!paymentIntentId && !isFlexibleNoChargeCancellation) || (!isCapturedPayment && !isHoldAuthorization && !isFlexibleNoChargeCancellation)) {
       return NextResponse.json({ error: 'This job is not eligible for refund or hold cancellation.' }, { status: 400 });
     }
     if (String(payload?.refund?.status || '').trim().toLowerCase() === 'succeeded') {
@@ -198,12 +209,17 @@ export async function POST(request: Request) {
 
     let refundId: string | null = null;
     let refundAmount = 0;
-    let action: 'refund' | 'cancel_hold' = 'refund';
+    let action: 'refund' | 'cancel_hold' | 'cancel_no_charge' = 'refund';
     let clientMessage = 'Your booking has been cancelled and your payment has been refunded in full.';
     let driverMessage = 'The following job has been cancelled and removed from queue:';
     const nowIso = new Date().toISOString();
 
-    if (isCapturedPayment) {
+    if (isFlexibleNoChargeCancellation) {
+      refundId = null;
+      refundAmount = 0;
+      action = 'cancel_no_charge';
+      clientMessage = 'Your booking has been cancelled. No payment has been taken and your saved card will not be charged.';
+    } else if (isCapturedPayment) {
       const refund = await stripe.refunds.create({
         payment_intent: paymentIntentId,
         reason: 'requested_by_customer',
@@ -213,13 +229,30 @@ export async function POST(request: Request) {
       refundAmount = Number(refund.amount || 0) / 100;
       action = 'refund';
     } else {
-      await stripe.paymentIntents.cancel(paymentIntentId, {
-        cancellation_reason: 'requested_by_customer',
-      });
-      refundId = paymentIntentId;
-      refundAmount = Number(payload?.paymentAmount || payload?.totalFare || booking.price || 0);
-      action = 'cancel_hold';
-      clientMessage = 'Your booking has been cancelled and the Stripe card hold has been released.';
+      const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      if (!['canceled', 'succeeded'].includes(intent.status)) {
+        await stripe.paymentIntents.cancel(paymentIntentId, {
+          cancellation_reason: 'requested_by_customer',
+        });
+      } else if (intent.status === 'succeeded') {
+        const refund = await stripe.refunds.create({
+          payment_intent: paymentIntentId,
+          reason: 'requested_by_customer',
+          metadata: { journeyId: String(journeyId), recoveredFromStatus: intent.status },
+        });
+        refundId = refund.id;
+        refundAmount = Number(refund.amount || 0) / 100;
+        action = 'refund';
+        clientMessage = 'Your booking has been cancelled and your payment has been refunded in full.';
+      }
+      if (action === 'refund') {
+        // The intent was captured between listing and cancellation; refund path above has handled it.
+      } else {
+        refundId = paymentIntentId;
+        refundAmount = Number(payload?.paymentAmount || payload?.totalFare || booking.price || 0);
+        action = 'cancel_hold';
+        clientMessage = 'Your booking has been cancelled and the Stripe card hold has been released.';
+      }
     }
 
     const updatedPayload = {
@@ -244,12 +277,23 @@ export async function POST(request: Request) {
               createdAt: nowIso,
             }
           : payload.authorizationCancellation,
+      noChargeCancellation:
+        action === 'cancel_no_charge'
+          ? {
+              status: 'canceled',
+              amount: 0,
+              currency: 'GBP',
+              createdAt: nowIso,
+            }
+          : payload.noChargeCancellation,
       cancellation: {
-        source: action === 'refund' ? 'admin-refund' : 'admin-cancel-hold',
+        source: action === 'refund' ? 'admin-refund' : action === 'cancel_hold' ? 'admin-cancel-hold' : 'admin-cancel-no-charge',
         reason:
           action === 'refund'
             ? 'Booking cancelled by admin and fully refunded.'
-            : 'Booking cancelled by admin and authorization hold released.',
+            : action === 'cancel_hold'
+              ? 'Booking cancelled by admin and authorization hold released.'
+              : 'Booking cancelled by admin before final flexible fare charge.',
         at: nowIso,
       },
       paymentStatus: action === 'refund' ? 'refunded' : 'canceled',
@@ -296,7 +340,9 @@ export async function POST(request: Request) {
       const clientSubject =
         action === 'refund'
           ? `Velvet Drivers - Booking cancelled and refunded ${bookingCode}`
-          : `Velvet Drivers - Booking cancelled and card hold released ${bookingCode}`;
+          : action === 'cancel_hold'
+            ? `Velvet Drivers - Booking cancelled and card hold released ${bookingCode}`
+            : `Velvet Drivers - Booking cancelled ${bookingCode}`;
       const clientHtml = `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8" /><title>Booking Refunded</title></head>
@@ -306,7 +352,7 @@ export async function POST(request: Request) {
       <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:6px; overflow:hidden;">
         <tr><td align="center" style="background:linear-gradient(90deg,#3A0511,#000000); padding:24px 20px;">
           <h1 style="margin:0; font-size:22px; color:#ffffff;">Velvet Drivers</h1>
-          <p style="margin:8px 0 0; font-size:13px; color:#f2f2f2;">${action === 'refund' ? 'Cancellation & Refund Confirmation' : 'Cancellation & Hold Release Confirmation'}</p>
+          <p style="margin:8px 0 0; font-size:13px; color:#f2f2f2;">${action === 'refund' ? 'Cancellation & Refund Confirmation' : action === 'cancel_hold' ? 'Cancellation & Hold Release Confirmation' : 'Cancellation Confirmation'}</p>
         </td></tr>
         <tr><td style="padding:24px 26px; color:#333333; font-size:14px; line-height:1.6;">
           <p>Dear ${escapeHtml(passengerName)},</p>
@@ -314,8 +360,8 @@ export async function POST(request: Request) {
           <p><strong>Reference:</strong> ${escapeHtml(bookingCode)}<br />
              <strong>Journey:</strong> ${escapeHtml(date)} at ${escapeHtml(time)}<br />
              ${routeHtml}<br />
-             <strong>${action === 'refund' ? 'Refunded Amount' : 'Released Hold Amount'}:</strong> GBP ${refundAmount.toFixed(2)}</p>
-          <p>${action === 'refund' ? 'The refund may take a short time to appear depending on your card issuer.' : 'The hold release timing depends on the card issuer and may take a short time to show on the customer account.'}</p>
+             <strong>${action === 'refund' ? 'Refunded Amount' : action === 'cancel_hold' ? 'Released Hold Amount' : 'Charged Amount'}:</strong> GBP ${refundAmount.toFixed(2)}</p>
+          <p>${action === 'refund' ? 'The refund may take a short time to appear depending on your card issuer.' : action === 'cancel_hold' ? 'The hold release timing depends on the card issuer and may take a short time to show on the customer account.' : 'No payment has been taken for this booking.'}</p>
         </td></tr>
       </table>
     </td></tr>
@@ -323,8 +369,8 @@ export async function POST(request: Request) {
 </body>
 </html>`;
       const clientText =
-        `Booking ${bookingCode} was cancelled and ${action === 'refund' ? 'refunded' : 'the card hold was released'}.\n` +
-        `${action === 'refund' ? 'Refunded amount' : 'Released hold amount'}: GBP ${refundAmount.toFixed(2)}.\n` +
+        `Booking ${bookingCode} was cancelled${action === 'refund' ? ' and refunded' : action === 'cancel_hold' ? ' and the card hold was released' : ''}.\n` +
+        `${action === 'refund' ? 'Refunded amount' : action === 'cancel_hold' ? 'Released hold amount' : 'Charged amount'}: GBP ${refundAmount.toFixed(2)}.\n` +
         `${routeText}`;
       try {
         await sendEmail({ to: recipient, subject: clientSubject, html: clientHtml, text: clientText });
@@ -376,6 +422,51 @@ export async function POST(request: Request) {
       }
     }
 
+    const adminSubject = `Velvet Drivers - Admin cancellation notice ${bookingCode}`;
+    const adminActionLabel =
+      action === 'refund'
+        ? 'Refunded and cancelled'
+        : action === 'cancel_hold'
+          ? 'Cancelled and hold released'
+          : 'Cancelled with no charge';
+    const adminHtml = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8" /><title>Booking Cancelled</title></head>
+<body style="margin:0; padding:0; background-color:#f4f4f4; font-family:Arial, sans-serif;">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:#f4f4f4; padding:20px 0;">
+    <tr><td align="center">
+      <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:6px; overflow:hidden;">
+        <tr><td align="center" style="background:linear-gradient(90deg,#3A0511,#000000); padding:24px 20px;">
+          <h1 style="margin:0; font-size:22px; color:#ffffff;">Velvet Drivers</h1>
+          <p style="margin:8px 0 0; font-size:13px; color:#f2f2f2;">Admin Cancellation Notice</p>
+        </td></tr>
+        <tr><td style="padding:24px 26px; color:#333333; font-size:14px; line-height:1.6;">
+          <p><strong>Status:</strong> ${escapeHtml(adminActionLabel)}</p>
+          <p><strong>Reference:</strong> ${escapeHtml(bookingCode)}<br />
+             <strong>Passenger:</strong> ${escapeHtml(passengerName)}<br />
+             <strong>Journey:</strong> ${escapeHtml(date)} at ${escapeHtml(time)}<br />
+             ${routeHtml}<br />
+             <strong>Amount:</strong> GBP ${refundAmount.toFixed(2)}</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+    const adminText =
+      `${adminActionLabel}: ${bookingCode}\n` +
+      `Passenger: ${passengerName}\n` +
+      `Journey: ${date} at ${time}\n` +
+      `Amount: GBP ${refundAmount.toFixed(2)}\n` +
+      `${routeText}`;
+    for (const adminEmail of ADMIN_CANCELLATION_EMAILS) {
+      try {
+        await sendEmail({ to: adminEmail, subject: adminSubject, html: adminHtml, text: adminText });
+      } catch (err: any) {
+        warnings.push(`Admin email not sent to ${adminEmail}: ${err?.message || 'unknown error'}`);
+      }
+    }
+
     await logSiteActivity(pool, {
       tableName: 'client_journeys',
       operation: 'UPDATE',
@@ -404,6 +495,7 @@ export async function POST(request: Request) {
       ok: true,
       refunded: action === 'refund',
       releasedHold: action === 'cancel_hold',
+      canceledNoCharge: action === 'cancel_no_charge',
       refundId,
       amount: refundAmount,
       action,

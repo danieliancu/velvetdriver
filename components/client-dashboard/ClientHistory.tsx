@@ -351,7 +351,8 @@ const ClientHistory: React.FC<Props> = ({
 
   const handleConfirmChanges = async () => {
     if (!selectedJourney || !clientEmail || !preview) return;
-    if (preview.difference > 0) {
+    const isFlexibleFare = String(selectedJourney.paymentFlow || '').toLowerCase() === 'flexible_after_journey';
+    if (preview.difference > 0 && !isFlexibleFare) {
       setPaymentIntentLoading(true);
       setRecalcError(null);
       try {
@@ -512,6 +513,8 @@ const ClientHistory: React.FC<Props> = ({
 
   const selectedJourneyCanModify = selectedJourney?.canModify !== false;
   const selectedJourneyCanEditTime = selectedTimeCanBeEdited(selectedJourney);
+  const selectedJourneyPaymentFlow = String(selectedJourney?.paymentFlow || '').toLowerCase();
+  const selectedJourneyIsFlexible = selectedJourneyPaymentFlow === 'flexible_after_journey';
 
   return (
     <div>
@@ -786,7 +789,11 @@ const ClientHistory: React.FC<Props> = ({
               <p>Current fare: GBP {preview.oldPrice.toFixed(2)}</p>
               <p>Updated fare: GBP {preview.newPrice.toFixed(2)}</p>
               {preview.difference > 0 ? (
-                <p className="text-amber-200 font-semibold">Pay GBP {preview.payNowAmount.toFixed(2)} to confirm changes.</p>
+                <p className="text-amber-200 font-semibold">
+                  {selectedJourneyIsFlexible
+                    ? `Final fare estimate increases by GBP ${preview.payNowAmount.toFixed(2)}. Your saved card is charged after the journey.`
+                    : `Pay GBP ${preview.payNowAmount.toFixed(2)} to confirm changes.`}
+                </p>
               ) : preview.difference < 0 ? (
                 <p className="text-green-300">Credit will be applied to your next booking.</p>
               ) : (
@@ -842,7 +849,7 @@ const ClientHistory: React.FC<Props> = ({
                   ? 'Opening payment...'
                   : submitLoading
                   ? 'Updating...'
-                  : preview && preview.difference > 0
+                  : preview && preview.difference > 0 && !selectedJourneyIsFlexible
                     ? `Proceed to authorization: GBP ${preview.payNowAmount.toFixed(2)}`
                     : 'Confirm changes'}
               </button>
@@ -882,7 +889,11 @@ const ClientHistory: React.FC<Props> = ({
               <p>Current fare: GBP {preview.oldPrice.toFixed(2)}</p>
               <p className="font-semibold text-amber-100">New fare: GBP {preview.newPrice.toFixed(2)}</p>
               {preview.difference > 0 ? (
-                <p className="text-amber-200 font-semibold">Additional authorization required now: GBP {preview.payNowAmount.toFixed(2)}</p>
+                <p className="text-amber-200 font-semibold">
+                  {selectedJourneyIsFlexible
+                    ? `Final fare estimate increases by GBP ${preview.payNowAmount.toFixed(2)}. No charge is taken now.`
+                    : `Additional authorization required now: GBP ${preview.payNowAmount.toFixed(2)}`}
+                </p>
               ) : preview.difference < 0 ? (
                 <p className="text-green-300">A credit will be added to your account after confirmation.</p>
               ) : (
@@ -914,7 +925,7 @@ const ClientHistory: React.FC<Props> = ({
                 ? 'Opening payment...'
                 : submitLoading
                 ? 'Updating...'
-                : preview && preview.difference > 0
+                : preview && preview.difference > 0 && !selectedJourneyIsFlexible
                   ? `Confirm and continue: GBP ${preview.payNowAmount.toFixed(2)}`
                   : 'Yes, confirm changes'}
             </button>

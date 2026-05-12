@@ -142,12 +142,22 @@ export async function GET() {
       const vehicleLabel =
         row.vehicle_label || payload?.vehicle || payload?.vehicleLabel || payload?.vehicleTypeLabel || 'Unknown';
       const paymentMethod = String(payload?.paymentMethod || payload?.paymentType || '').trim();
+      const paymentFlow = String(payload?.paymentFlow || '').trim();
       const paymentStatus = String(row.payment_status || payload?.paymentStatus || '').trim().toLowerCase();
-      const paymentIntentId = String(payload?.paymentIntentId || '').trim();
+      const paymentIntentId = String(payload?.paymentIntentId || row.primary_payment_intent_id || '').trim();
       const alreadyRefunded = String(payload?.refund?.status || '').trim().toLowerCase() === 'succeeded';
-      const isPaid = paymentStatus === 'succeeded';
+      const isPaid =
+        paymentStatus === 'succeeded' ||
+        paymentStatus === 'captured' ||
+        paymentStatus === 'final_charge_succeeded' ||
+        paymentStatus === 'extra_charge_succeeded';
       const isRefundable = isPaid && Boolean(paymentIntentId) && !alreadyRefunded;
       const canReleaseHold = HOLD_PAYMENT_STATUSES.has(paymentStatus) && Boolean(paymentIntentId) && !alreadyRefunded;
+      const canCancelNoCharge =
+        paymentFlow === 'flexible_after_journey' &&
+        !isPaid &&
+        !alreadyRefunded &&
+        ['card_saved', 'payment_pending', 'authorization_pending'].includes(paymentStatus || 'card_saved');
       const dropOffs = resolveDropOffs(String(row.destination || ''), payload);
       const rawDriverName = String(row.driver_name ?? '').trim();
       const driverId =
@@ -169,10 +179,12 @@ export async function GET() {
         time,
         priceDetails: formatPriceDetails(priceNumber, payload?.extras),
         paymentMethod,
+        paymentFlow,
         isPaid,
         isRefundable,
         canReleaseHold,
-        paymentAction: isRefundable ? 'refund' : canReleaseHold ? 'cancel_hold' : null,
+        canCancelNoCharge,
+        paymentAction: isRefundable ? 'refund' : canReleaseHold ? 'cancel_hold' : canCancelNoCharge ? 'cancel_no_charge' : null,
         vehicle: vehicleLabel,
         vehicleTypeId: row.vehicle_type_id ? Number(row.vehicle_type_id) : null,
         passengerEmail: row.passenger_email || payload?.passengerEmail || '',
