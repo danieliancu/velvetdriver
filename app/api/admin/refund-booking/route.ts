@@ -31,6 +31,7 @@ const escapeHtml = (value: string) =>
 type BookingRow = mysql.RowDataPacket & {
   id: number;
   status: string;
+  driver_id?: number | null;
   journey_date: string;
   pickup: string;
   destination: string;
@@ -51,6 +52,18 @@ const HOLD_PAYMENT_STATUSES = new Set([
   'requires_capture',
   'partially_captured',
 ]);
+
+const isManualPaymentMethod = (value: string) => {
+  const normalized = value.toLowerCase();
+  return (
+    normalized.includes('invoice') ||
+    normalized.includes('cash') ||
+    normalized.includes('chauffeur') ||
+    normalized.includes('driver') ||
+    normalized.includes('bank transfer') ||
+    normalized.includes('account')
+  );
+};
 
 async function getClientJourneyColumns() {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
@@ -128,10 +141,6 @@ async function sendEmail(input: {
 
 export async function POST(request: Request) {
   try {
-    if (!stripe) {
-      return NextResponse.json({ error: 'Stripe not configured' }, { status: 500 });
-    }
-
     const body = await request.json();
     const journeyId = Number(body?.journeyId);
     if (!journeyId) {
@@ -145,6 +154,7 @@ export async function POST(request: Request) {
     const selectRideStatus = clientJourneyColumns.has('ride_status')
       ? 'cj.ride_status'
       : `NULL AS ride_status`;
+    const selectDriverId = clientJourneyColumns.has('driver_id') ? 'cj.driver_id' : 'NULL AS driver_id';
 
     const [rows] = await pool.query<BookingRow[]>(
       `SELECT cj.id,
@@ -155,6 +165,7 @@ export async function POST(request: Request) {
               cj.passenger_name,
               cj.passenger_email,
               cj.price,
+              ${selectDriverId},
               cj.driver_name,
               cj.booking_payload,
               ${selectPaymentStatus},
@@ -188,6 +199,7 @@ export async function POST(request: Request) {
 
     const paymentIntentId = String(payload?.paymentIntentId || '').trim();
     const paymentFlow = String(payload?.paymentFlow || '').trim().toLowerCase();
+    const paymentMethod = String(payload?.paymentMethod || payload?.paymentType || '').trim();
     const paymentStatus = String(booking.payment_status || payload?.paymentStatus || '').trim().toLowerCase();
     const isCapturedPayment =
       paymentStatus === 'succeeded' ||
@@ -200,8 +212,19 @@ export async function POST(request: Request) {
       !isCapturedPayment &&
       !isHoldAuthorization &&
       ['card_saved', 'payment_pending', 'authorization_pending'].includes(paymentStatus || 'card_saved');
-    if ((!paymentIntentId && !isFlexibleNoChargeCancellation) || (!isCapturedPayment && !isHoldAuthorization && !isFlexibleNoChargeCancellation)) {
+    const isManualCancellation =
+      !isCapturedPayment &&
+      !isHoldAuthorization &&
+      !isFlexibleNoChargeCancellation &&
+      (paymentFlow === 'manual' || isManualPaymentMethod(paymentMethod) || paymentStatus === 'authorization_pending');
+    if (
+      (!paymentIntentId && !isFlexibleNoChargeCancellation && !isManualCancellation) ||
+      (!isCapturedPayment && !isHoldAuthorization && !isFlexibleNoChargeCancellation && !isManualCancellation)
+    ) {
       return NextResponse.json({ error: 'This job is not eligible for refund or hold cancellation.' }, { status: 400 });
+    }
+    if ((isCapturedPayment || isHoldAuthorization) && !stripe) {
+      return NextResponse.json({ error: 'Stripe not configured' }, { status: 500 });
     }
     if (String(payload?.refund?.status || '').trim().toLowerCase() === 'succeeded') {
       return NextResponse.json({ error: 'This booking has already been refunded.' }, { status: 409 });
@@ -209,18 +232,23 @@ export async function POST(request: Request) {
 
     let refundId: string | null = null;
     let refundAmount = 0;
-    let action: 'refund' | 'cancel_hold' | 'cancel_no_charge' = 'refund';
+    let action: 'refund' | 'cancel_hold' | 'cancel_no_charge' | 'manual_cancel' = 'refund';
     let clientMessage = 'Your booking has been cancelled and your payment has been refunded in full.';
     let driverMessage = 'The following job has been cancelled and removed from queue:';
     const nowIso = new Date().toISOString();
 
-    if (isFlexibleNoChargeCancellation) {
+    if (isManualCancellation) {
+      refundId = null;
+      refundAmount = 0;
+      action = 'manual_cancel';
+      clientMessage = 'Your booking has been cancelled. No Stripe payment action was required for this payment method.';
+    } else if (isFlexibleNoChargeCancellation) {
       refundId = null;
       refundAmount = 0;
       action = 'cancel_no_charge';
       clientMessage = 'Your booking has been cancelled. No payment has been taken and your saved card will not be charged.';
     } else if (isCapturedPayment) {
-      const refund = await stripe.refunds.create({
+      const refund = await stripe!.refunds.create({
         payment_intent: paymentIntentId,
         reason: 'requested_by_customer',
         metadata: { journeyId: String(journeyId) },
@@ -229,13 +257,13 @@ export async function POST(request: Request) {
       refundAmount = Number(refund.amount || 0) / 100;
       action = 'refund';
     } else {
-      const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      const intent = await stripe!.paymentIntents.retrieve(paymentIntentId);
       if (!['canceled', 'succeeded'].includes(intent.status)) {
-        await stripe.paymentIntents.cancel(paymentIntentId, {
+        await stripe!.paymentIntents.cancel(paymentIntentId, {
           cancellation_reason: 'requested_by_customer',
         });
       } else if (intent.status === 'succeeded') {
-        const refund = await stripe.refunds.create({
+        const refund = await stripe!.refunds.create({
           payment_intent: paymentIntentId,
           reason: 'requested_by_customer',
           metadata: { journeyId: String(journeyId), recoveredFromStatus: intent.status },
@@ -277,7 +305,7 @@ export async function POST(request: Request) {
               createdAt: nowIso,
             }
           : payload.authorizationCancellation,
-      noChargeCancellation:
+        noChargeCancellation:
         action === 'cancel_no_charge'
           ? {
               status: 'canceled',
@@ -286,14 +314,33 @@ export async function POST(request: Request) {
               createdAt: nowIso,
             }
           : payload.noChargeCancellation,
+      manualCancellation:
+        action === 'manual_cancel'
+          ? {
+              status: 'canceled',
+              paymentMethod,
+              amount: 0,
+              currency: 'GBP',
+              createdAt: nowIso,
+            }
+          : payload.manualCancellation,
       cancellation: {
-        source: action === 'refund' ? 'admin-refund' : action === 'cancel_hold' ? 'admin-cancel-hold' : 'admin-cancel-no-charge',
+        source:
+          action === 'refund'
+            ? 'admin-refund'
+            : action === 'cancel_hold'
+              ? 'admin-cancel-hold'
+              : action === 'cancel_no_charge'
+                ? 'admin-cancel-no-charge'
+                : 'admin-manual-cancel',
         reason:
           action === 'refund'
             ? 'Booking cancelled by admin and fully refunded.'
             : action === 'cancel_hold'
               ? 'Booking cancelled by admin and authorization hold released.'
-              : 'Booking cancelled by admin before final flexible fare charge.',
+              : action === 'cancel_no_charge'
+                ? 'Booking cancelled by admin before final flexible fare charge.'
+                : 'Booking cancelled by admin for a manual payment method.',
         at: nowIso,
       },
       paymentStatus: action === 'refund' ? 'refunded' : 'canceled',
@@ -342,7 +389,7 @@ export async function POST(request: Request) {
           ? `Velvet Drivers - Booking cancelled and refunded ${bookingCode}`
           : action === 'cancel_hold'
             ? `Velvet Drivers - Booking cancelled and card hold released ${bookingCode}`
-            : `Velvet Drivers - Booking cancelled ${bookingCode}`;
+          : `Velvet Drivers - Booking cancelled ${bookingCode}`;
       const clientHtml = `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8" /><title>Booking Refunded</title></head>
@@ -361,7 +408,7 @@ export async function POST(request: Request) {
              <strong>Journey:</strong> ${escapeHtml(date)} at ${escapeHtml(time)}<br />
              ${routeHtml}<br />
              <strong>${action === 'refund' ? 'Refunded Amount' : action === 'cancel_hold' ? 'Released Hold Amount' : 'Charged Amount'}:</strong> GBP ${refundAmount.toFixed(2)}</p>
-          <p>${action === 'refund' ? 'The refund may take a short time to appear depending on your card issuer.' : action === 'cancel_hold' ? 'The hold release timing depends on the card issuer and may take a short time to show on the customer account.' : 'No payment has been taken for this booking.'}</p>
+          <p>${action === 'refund' ? 'The refund may take a short time to appear depending on your card issuer.' : action === 'cancel_hold' ? 'The hold release timing depends on the card issuer and may take a short time to show on the customer account.' : 'No Stripe payment action was required for this cancellation.'}</p>
         </td></tr>
       </table>
     </td></tr>
@@ -381,7 +428,7 @@ export async function POST(request: Request) {
       warnings.push('Client email missing, refund email skipped.');
     }
 
-    const driverNameRaw = String(booking.driver_name || '').trim();
+    const driverNameRaw = String(booking.driver_id || booking.driver_name || '').trim();
     if (driverNameRaw && driverNameRaw.toLowerCase() !== 'pending assignment') {
       const driver = await resolveDriverEmail(driverNameRaw);
       if (driver.email) {
@@ -426,8 +473,10 @@ export async function POST(request: Request) {
     const adminActionLabel =
       action === 'refund'
         ? 'Refunded and cancelled'
-        : action === 'cancel_hold'
-          ? 'Cancelled and hold released'
+      : action === 'cancel_hold'
+        ? 'Cancelled and hold released'
+        : action === 'manual_cancel'
+          ? 'Cancelled without Stripe action'
           : 'Cancelled with no charge';
     const adminHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -496,6 +545,7 @@ export async function POST(request: Request) {
       refunded: action === 'refund',
       releasedHold: action === 'cancel_hold',
       canceledNoCharge: action === 'cancel_no_charge',
+      manualCanceled: action === 'manual_cancel',
       refundId,
       amount: refundAmount,
       action,

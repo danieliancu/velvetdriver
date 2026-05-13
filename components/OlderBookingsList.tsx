@@ -18,6 +18,7 @@ type LiveBooking = {
   bookedBy: string;
   vehicle?: string;
   driverId?: string;
+  driverName?: string;
   createdAt?: string | null;
   updatedAt?: string | null;
   journeyDate?: string | null;
@@ -156,6 +157,7 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
           bookedBy: item.bookedBy,
           vehicle: item.vehicle || 'Unknown',
           driverId: item.driverId || '',
+          driverName: item.driverName || '',
           createdAt: item.createdAt ?? null,
           updatedAt: item.updatedAt ?? null,
           journeyDate: item.journeyDate ?? null,
@@ -207,6 +209,7 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
         booking.bookedBy,
         booking.priceDetails,
         driver?.name,
+        booking.driverName,
         driver?.phone,
         driver?.email,
         driver?.license,
@@ -342,6 +345,8 @@ const OlderBookingsList: React.FC<{ className?: string }> = ({ className = '' })
                                 <p>{driverInfo.carLabel}</p>
                                 <p>Email: {driverInfo.email}</p>
                               </div>
+                            ) : booking.driverName ? (
+                              <p className="text-xs text-gray-300">Name: {booking.driverName}</p>
                             ) : (
                               <p className="text-xs text-gray-500">No driver contact on file.</p>
                             )}

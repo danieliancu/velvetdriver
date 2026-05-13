@@ -45,14 +45,16 @@ type LiveBooking = {
   isRefundable?: boolean;
   canReleaseHold?: boolean;
   canCancelNoCharge?: boolean;
-  paymentAction?: 'refund' | 'cancel_hold' | 'cancel_no_charge' | null;
+  paymentAction?: 'refund' | 'cancel_hold' | 'cancel_no_charge' | 'manual_cancel' | null;
   bookedBy: string;
   bookedByStaffId?: number | null;
   drivers: string[];
   vehicle?: string;
+  serviceType?: string;
   vehicleTypeId?: number | null;
   clientEmail?: string;
   driverId?: string;
+  driverName?: string;
   driverPrice?: number | null;
   driverCommissionApplied?: number | null;
   clientConfirmed?: boolean;
@@ -92,12 +94,14 @@ type LiveBookingResponse = {
   isRefundable?: boolean;
   canReleaseHold?: boolean;
   canCancelNoCharge?: boolean;
-  paymentAction?: 'refund' | 'cancel_hold' | 'cancel_no_charge' | null;
+  paymentAction?: 'refund' | 'cancel_hold' | 'cancel_no_charge' | 'manual_cancel' | null;
   bookedBy: string;
   bookedByStaffId?: number | null;
   vehicle?: string;
+  serviceType?: string;
   vehicleTypeId?: number | null;
   driverId?: string;
+  driverName?: string;
   driverPrice?: number | null;
   driverCommissionApplied?: number | null;
   clientConfirmed?: boolean;
@@ -359,6 +363,7 @@ const AdminDashboardPage: React.FC = () => {
   const [editTime, setEditTime] = useState('');
   const [editReason, setEditReason] = useState('admin_route_update');
   const [editNote, setEditNote] = useState('');
+  const [editManualFare, setEditManualFare] = useState('');
   const [editBookingBusy, setEditBookingBusy] = useState(false);
   const [editPreviewFare, setEditPreviewFare] = useState<number | null>(null);
   const [editPreviewDifference, setEditPreviewDifference] = useState<number | null>(null);
@@ -366,6 +371,13 @@ const AdminDashboardPage: React.FC = () => {
   const [editPreviewError, setEditPreviewError] = useState<string | null>(null);
   const editPickupInputRef = useRef<HTMLInputElement | null>(null);
   const editDropOffInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const editInitialValuesRef = useRef<{
+    rideId: number;
+    pickup: string;
+    dropOffs: string[];
+    date: string;
+    time: string;
+  } | null>(null);
   const editTimeLocked = pendingEditBooking ? !canEditJourneyTime(pendingEditBooking.journeyDate) : false;
   const editBookingCurrentFare = pendingEditBooking
     ? pendingEditBooking.currentEstimate ?? parseBookingPriceAmount(pendingEditBooking.priceDetails)
@@ -405,9 +417,11 @@ const AdminDashboardPage: React.FC = () => {
       bookedBy: item.bookedBy,
       bookedByStaffId: item.bookedByStaffId ?? null,
       vehicle: item.vehicle || 'Unknown',
+      serviceType: item.serviceType || 'Transfer',
       vehicleTypeId: item.vehicleTypeId ?? null,
       clientEmail: item.clientEmail || '',
       driverId: item.driverId || '',
+      driverName: item.driverName || '',
       driverPrice:
         item.driverPrice !== null && item.driverPrice !== undefined
           ? Number(item.driverPrice)
@@ -608,6 +622,23 @@ const AdminDashboardPage: React.FC = () => {
       return;
     }
 
+    const initialValues = editInitialValuesRef.current;
+    const valuesAreUnchanged =
+      initialValues?.rideId === pendingEditBooking.journeyId &&
+      pickup === initialValues.pickup &&
+      editDate === initialValues.date &&
+      editTime === initialValues.time &&
+      dropOffs.length === initialValues.dropOffs.length &&
+      dropOffs.every((stop, index) => stop === initialValues.dropOffs[index]);
+
+    if (valuesAreUnchanged) {
+      setEditPreviewFare(pendingEditBooking.currentEstimate ?? parseBookingPriceAmount(pendingEditBooking.priceDetails));
+      setEditPreviewDifference(null);
+      setEditPreviewError(null);
+      setEditPreviewLoading(false);
+      return;
+    }
+
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setEditPreviewLoading(true);
@@ -621,7 +652,7 @@ const AdminDashboardPage: React.FC = () => {
             rideId: pendingEditBooking.journeyId,
             pickup,
             dropOffs,
-            serviceType: 'Transfer',
+            serviceType: pendingEditBooking.serviceType || 'Transfer',
             vehicleTypeId: pendingEditBooking.vehicleTypeId ?? null,
             journeyDate: new Date(`${editDate}T${editTime}`).toISOString(),
             journeyTime: editTime,
@@ -831,10 +862,11 @@ const AdminDashboardPage: React.FC = () => {
     return Number.isFinite(parsed) ? parsed : getDefaultCommissionByDriverKey(driverKey);
   };
 
-  const getDriverNameById = (driverId?: string) => {
+  const getDriverNameById = (driverId?: string, driverName?: string) => {
+    if (!driverId && driverName) return driverName;
     if (!driverId) return 'Pending assignment';
     const driver = availableDrivers.find((entry) => entry.id === driverId);
-    return driver?.name || driverId;
+    return driver?.name || driverName || driverId;
   };
 
   const getDriverById = (driverId?: string) => {
@@ -1079,10 +1111,20 @@ const AdminDashboardPage: React.FC = () => {
     setEditTime(dt.time);
     setEditReason('admin_route_update');
     setEditNote('');
+    setEditManualFare('');
     setEditPreviewFare(booking.currentEstimate ?? parseBookingPriceAmount(booking.priceDetails));
     setEditPreviewDifference(null);
     setEditPreviewError(null);
     setEditPreviewLoading(false);
+    editInitialValuesRef.current = {
+      rideId: booking.journeyId,
+      pickup: String(booking.pickup || '').trim(),
+      dropOffs: (Array.isArray(booking.dropOffs) && booking.dropOffs.length ? booking.dropOffs : [booking.dropOff || ''])
+        .map((stop) => String(stop || '').trim())
+        .filter(Boolean),
+      date: dt.date,
+      time: dt.time,
+    };
   };
 
   const closeEditBookingModal = () => {
@@ -1093,10 +1135,12 @@ const AdminDashboardPage: React.FC = () => {
     setEditTime('');
     setEditReason('admin_route_update');
     setEditNote('');
+    setEditManualFare('');
     setEditPreviewFare(null);
     setEditPreviewDifference(null);
     setEditPreviewError(null);
     setEditPreviewLoading(false);
+    editInitialValuesRef.current = null;
   };
 
   const updateEditDropOff = (index: number, value: string) => {
@@ -1127,6 +1171,19 @@ const AdminDashboardPage: React.FC = () => {
       setAllocationWarning('Invalid journey date or time.');
       return;
     }
+    const manualFareValue = editManualFare.trim() ? Number(editManualFare) : null;
+    if (manualFareValue !== null && (!Number.isFinite(manualFareValue) || manualFareValue < 0)) {
+      setAllocationWarning('Manual fare must be a valid positive amount.');
+      return;
+    }
+    if (editPreviewError && manualFareValue === null) {
+      setAllocationWarning('Preview failed. Enter a manual fare before saving this edit.');
+      return;
+    }
+    if (!editPreviewError && editPreviewFare === null && manualFareValue === null) {
+      setAllocationWarning('Wait for the fare preview or enter a manual fare before saving.');
+      return;
+    }
 
     setEditBookingBusy(true);
     try {
@@ -1140,8 +1197,9 @@ const AdminDashboardPage: React.FC = () => {
           reason: editReason.trim() || 'admin_route_update',
           note: editNote.trim() || null,
           vehicleTypeId: pendingEditBooking.vehicleTypeId ?? null,
-          serviceType: 'Transfer',
+          serviceType: pendingEditBooking.serviceType || 'Transfer',
           journeyDate: nextJourneyDate.toISOString(),
+          manualFare: manualFareValue,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1156,6 +1214,8 @@ const AdminDashboardPage: React.FC = () => {
             ? 'Fare updated and Stripe created an additional authorization hold for the difference.'
             : data?.payment?.strategy === 'additional_authorization_on_session'
               ? 'Fare updated, but an extra authorization now needs customer confirmation.'
+              : data?.payment?.strategy === 'manual_payment_fare_updated'
+                ? 'Fare updated for this manual payment booking. No Stripe action was required.'
               : 'Fare updated successfully.';
 
       setAllocationSuccess(paymentMessage);
@@ -1187,8 +1247,8 @@ const AdminDashboardPage: React.FC = () => {
       setLiveBookings((prev) => prev.filter((entry) => entry.id !== booking.id));
       setAllocationSuccess(
         data?.warning
-          ? `Refund completed. ${data.warning}`
-          : 'Refund completed and job removed from queue.'
+          ? `Cancellation completed. ${data.warning}`
+          : 'Cancellation completed and job removed from queue.'
       );
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event(LIVE_BOOKINGS_REFRESH_EVENT));
@@ -1267,7 +1327,7 @@ const AdminDashboardPage: React.FC = () => {
                           <div className="flex-1 space-y-3">
                             <p className="text-sm tracking-wide text-white flex items-center gap-3 flex-wrap">
                               <span className="inline-flex h-6 items-center font-semibold">{booking.id}</span>
-                              {booking.isRefundable || booking.canReleaseHold || booking.canCancelNoCharge ? (
+                              {booking.paymentAction ? (
                                 <button
                                   type="button"
                                   onClick={() => requestRefund(booking)}
@@ -1275,7 +1335,7 @@ const AdminDashboardPage: React.FC = () => {
                                   className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   {refundBusy[booking.id]
-                                    ? booking.paymentAction === 'cancel_hold' || booking.paymentAction === 'cancel_no_charge'
+                                    ? booking.paymentAction === 'cancel_hold' || booking.paymentAction === 'cancel_no_charge' || booking.paymentAction === 'manual_cancel'
                                       ? 'Cancelling...'
                                       : 'Refunding...'
                                     : 'Cancel Job'}
@@ -1630,7 +1690,7 @@ const AdminDashboardPage: React.FC = () => {
                                     {booking.date} {booking.time}
                                   </p>
                                 </div>
-                                {booking.isRefundable || booking.canReleaseHold || booking.canCancelNoCharge ? (
+                                {booking.paymentAction ? (
                                   <button
                                     type="button"
                                     onClick={() => requestRefund(booking)}
@@ -1638,10 +1698,10 @@ const AdminDashboardPage: React.FC = () => {
                                     className="rounded-full border border-red-400 bg-red-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
                                   >
                                     {refundBusy[booking.id]
-                                      ? booking.paymentAction === 'cancel_hold' || booking.paymentAction === 'cancel_no_charge'
+                                      ? booking.paymentAction === 'cancel_hold' || booking.paymentAction === 'cancel_no_charge' || booking.paymentAction === 'manual_cancel'
                                         ? 'Releasing...'
                                         : 'Refunding...'
-                                      : booking.paymentAction === 'cancel_hold' || booking.paymentAction === 'cancel_no_charge'
+                                      : booking.paymentAction === 'cancel_hold' || booking.paymentAction === 'cancel_no_charge' || booking.paymentAction === 'manual_cancel'
                                         ? 'Cancel Job'
                                         : 'Refund'}
                                   </button>
@@ -1688,7 +1748,7 @@ const AdminDashboardPage: React.FC = () => {
                                 Passenger: <span className="text-white">{booking.passenger}</span>
                               </p>
                               <p className="text-sm text-gray-300">
-                                Driver: <span className="text-emerald-300">{getDriverNameById(booking.driverId)}</span>
+                                Driver: <span className="text-emerald-300">{getDriverNameById(booking.driverId, booking.driverName)}</span>
                               </p>
                               <p className="text-sm text-gray-300">
                                 Price: <span className="text-white">{booking.priceDetails}</span>
@@ -1934,6 +1994,8 @@ const AdminDashboardPage: React.FC = () => {
                 ? `Release the Stripe authorization hold and cancel ${pendingRefundBooking.id}?`
                 : pendingRefundBooking.paymentAction === 'cancel_no_charge'
                   ? `Cancel ${pendingRefundBooking.id} without charging the saved card?`
+                  : pendingRefundBooking.paymentAction === 'manual_cancel'
+                    ? `Cancel ${pendingRefundBooking.id} without Stripe action?`
                 : `Confirm full refund and cancellation for ${pendingRefundBooking.id}?`}
             </p>
             <p className="text-sm text-gray-300 mb-6">
@@ -1941,6 +2003,8 @@ const AdminDashboardPage: React.FC = () => {
                 ? 'The authorized card hold will be released in Stripe, the client will receive a cancellation email, and the assigned driver will be notified.'
                 : pendingRefundBooking.paymentAction === 'cancel_no_charge'
                   ? 'No Stripe payment has been taken yet. The booking will be cancelled and the saved card will not be charged.'
+                  : pendingRefundBooking.paymentAction === 'manual_cancel'
+                    ? 'No Stripe refund or hold release will be attempted. The booking will be cancelled and notifications will be sent.'
                 : 'The client will receive a refund email, the assigned driver will be notified, and the job will be removed from queue.'}
             </p>
             <div className="flex flex-wrap gap-3 justify-end">
@@ -1958,7 +2022,7 @@ const AdminDashboardPage: React.FC = () => {
                 className="rounded-full border border-red-400 bg-red-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {refundBusy[pendingRefundBooking.id]
-                  ? pendingRefundBooking.paymentAction === 'cancel_hold' || pendingRefundBooking.paymentAction === 'cancel_no_charge'
+                  ? pendingRefundBooking.paymentAction === 'cancel_hold' || pendingRefundBooking.paymentAction === 'cancel_no_charge' || pendingRefundBooking.paymentAction === 'manual_cancel'
                     ? 'Cancelling...'
                     : 'Refunding...'
                   : 'Yes, cancel job'}
@@ -2009,6 +2073,22 @@ const AdminDashboardPage: React.FC = () => {
                   <span>This is the amount that will be checked against the authorization hold on save.</span>
                 ) : null}
               </div>
+              {editPreviewError ? (
+                <label className="mt-4 block">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
+                    Manual fare
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={editManualFare}
+                    onChange={(event) => setEditManualFare(event.target.value)}
+                    className="w-full rounded-xl border border-white/15 bg-black/70 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500"
+                    placeholder="Enter updated fare"
+                  />
+                </label>
+              ) : null}
             </div>
             <div className="space-y-4">
               <div className="space-y-2">

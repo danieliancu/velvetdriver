@@ -171,6 +171,14 @@ const BookingPageInner = () => {
         return (journeyDateTime.getTime() - Date.now()) / (1000 * 60 * 60);
     }, [date, time]);
     const showLeadTimeNotice = bookingLeadTimeHours !== null && bookingLeadTimeHours < 24;
+    const expectedStripeSecretType = paymentOption === 'fixed_pay_now' ? 'payment' : 'setup';
+    const actualStripeSecretType = stripeClientSecret?.startsWith('pi_')
+        ? 'payment'
+        : stripeClientSecret?.startsWith('seti_')
+            ? 'setup'
+            : null;
+    const stripeClientSecretMatchesPaymentOption =
+        Boolean(stripeClientSecret) && actualStripeSecretType === expectedStripeSecretType;
 
     const LONDON_CENTER = { lat: 51.509865, lng: -0.118092 }; // Charing Cross
 
@@ -1485,7 +1493,17 @@ const BookingPageInner = () => {
                 throw new Error(data?.error || 'Failed to start checkout');
             }
             const data = await response.json();
-            setStripeClientSecret(data?.clientSecret ?? null);
+            const nextClientSecret = data?.clientSecret ? String(data.clientSecret) : null;
+            const nextSecretType = nextClientSecret?.startsWith('pi_')
+                ? 'payment'
+                : nextClientSecret?.startsWith('seti_')
+                    ? 'setup'
+                    : null;
+            const expectedSecretType = paymentOption === 'fixed_pay_now' ? 'payment' : 'setup';
+            if (nextClientSecret && nextSecretType !== expectedSecretType) {
+                throw new Error('Payment setup returned an unexpected Stripe intent type. Please try again.');
+            }
+            setStripeClientSecret(nextClientSecret);
             setStripePublishableKey(data?.publishableKey ?? null);
             setPaymentIntentId(data?.paymentIntentId ?? null);
         } catch (err: any) {
@@ -2119,7 +2137,13 @@ const BookingPageInner = () => {
                                                         className="mt-1"
                                                         value={option.key}
                                                         checked={paymentOption === option.key}
-                                                        onChange={() => setPaymentOption(option.key)}
+                                                        onChange={() => {
+                                                            setStripeClientSecret(null);
+                                                            setStripePublishableKey(null);
+                                                            setPaymentIntentId(null);
+                                                            setPaymentError(null);
+                                                            setPaymentOption(option.key);
+                                                        }}
                                                     />
                                                     <span>
                                                         <span className="block font-semibold">{option.label}</span>
@@ -2144,8 +2168,9 @@ const BookingPageInner = () => {
                                             {bookingSubmitting ? 'Submitting...' : 'Confirm booking using credit'}
                                         </button>
                                     </div>
-                                ) : stripePromise && stripeClientSecret ? (
+                                ) : stripePromise && stripeClientSecret && stripeClientSecretMatchesPaymentOption ? (
                                     <Elements
+                                        key={`${paymentOption}:${stripeClientSecret}`}
                                         stripe={stripePromise}
                                         options={{
                                             clientSecret: stripeClientSecret,

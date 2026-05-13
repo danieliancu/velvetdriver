@@ -63,6 +63,18 @@ const HOLD_PAYMENT_STATUSES = new Set([
   'partially_captured',
 ]);
 
+const isManualPaymentMethod = (value: string) => {
+  const normalized = value.toLowerCase();
+  return (
+    normalized.includes('invoice') ||
+    normalized.includes('cash') ||
+    normalized.includes('chauffeur') ||
+    normalized.includes('driver') ||
+    normalized.includes('bank transfer') ||
+    normalized.includes('account')
+  );
+};
+
 const OPTIONAL_RIDE_COLUMNS = [
   'ride_status',
   'payment_status',
@@ -111,6 +123,7 @@ export async function GET() {
               cj.passenger_phone,
               cj.passenger_email,
               cj.driver_name,
+              ${existingColumns.has('driver_id') ? 'cj.driver_id' : 'NULL AS driver_id'},
               cj.driver_price,
               cj.driver_commission_applied,
               cj.client_confirmed,
@@ -158,10 +171,24 @@ export async function GET() {
         !isPaid &&
         !alreadyRefunded &&
         ['card_saved', 'payment_pending', 'authorization_pending'].includes(paymentStatus || 'card_saved');
+      const canManualCancel =
+        !isRefundable &&
+        !canReleaseHold &&
+        !canCancelNoCharge &&
+        !alreadyRefunded &&
+        (paymentFlow === 'manual' || isManualPaymentMethod(paymentMethod) || paymentStatus === 'authorization_pending');
       const dropOffs = resolveDropOffs(String(row.destination || ''), payload);
       const rawDriverName = String(row.driver_name ?? '').trim();
+      const driverIdFromColumn = row.driver_id !== null && row.driver_id !== undefined ? String(row.driver_id).trim() : '';
       const driverId =
-        rawDriverName && rawDriverName.toLowerCase() !== 'pending assignment' ? rawDriverName : '';
+        driverIdFromColumn ||
+        (rawDriverName && rawDriverName.toLowerCase() !== 'pending assignment' && /^\d+$/.test(rawDriverName)
+          ? rawDriverName
+          : '');
+      const driverName =
+        rawDriverName && rawDriverName.toLowerCase() !== 'pending assignment' && !/^\d+$/.test(rawDriverName)
+          ? rawDriverName
+          : '';
       return {
         journeyId: Number(row.id),
         id: Number(row.id),
@@ -184,12 +211,14 @@ export async function GET() {
         isRefundable,
         canReleaseHold,
         canCancelNoCharge,
-        paymentAction: isRefundable ? 'refund' : canReleaseHold ? 'cancel_hold' : canCancelNoCharge ? 'cancel_no_charge' : null,
+        paymentAction: isRefundable ? 'refund' : canReleaseHold ? 'cancel_hold' : canCancelNoCharge ? 'cancel_no_charge' : canManualCancel ? 'manual_cancel' : null,
         vehicle: vehicleLabel,
+        serviceType: row.service_type || payload?.serviceType || 'Transfer',
         vehicleTypeId: row.vehicle_type_id ? Number(row.vehicle_type_id) : null,
         passengerEmail: row.passenger_email || payload?.passengerEmail || '',
         clientEmail: row.client_email || '',
         driverId,
+        driverName,
         driverPrice: row.driver_price !== null && row.driver_price !== undefined ? Number(row.driver_price) : null,
         driverCommissionApplied:
           row.driver_commission_applied !== null && row.driver_commission_applied !== undefined

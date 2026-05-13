@@ -4,6 +4,16 @@ import { getDbPool } from '@/lib/db';
 
 const pool = getDbPool();
 
+async function getClientJourneyColumns() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_NAME
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'client_journeys'`
+  );
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '')));
+}
+
 const formatDate = (iso: string) => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return { date: '', time: '' };
@@ -47,6 +57,7 @@ const buildNotes = (payload: any) => {
 
 export async function GET() {
   try {
+    const existingColumns = await getClientJourneyColumns();
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT cj.id,
               cj.journey_date,
@@ -56,6 +67,7 @@ export async function GET() {
               cj.passenger_phone,
               cj.passenger_email,
               cj.driver_name,
+              ${existingColumns.has('driver_id') ? 'cj.driver_id' : 'NULL AS driver_id'},
               cj.client_confirmed,
               cj.status,
               cj.created_at,
@@ -92,8 +104,16 @@ export async function GET() {
       const vehicleLabel =
         row.vehicle_label || payload?.vehicle || payload?.vehicleLabel || payload?.vehicleTypeLabel || 'Unknown';
       const rawDriverName = String(row.driver_name ?? '').trim();
+      const driverIdFromColumn = row.driver_id !== null && row.driver_id !== undefined ? String(row.driver_id).trim() : '';
       const driverId =
-        rawDriverName && rawDriverName.toLowerCase() !== 'pending assignment' ? rawDriverName : '';
+        driverIdFromColumn ||
+        (rawDriverName && rawDriverName.toLowerCase() !== 'pending assignment' && /^\d+$/.test(rawDriverName)
+          ? rawDriverName
+          : '');
+      const driverName =
+        rawDriverName && rawDriverName.toLowerCase() !== 'pending assignment' && !/^\d+$/.test(rawDriverName)
+          ? rawDriverName
+          : '';
       return {
         journeyId: Number(row.id),
         id: Number(row.id),
@@ -111,10 +131,12 @@ export async function GET() {
         time,
         priceDetails: formatPriceDetails(priceNumber, payload?.extras),
         vehicle: vehicleLabel,
+        serviceType: row.service_type || payload?.serviceType || 'Transfer',
         vehicleTypeId: row.vehicle_type_id ? Number(row.vehicle_type_id) : null,
         passengerEmail: row.passenger_email || payload?.passengerEmail || '',
         clientEmail: row.client_email || '',
         driverId,
+        driverName,
         clientConfirmed: Boolean(row.client_confirmed),
         createdAt: row.created_at ? String(row.created_at) : null,
         updatedAt: row.updated_at ? String(row.updated_at) : null,

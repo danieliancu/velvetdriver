@@ -32,6 +32,20 @@ const formatTimeValue = (value: Date | string) => {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 };
 
+const normalizeComparable = (value: unknown) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+const isManualPaymentMethod = (value: string) => {
+  const normalized = value.toLowerCase();
+  return (
+    normalized.includes('invoice') ||
+    normalized.includes('cash') ||
+    normalized.includes('chauffeur') ||
+    normalized.includes('driver') ||
+    normalized.includes('bank transfer') ||
+    normalized.includes('account')
+  );
+};
+
 async function sendEmail(input: {
   to: string | string[];
   subject: string;
@@ -69,15 +83,21 @@ async function resolveAssignedDriverRecipient(
   conn: mysql.PoolConnection,
   rideId: number
 ): Promise<{ email: string | null; name: string }> {
+  const [columnRows] = await conn.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_NAME
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'client_journeys'
+        AND COLUMN_NAME = 'driver_id'
+      LIMIT 1`
+  );
+  const hasDriverId = columnRows.length > 0;
   const [rows] = await conn.query<mysql.RowDataPacket[]>(
     `SELECT u.email AS driver_email,
             COALESCE(NULLIF(TRIM(CONCAT_WS(' ', d.first_and_middle_name, d.surname)), ''), cj.driver_name) AS driver_name_display
        FROM client_journeys cj
        LEFT JOIN drivers d
-         ON d.id = CASE
-                     WHEN cj.driver_name REGEXP '^[0-9]+$' THEN CAST(cj.driver_name AS UNSIGNED)
-                     ELSE NULL
-                   END
+         ON d.id = ${hasDriverId ? 'cj.driver_id' : `CASE WHEN cj.driver_name REGEXP '^[0-9]+$' THEN CAST(cj.driver_name AS UNSIGNED) ELSE NULL END`}
        LEFT JOIN users u ON u.id = d.user_id
       WHERE cj.id = ?
       LIMIT 1`,
@@ -317,6 +337,19 @@ export async function POST(request: Request) {
       .map((stop: string, index: number) => (index === dropOffs.length - 1 ? stop : `Stop ${index + 1}: ${stop}`))
       .join(', ');
     const journeyDateDb = journeyDate.toISOString().slice(0, 19).replace('T', ' ');
+    const existingDateDb = new Date(existing.journey_date).toISOString().slice(0, 19).replace('T', ' ');
+    const existingFare = Number(existing.price ?? ride.current_estimated_fare ?? ride.price ?? 0) || 0;
+    const hasMaterialChange =
+      normalizeComparable(pickup) !== normalizeComparable(existing.pickup) ||
+      normalizeComparable(destination) !== normalizeComparable(existing.destination) ||
+      normalizeComparable(serviceType) !== normalizeComparable(existing.service_type) ||
+      Number(vehicleTypeId || 0) !== Number(existing.vehicle_type_id || 0) ||
+      journeyDateDb !== existingDateDb ||
+      Math.abs(Number(fare.estimatedFare || 0) - existingFare) >= 0.01;
+    if (!hasMaterialChange) {
+      await conn.rollback();
+      return NextResponse.json({ error: 'No changes detected for this booking.' }, { status: 409 });
+    }
 
     await conn.execute(
       `UPDATE client_journeys
@@ -354,13 +387,18 @@ export async function POST(request: Request) {
       ]
     );
 
-    const paymentResult = await updateRideAuthorization(conn, {
-      rideId,
-      newEstimatedAmount: fare.estimatedFare,
-      source: 'admin',
-      reason: body?.reason ? String(body.reason) : 'admin_update',
-      note: body?.note ? String(body.note) : null,
-    });
+    const paymentFlow = String(bookingPayload.paymentFlow || '').toLowerCase();
+    const paymentMethod = String(bookingPayload.paymentMethod || bookingPayload.paymentType || '').trim();
+    const paymentResult =
+      paymentFlow === 'manual' || isManualPaymentMethod(paymentMethod)
+        ? { ok: true, strategy: 'manual_payment_fare_updated', requiresAction: false }
+        : await updateRideAuthorization(conn, {
+            rideId,
+            newEstimatedAmount: fare.estimatedFare,
+            source: 'admin',
+            reason: body?.reason ? String(body.reason) : 'admin_update',
+            note: body?.note ? String(body.note) : null,
+          });
 
     await logRideChange(conn, {
       rideId,

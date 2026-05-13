@@ -23,7 +23,6 @@ type NavItem = {
     | 'settings';
   label: string;
   to: string;
-  badge?: number;
 };
 
 type AdminPageHeaderProps = {
@@ -43,16 +42,14 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
   const router = useRouter();
   const pathname = usePathname();
   const navRef = useRef<HTMLElement | null>(null);
-  const defaultLiveBadgeCount = 2; // keep visible when no live count is passed from page
-  const computedLiveBadge = liveBadgeCount ?? defaultLiveBadgeCount;
-  const computedNotificationsBadge = notificationsBadgeCount ?? 0;
+  void liveBadgeCount;
+  void notificationsBadgeCount;
 
   const navItems: NavItem[] = [
     {
       id: 'live',
       label: 'Live Bookings',
-      to: '/admin/dashboard',
-      badge: computedLiveBadge
+      to: '/admin/dashboard'
     },
     {
       id: 'clients',
@@ -82,8 +79,7 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
     {
       id: 'notifications',
       label: 'Notifications',
-      to: '/admin/notifications',
-      badge: computedNotificationsBadge
+      to: '/admin/notifications'
     },
     {
       id: 'statements',
@@ -197,15 +193,6 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
                   className={`${baseClasses} ${isActive ? activeClasses : inactiveClasses}`}
                 >
                   {item.label}
-                  {typeof item.badge === 'number' && item.id === 'notifications' ? (
-                    <span className="absolute -top-1 -right-1 flex h-4 min-w-[1rem] px-1 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white border border-white/20">
-                      {item.badge}
-                    </span>
-                  ) : typeof item.badge === 'number' && item.badge > 0 ? (
-                    <span className="absolute -top-0 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white">
-                      {item.badge}
-                    </span>
-                  ) : null}
                 </button>
               );
             })}

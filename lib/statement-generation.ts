@@ -70,10 +70,21 @@ async function findDriverCar(pool: mysql.Pool, driverId: number) {
   return carRows[0] || null;
 }
 
+async function getClientJourneyColumns(pool: mysql.Pool) {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_NAME
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'client_journeys'`
+  );
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '')));
+}
+
 export async function generateStatementForJourney(
   pool: mysql.Pool,
   journeyId: number
 ): Promise<StatementGenerationResult> {
+  const columns = await getClientJourneyColumns(pool);
   const [bookingRows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT cj.id,
             cj.status,
@@ -86,6 +97,7 @@ export async function generateStatementForJourney(
             cj.price,
             cj.driver_price,
             cj.driver_name,
+            ${columns.has('driver_id') ? 'cj.driver_id' : 'NULL AS driver_id'},
             cj.vehicle_type_id,
             cj.booking_payload,
             pv.label AS vehicle_label
@@ -117,7 +129,7 @@ export async function generateStatementForJourney(
   }
 
   const payload = parseBookingPayload(booking.booking_payload);
-  const rawDriver = String(booking.driver_name || '').trim();
+  const rawDriver = String(booking.driver_id || booking.driver_name || '').trim();
   const driver = await findDriverForBooking(pool, rawDriver);
   if (!driver?.id) {
     return {

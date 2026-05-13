@@ -45,6 +45,15 @@ const buildJourneyLocationRows = (pickup: string, dropOffs: string[]) => {
 
 const normalizeForCompare = (value: unknown) => String(value || '').trim().toLowerCase();
 
+async function getClientJourneyColumns() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_NAME
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'client_journeys'`
+  );
+  return new Set(rows.map((row) => String(row.COLUMN_NAME || '')));
+}
 
 export async function POST(request: Request) {
   try {
@@ -280,16 +289,32 @@ export async function POST(request: Request) {
       });
     }
 
+    const clientJourneyColumns = await getClientJourneyColumns();
+    const updateParts = [
+      'driver_name = ?',
+      'car = ?',
+      'plate = ?',
+      'driver_commission_applied = ?',
+      'driver_price = ?',
+    ];
+    const updateParams: Array<string | number> = [
+      driverName || driverId,
+      carMakeModel,
+      carRegistration,
+      appliedCommission,
+      driverAmount,
+    ];
+    if (clientJourneyColumns.has('driver_id')) {
+      updateParts.splice(1, 0, 'driver_id = ?');
+      updateParams.splice(1, 0, driverIdNumber);
+    }
+
     const [result] = await pool.execute<mysql.ResultSetHeader>(
       `UPDATE client_journeys
-          SET driver_name = ?,
-              car = ?,
-              plate = ?,
-              driver_commission_applied = ?,
-              driver_price = ?
+          SET ${updateParts.join(',\n              ')}
         WHERE id = ?
         LIMIT 1`,
-      [driverName || driverId, carMakeModel, carRegistration, appliedCommission, driverAmount, journeyId]
+      [...updateParams, journeyId]
     );
 
     if (!result.affectedRows) {

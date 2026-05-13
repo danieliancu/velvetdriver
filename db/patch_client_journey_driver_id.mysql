@@ -1,0 +1,23 @@
+-- Store the allocated chauffeur as a stable driver id instead of relying on driver_name.
+ALTER TABLE client_journeys
+  ADD COLUMN driver_id BIGINT UNSIGNED NULL AFTER driver_name,
+  ADD KEY idx_client_journeys_driver_id (driver_id);
+
+-- Backfill rows where driver_name already stores a numeric id.
+UPDATE client_journeys cj
+INNER JOIN drivers d ON d.id = CAST(cj.driver_name AS UNSIGNED)
+SET
+  cj.driver_id = d.id,
+  cj.driver_name = NULLIF(TRIM(CONCAT_WS(' ', d.first_and_middle_name, d.surname)), '')
+WHERE cj.driver_name REGEXP '^[0-9]+$'
+  AND cj.driver_id IS NULL;
+
+-- Backfill rows where driver_name stores the full name.
+UPDATE client_journeys cj
+INNER JOIN drivers d
+  ON LOWER(TRIM(CONCAT_WS(' ', d.first_and_middle_name, d.surname))) = LOWER(TRIM(cj.driver_name))
+SET cj.driver_id = d.id
+WHERE cj.driver_id IS NULL
+  AND cj.driver_name IS NOT NULL
+  AND TRIM(cj.driver_name) <> ''
+  AND LOWER(TRIM(cj.driver_name)) <> 'pending assignment';
