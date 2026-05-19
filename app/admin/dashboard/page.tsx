@@ -41,6 +41,8 @@ type LiveBooking = {
   priceDetails: string;
   paymentMethod?: string;
   paymentFlow?: string;
+  isDriverCollect?: boolean;
+  driverCollectionStatus?: string;
   isPaid?: boolean;
   isRefundable?: boolean;
   canReleaseHold?: boolean;
@@ -90,6 +92,8 @@ type LiveBookingResponse = {
   priceDetails: string;
   paymentMethod?: string;
   paymentFlow?: string;
+  isDriverCollect?: boolean;
+  driverCollectionStatus?: string;
   isPaid?: boolean;
   isRefundable?: boolean;
   canReleaseHold?: boolean;
@@ -184,6 +188,51 @@ const formatDriverNetAmount = (priceDetails: string, commissionPercent: number) 
   return Number(driverAmount.toFixed(2));
 };
 
+const formatClientFareAmount = (priceDetails: string) => {
+  const amount = parseBookingPriceAmount(priceDetails);
+  return amount === null ? null : Number(amount.toFixed(2));
+};
+
+const getDriverCollectKind = (booking: Pick<LiveBooking, 'paymentFlow' | 'paymentMethod'>) => {
+  const flow = String(booking.paymentFlow || '').toLowerCase();
+  const method = String(booking.paymentMethod || '').toLowerCase();
+  if (flow === 'cash_to_driver' || method.includes('cash')) return 'cash';
+  if (flow === 'card_to_driver' || method.includes('card')) return 'card';
+  return null;
+};
+
+const getPaymentDisplay = (booking: Pick<LiveBooking, 'paymentFlow' | 'paymentStatus' | 'paymentMethod'>) => {
+  const flow = String(booking.paymentFlow || '').toLowerCase();
+  const status = String(booking.paymentStatus || '').toLowerCase();
+  if (status === 'paid_by_stripe_link') return 'Paid by Stripe link';
+  if (status === 'payment_link_sent') return 'Payment link sent';
+  if (status === 'not_collected') return 'Not collected';
+  if (status === 'collected_by_driver') return 'Collected by driver';
+  if (flow === 'cash_to_driver') return 'Driver to collect cash';
+  if (flow === 'card_to_driver') return 'Driver to collect card';
+  if (flow === 'fixed_pay_now') return 'Fixed Price - paid online';
+  if (flow === 'flexible_after_journey') return 'Flexible Fare - card saved';
+  if (HOLD_PAYMENT_STATUSES.has(status)) return 'Card on hold / pre-authorized';
+  return booking.paymentStatus || booking.paymentMethod || 'Unknown';
+};
+
+const getPaymentBadgeClass = (booking: Pick<LiveBooking, 'paymentFlow' | 'paymentStatus'>) => {
+  const status = String(booking.paymentStatus || '').toLowerCase();
+  const flow = String(booking.paymentFlow || '').toLowerCase();
+  if (status === 'paid_by_stripe_link' || status === 'collected_by_driver') {
+    return 'border-emerald-400/50 bg-emerald-500/15 text-emerald-200';
+  }
+  if (status === 'not_collected') return 'border-red-400/60 bg-red-500/15 text-red-200';
+  if (status === 'payment_link_sent') return 'border-sky-400/50 bg-sky-500/15 text-sky-200';
+  if (flow === 'cash_to_driver' || flow === 'card_to_driver' || status === 'driver_to_collect') {
+    return 'border-orange-400/60 bg-orange-500/15 text-orange-200';
+  }
+  if (flow === 'flexible_after_journey' || HOLD_PAYMENT_STATUSES.has(status)) {
+    return 'border-amber-400/50 bg-amber-500/15 text-amber-200';
+  }
+  return 'border-white/20 bg-white/10 text-gray-200';
+};
+
 const resolveWhatsappJobType = (vehicle?: string) => {
   const normalized = String(vehicle || '').toLowerCase();
   if (normalized.includes('luxury mpv')) return 'LUXURY MPV';
@@ -207,10 +256,17 @@ const buildBookingSummary = (booking: LiveBooking, commissionPercent = 0) => {
     .map((line) => formatLocationWithLink(line.label, line.value))
     .join('\n\n');
   const jobType = resolveWhatsappJobType(booking.vehicle);
-  const priceType = resolveWhatsappPriceType(booking.paymentMethod);
-  const amount = formatDriverNetAmount(booking.priceDetails, commissionPercent);
+  const collectKind = getDriverCollectKind(booking);
+  const priceType = collectKind ? '' : resolveWhatsappPriceType(booking.paymentMethod);
+  const amount = collectKind
+    ? formatClientFareAmount(booking.priceDetails)
+    : formatDriverNetAmount(booking.priceDetails, commissionPercent);
   const priceLine =
-    amount !== null ? `${priceType}  GBP ${amount.toFixed(2)}` : `${priceType}  ${booking.priceDetails}`;
+    collectKind && amount !== null
+      ? `Collect ${collectKind} £${amount.toFixed(2)}`
+      : amount !== null
+        ? `${priceType}  GBP ${amount.toFixed(2)}`
+        : `${priceType}  ${booking.priceDetails}`;
   const notes = booking.notes?.trim() ? booking.notes.trim() : '-';
 
   return `JOB TYPE: ${jobType}\nTime: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${routeBlock}\nPrice: ${priceLine}\n\nNotes: ${notes}`;
@@ -352,6 +408,7 @@ const AdminDashboardPage: React.FC = () => {
   const [vehicleLabelById, setVehicleLabelById] = useState<Record<number, string>>({});
   const [cancelAllocationBusy, setCancelAllocationBusy] = useState<Record<string, boolean>>({});
   const [completeAllocationBusy, setCompleteAllocationBusy] = useState<Record<string, boolean>>({});
+  const [collectionActionBusy, setCollectionActionBusy] = useState<Record<string, boolean>>({});
   const [pendingCompleteBooking, setPendingCompleteBooking] = useState<LiveBooking | null>(null);
   const [completeFinalFare, setCompleteFinalFare] = useState('');
   const [refundBusy, setRefundBusy] = useState<Record<string, boolean>>({});
@@ -409,6 +466,8 @@ const AdminDashboardPage: React.FC = () => {
       priceDetails: item.priceDetails,
       paymentMethod: item.paymentMethod || '',
       paymentFlow: item.paymentFlow || '',
+      isDriverCollect: Boolean(item.isDriverCollect),
+      driverCollectionStatus: item.driverCollectionStatus || '',
       isPaid: Boolean(item.isPaid),
       isRefundable: Boolean(item.isRefundable),
       canReleaseHold: Boolean(item.canReleaseHold),
@@ -1088,6 +1147,50 @@ const AdminDashboardPage: React.FC = () => {
     }
   };
 
+  const updateDriverCollection = async (
+    booking: LiveBooking,
+    action: 'collected' | 'not_collected' | 'send_payment_link'
+  ) => {
+    if (!booking.journeyId) return;
+    const key = `${booking.id}:${action}`;
+    setCollectionActionBusy((prev) => ({ ...prev, [key]: true }));
+    try {
+      const res = await fetch('/api/admin/driver-collection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journeyId: booking.journeyId, action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to update driver collection status');
+      }
+      const paymentStatus = String(data?.paymentStatus || '').trim();
+      setLiveBookings((prev) =>
+        prev.map((entry) =>
+          entry.id === booking.id
+            ? {
+                ...entry,
+                paymentStatus: paymentStatus || entry.paymentStatus,
+                driverCollectionStatus: paymentStatus || entry.driverCollectionStatus,
+                isDriverCollect: true,
+                rideStatus: paymentStatus || entry.rideStatus,
+                updatedAt: new Date().toISOString(),
+              }
+            : entry
+        )
+      );
+      if (action === 'send_payment_link') {
+        setAllocationSuccess(data?.emailSent ? 'Stripe payment link sent to client.' : 'Stripe payment link created.');
+      } else {
+        setAllocationSuccess(action === 'collected' ? 'Marked collected by driver.' : 'Marked not collected.');
+      }
+    } catch (err: any) {
+      setAllocationWarning(err?.message || 'Failed to update driver collection status.');
+    } finally {
+      setCollectionActionBusy((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
   const requestRefund = (booking: LiveBooking) => {
     setPendingRefundBooking(booking);
   };
@@ -1359,6 +1462,9 @@ const AdminDashboardPage: React.FC = () => {
                                   {bookingCreatedAt}
                                 </span>
                               ) : null}
+                              <span className={`inline-flex h-6 items-center rounded-full border px-3.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${getPaymentBadgeClass(booking)}`}>
+                                {getPaymentDisplay(booking)}
+                              </span>
                             </p>
                             {buildJourneyLocationLines(booking.pickup, booking.dropOffs).map((line) => (
                               <p key={`${booking.id}-${line.label}-${line.value}`} className="text-sm text-gray-300">
@@ -1384,6 +1490,9 @@ const AdminDashboardPage: React.FC = () => {
                             <p className="text-sm text-gray-300">
                               Price:{' '}
                               <span className="font-semibold text-white">{booking.priceDetails}</span>
+                            </p>
+                            <p className="text-sm text-gray-300">
+                              Payment: <span className="font-semibold text-white">{getPaymentDisplay(booking)}</span>
                             </p>
                             <p className="text-sm text-gray-300">
                               Vehicle: <span className="font-semibold text-white">{booking.vehicle || 'Unknown'}</span>
@@ -1675,7 +1784,13 @@ const AdminDashboardPage: React.FC = () => {
                   {allocatedBookings.map((booking) => (
                     <article
                       key={`allocated-${booking.id}`}
-                      className="rounded-xl border border-emerald-400/20 bg-black/40 p-4"
+                      className={`rounded-xl border p-4 ${
+                        String(booking.paymentStatus || '').toLowerCase() === 'not_collected'
+                          ? 'border-red-400/40 bg-red-950/20'
+                          : booking.isDriverCollect
+                            ? 'border-orange-400/35 bg-orange-950/15'
+                            : 'border-emerald-400/20 bg-black/40'
+                      }`}
                     >
                       {(() => {
                         const driverInfo = getDriverById(booking.driverId);
@@ -1703,9 +1818,12 @@ const AdminDashboardPage: React.FC = () => {
                                         : 'Refunding...'
                                       : booking.paymentAction === 'cancel_hold' || booking.paymentAction === 'cancel_no_charge' || booking.paymentAction === 'manual_cancel'
                                         ? 'Cancel Job'
-                                        : 'Refund'}
+                                    : 'Refund'}
                                   </button>
                                 ) : null}
+                                <span className={`inline-flex h-6 items-center rounded-full border px-3.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${getPaymentBadgeClass(booking)}`}>
+                                  {getPaymentDisplay(booking)}
+                                </span>
                                 <button
                                   type="button"
                                   onClick={() => openEditBookingModal(booking)}
@@ -1735,6 +1853,36 @@ const AdminDashboardPage: React.FC = () => {
                                 >
                                   {completeAllocationBusy[booking.id] ? 'Completing...' : 'Job Completed'}
                                 </button>
+                                {booking.isDriverCollect ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateDriverCollection(booking, 'collected')}
+                                      disabled={collectionActionBusy[`${booking.id}:collected`]}
+                                      className="rounded-full border border-emerald-300/70 bg-emerald-500/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      {collectionActionBusy[`${booking.id}:collected`] ? 'Saving...' : 'Mark collected by driver'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateDriverCollection(booking, 'not_collected')}
+                                      disabled={collectionActionBusy[`${booking.id}:not_collected`]}
+                                      className="rounded-full border border-red-300/70 bg-red-500/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-red-100 transition hover:bg-red-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      {collectionActionBusy[`${booking.id}:not_collected`] ? 'Saving...' : 'Not collected'}
+                                    </button>
+                                    {String(booking.paymentStatus || '').toLowerCase() === 'not_collected' ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => updateDriverCollection(booking, 'send_payment_link')}
+                                        disabled={collectionActionBusy[`${booking.id}:send_payment_link`]}
+                                        className="rounded-full border border-sky-300/70 bg-sky-500/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-100 transition hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        {collectionActionBusy[`${booking.id}:send_payment_link`] ? 'Sending...' : 'Send Stripe payment link'}
+                                      </button>
+                                    ) : null}
+                                  </>
+                                ) : null}
                               </div>
                               {buildJourneyLocationLines(booking.pickup, booking.dropOffs).map((line, index) => (
                                 <p
@@ -1767,13 +1915,7 @@ const AdminDashboardPage: React.FC = () => {
                               <p className="text-sm text-gray-300">
                                 Payment:{' '}
                                 <span className={HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase()) ? 'text-amber-300' : 'text-white'}>
-                                  {String(booking.paymentFlow || '').toLowerCase() === 'fixed_pay_now'
-                                    ? 'Fixed Price - paid'
-                                    : String(booking.paymentFlow || '').toLowerCase() === 'flexible_after_journey'
-                                      ? 'Flexible Fare - card saved'
-                                      : HOLD_PAYMENT_STATUSES.has(String(booking.paymentStatus || '').toLowerCase())
-                                        ? 'Card on hold / pre-authorized'
-                                        : booking.paymentStatus || 'Unknown'}
+                                  {getPaymentDisplay(booking)}
                                 </span>
                               </p>
                               {booking.paymentFailureReason ? (
@@ -1956,7 +2098,9 @@ const AdminDashboardPage: React.FC = () => {
               />
             </label>
             <p className="mb-6 text-sm text-gray-300">
-              {pendingCompleteIsFlexible
+              {pendingCompleteBooking.isDriverCollect
+                ? 'This is a driver-collection job. No Stripe charge will be attempted when completing it.'
+                : pendingCompleteIsFlexible
                 ? 'This will charge the saved card off-session for the final fare, then mark the job as completed.'
                 : HOLD_PAYMENT_STATUSES.has(String(pendingCompleteBooking.paymentStatus || '').toLowerCase())
                   ? 'This will capture the existing Stripe authorization hold, then mark the job as completed.'

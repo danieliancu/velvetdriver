@@ -205,7 +205,8 @@ export async function POST(request: Request) {
       paymentStatus === 'succeeded' ||
       paymentStatus === 'captured' ||
       paymentStatus === 'extra_charge_succeeded' ||
-      paymentStatus === 'final_charge_succeeded';
+      paymentStatus === 'final_charge_succeeded' ||
+      paymentStatus === 'paid_by_stripe_link';
     const isHoldAuthorization = HOLD_PAYMENT_STATUSES.has(paymentStatus);
     const isFlexibleNoChargeCancellation =
       paymentFlow === 'flexible_after_journey' &&

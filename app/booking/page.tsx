@@ -126,7 +126,7 @@ const BookingPageInner = () => {
     const [stripePublishableKey, setStripePublishableKey] = useState<string | null>(null);
     const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
     const [paymentError, setPaymentError] = useState<string | null>(null);
-    const [paymentOption, setPaymentOption] = useState<'fixed_pay_now' | 'flexible_after_journey'>('fixed_pay_now');
+    const [paymentOption, setPaymentOption] = useState<'fixed_pay_now' | 'flexible_after_journey' | 'cash_to_driver' | 'card_to_driver'>('fixed_pay_now');
     const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
     const [clientCreditBalance, setClientCreditBalance] = useState(0);
     const [discountCodeInput, setDiscountCodeInput] = useState('');
@@ -152,7 +152,7 @@ const BookingPageInner = () => {
         date.trim().length > 0 &&
         time.trim().length > 0;
     const finalDropIndex = Math.max(0, dropOffAddresses.length - 1);
-    const paymentOptions: Array<{ key: 'fixed_pay_now' | 'flexible_after_journey'; label: string; description: string }> = [
+    const paymentOptions: Array<{ key: 'fixed_pay_now' | 'flexible_after_journey' | 'cash_to_driver' | 'card_to_driver'; label: string; description: string }> = [
         {
             key: 'fixed_pay_now',
             label: 'Fixed Price - Pay Now',
@@ -163,6 +163,16 @@ const BookingPageInner = () => {
             label: 'Flexible Fare - Pay After Journey',
             description: 'Final fare reflects waiting time, stops and route changes. Your saved card is charged after completion.',
         },
+        {
+            key: 'card_to_driver',
+            label: 'Card to driver',
+            description: 'Pay the chauffeur by card in the vehicle. No online Stripe payment is taken now.',
+        },
+        {
+            key: 'cash_to_driver',
+            label: 'Cash to driver',
+            description: 'Pay the chauffeur in cash. No online Stripe payment is taken now.',
+        },
     ];
     const bookingLeadTimeHours = useMemo(() => {
         if (!date.trim() || !time.trim()) return null;
@@ -171,6 +181,7 @@ const BookingPageInner = () => {
         return (journeyDateTime.getTime() - Date.now()) / (1000 * 60 * 60);
     }, [date, time]);
     const showLeadTimeNotice = bookingLeadTimeHours !== null && bookingLeadTimeHours < 24;
+    const isDriverCollectPayment = paymentOption === 'cash_to_driver' || paymentOption === 'card_to_driver';
     const expectedStripeSecretType = paymentOption === 'fixed_pay_now' ? 'payment' : 'setup';
     const actualStripeSecretType = stripeClientSecret?.startsWith('pi_')
         ? 'payment'
@@ -1455,6 +1466,10 @@ const BookingPageInner = () => {
             showAlert('Unable to calculate fare for checkout.');
             return;
         }
+        if (paymentOption === 'cash_to_driver' || paymentOption === 'card_to_driver') {
+            await finalizeDriverCollectBooking();
+            return;
+        }
         if (amountDueNow <= 0) {
             await finalizeBookingUsingCredit();
             return;
@@ -1467,6 +1482,7 @@ const BookingPageInner = () => {
     };
 
     const createCheckoutIntent = async () => {
+        if (paymentOption === 'cash_to_driver' || paymentOption === 'card_to_driver') return;
         if (!pendingBookingPayload?.totalFare || paymentIntentLoading || stripeClientSecret || amountDueNow <= 0) return;
         setPaymentIntentLoading(true);
         setPaymentError(null);
@@ -1554,6 +1570,51 @@ const BookingPageInner = () => {
                     ? 'Card saved securely. Your booking is confirmed and the final fare will be charged after the journey.'
                     : 'Payment received. Your fixed-price booking is confirmed.'
             );
+            router.push(user ? '/client/dashboard' : '/');
+        } catch (err: any) {
+            showAlert(err?.message || 'Failed to submit booking.');
+        } finally {
+            setBookingSubmitting(false);
+        }
+    };
+
+    const finalizeDriverCollectBooking = async () => {
+        setBookingSubmitting(true);
+        const isCash = paymentOption === 'cash_to_driver';
+        try {
+            const response = await fetch('/api/bookings/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...pendingBookingPayload,
+                    totalFare: totalFareFinal,
+                    originalTotalFare: baseTotalFare,
+                    discount: discountData
+                        ? {
+                            code: discountData.code,
+                            name: discountData.name,
+                            type: discountData.type,
+                            amount: discountData.amount,
+                            appliedAmount: discountAmount,
+                        }
+                        : null,
+                    paymentIntentId: null,
+                    setupIntentId: null,
+                    paymentStatus: 'driver_to_collect',
+                    paymentMethod: isCash ? 'Cash to driver' : 'Card to driver',
+                    paymentFlow: paymentOption,
+                    paymentAmount: 0,
+                    paymentCurrency: 'GBP',
+                    appliedCreditAmount: Number(appliedCreditAmount),
+                }),
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data?.error || 'Failed to submit booking');
+            }
+            setShowVerificationModal(false);
+            setCheckoutActive(false);
+            showAlert(`Booking confirmed. Please pay the chauffeur by ${isCash ? 'cash' : 'card'} at the journey.`);
             router.push(user ? '/client/dashboard' : '/');
         } catch (err: any) {
             showAlert(err?.message || 'Failed to submit booking.');
@@ -2154,7 +2215,21 @@ const BookingPageInner = () => {
                                         ))}
                                     </div>
                                 </div>
-                                {amountDueNow <= 0 ? (
+                                {isDriverCollectPayment ? (
+                                    <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
+                                        <p className="text-sm text-gray-300">
+                                            No online Stripe payment will be taken now.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            disabled={bookingSubmitting}
+                                            onClick={finalizeDriverCollectBooking}
+                                            className="w-full px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 disabled:opacity-60"
+                                        >
+                                            {bookingSubmitting ? 'Submitting...' : `Confirm booking - pay ${paymentOption === 'cash_to_driver' ? 'cash' : 'card'} to driver`}
+                                        </button>
+                                    </div>
+                                ) : amountDueNow <= 0 ? (
                                     <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
                                         <p className="text-sm text-gray-300">
                                             This booking is fully covered by your account credit.

@@ -96,6 +96,7 @@ export async function generateStatementForJourney(
             cj.passenger_phone,
             cj.price,
             cj.driver_price,
+            ${columns.has('payment_status') ? 'cj.payment_status' : 'NULL AS payment_status'},
             cj.driver_name,
             ${columns.has('driver_id') ? 'cj.driver_id' : 'NULL AS driver_id'},
             cj.vehicle_type_id,
@@ -143,7 +144,12 @@ export async function generateStatementForJourney(
   const car = await findDriverCar(pool, Number(driver.id));
   const driverName =
     [driver.first_and_middle_name, driver.surname].filter(Boolean).join(' ').trim() || rawDriver || 'Assigned driver';
-  const fareQuoted = Number(booking.driver_price ?? booking.price ?? payload?.totalFare ?? 0) || 0;
+  const clientFare = Number(booking.price ?? payload?.totalFare ?? 0) || 0;
+  const driverPay = Number(booking.driver_price ?? clientFare) || 0;
+  const paymentStatus = String(booking.payment_status || payload?.paymentStatus || '').toLowerCase();
+  const fareQuoted = paymentStatus === 'collected_by_driver'
+    ? Number((driverPay - clientFare).toFixed(2))
+    : driverPay;
   const vehicleType =
     booking.vehicle_label || payload?.vehicle || payload?.vehicleLabel || payload?.vehicleTypeLabel || '-';
 

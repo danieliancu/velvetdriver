@@ -1139,6 +1139,8 @@ export async function syncPaymentIntentToDb(
       ? 'flexible_final_charge'
     : paymentFlow.includes('extra_charge')
       ? 'extra_charge'
+    : paymentFlow.includes('stripe_payment_link')
+      ? 'stripe_payment_link'
       : paymentFlow.includes('fixed_pay_now')
         ? 'fixed_pay_now'
       : 'authorization';
@@ -1146,7 +1148,9 @@ export async function syncPaymentIntentToDb(
   let status = 'authorization_pending';
   if (paymentIntent.status === 'requires_capture') status = role === 'authorization' ? 'authorized' : 'additional_authorization_created';
   if (paymentIntent.status === 'succeeded') {
-    status = role === 'extra_charge'
+    status = role === 'stripe_payment_link'
+      ? 'paid_by_stripe_link'
+      : role === 'extra_charge'
       ? 'extra_charge_succeeded'
       : role === 'flexible_final_charge'
         ? 'final_charge_succeeded'
@@ -1163,7 +1167,7 @@ export async function syncPaymentIntentToDb(
             stripe_payment_method_id = COALESCE(stripe_payment_method_id, ?),
             primary_payment_intent_id = COALESCE(primary_payment_intent_id, ?),
             payment_status = CASE
-              WHEN ? IN ('authorized', 'additional_authorization_created', 'captured', 'extra_charge_succeeded', 'final_charge_succeeded', 'failed', 'expired', 'canceled')
+              WHEN ? IN ('authorized', 'additional_authorization_created', 'captured', 'extra_charge_succeeded', 'final_charge_succeeded', 'paid_by_stripe_link', 'failed', 'expired', 'canceled')
                 THEN ?
               ELSE payment_status
             END,

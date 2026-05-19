@@ -163,7 +163,12 @@ export async function GET() {
         paymentStatus === 'succeeded' ||
         paymentStatus === 'captured' ||
         paymentStatus === 'final_charge_succeeded' ||
-        paymentStatus === 'extra_charge_succeeded';
+        paymentStatus === 'extra_charge_succeeded' ||
+        paymentStatus === 'paid_by_stripe_link';
+      const isDriverCollect =
+        paymentFlow === 'cash_to_driver' ||
+        paymentFlow === 'card_to_driver' ||
+        ['driver_to_collect', 'collected_by_driver', 'not_collected', 'payment_link_sent'].includes(paymentStatus);
       const isRefundable = isPaid && Boolean(paymentIntentId) && !alreadyRefunded;
       const canReleaseHold = HOLD_PAYMENT_STATUSES.has(paymentStatus) && Boolean(paymentIntentId) && !alreadyRefunded;
       const canCancelNoCharge =
@@ -207,6 +212,8 @@ export async function GET() {
         priceDetails: formatPriceDetails(priceNumber, payload?.extras),
         paymentMethod,
         paymentFlow,
+        isDriverCollect,
+        driverCollectionStatus: isDriverCollect ? paymentStatus || 'driver_to_collect' : '',
         isPaid,
         isRefundable,
         canReleaseHold,

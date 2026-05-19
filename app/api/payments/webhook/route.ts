@@ -37,6 +37,59 @@ export async function POST(request: Request) {
     });
 
     switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object as Stripe.Checkout.Session;
+        const rideId = Number(session.metadata?.rideId || 0);
+        if (rideId && session.payment_status === 'paid') {
+          const [rows] = await conn.query<any[]>('SELECT booking_payload FROM client_journeys WHERE id = ? LIMIT 1', [
+            rideId,
+          ]);
+          let payload: Record<string, any> = {};
+          if (rows[0]?.booking_payload) {
+            try {
+              payload =
+                typeof rows[0].booking_payload === 'string'
+                  ? JSON.parse(rows[0].booking_payload)
+                  : rows[0].booking_payload;
+            } catch {
+              payload = {};
+            }
+          }
+          await conn.execute(
+            `UPDATE client_journeys
+                SET payment_status = 'paid_by_stripe_link',
+                    ride_status = 'payment_captured',
+                    captured_amount = COALESCE(NULLIF(captured_amount, 0), price),
+                    captured_at = NOW(),
+                    primary_payment_intent_id = COALESCE(primary_payment_intent_id, ?),
+                    booking_payload = ?,
+                    updated_at = NOW()
+              WHERE id = ?
+              LIMIT 1`,
+            [
+              typeof session.payment_intent === 'string' ? session.payment_intent : null,
+              JSON.stringify({
+                ...payload,
+                paymentStatus: 'paid_by_stripe_link',
+                driverCollectionStatus: 'paid_by_stripe_link',
+                stripeCheckoutSessionId: session.id,
+                paymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : payload.paymentIntentId,
+                paidByStripeLinkAt: new Date().toISOString(),
+              }),
+              rideId,
+            ]
+          );
+        }
+        await logPaymentEvent(conn, {
+          rideId: rideId || null,
+          stripeEventId: event.id,
+          eventType: event.type,
+          source: 'webhook',
+          status: session.payment_status || 'processed',
+          payload: session as Record<string, any>,
+        });
+        break;
+      }
       case 'payment_intent.amount_capturable_updated':
       case 'payment_intent.succeeded':
       case 'payment_intent.payment_failed':

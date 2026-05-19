@@ -255,6 +255,8 @@ export async function POST(request: Request) {
     const notes = buildNotes(payload);
     const fareAmount = Number(booking.price ?? payload?.totalFare ?? 0) || 0;
     const paymentMethod = payload?.paymentMethod || payload?.paymentType || 'Card';
+    const paymentFlow = String(payload?.paymentFlow || '').toLowerCase();
+    const isDriverCollectPayment = paymentFlow === 'cash_to_driver' || paymentFlow === 'card_to_driver';
 
     const driverName = [driver.first_and_middle_name, driver.surname].filter(Boolean).join(' ').trim();
     const driverRecipient = String(driver.user_email || '').trim();
@@ -492,7 +494,9 @@ export async function POST(request: Request) {
                 </tr>
               </table>
               <p style="margin:6px 0 0; font-size:13px; color:#555555;">
-                A receipt or VAT invoice will be issued automatically after your journey, in line with our Payment &amp; Refund Policy.
+                ${isDriverCollectPayment
+                  ? 'Please pay your chauffeur directly using the method shown above. If payment is not collected in the vehicle, we may send you a secure Stripe payment link after the journey.'
+                  : 'A receipt or VAT invoice will be issued automatically after your journey, in line with our Payment &amp; Refund Policy.'}
               </p>
             </td>
           </tr>

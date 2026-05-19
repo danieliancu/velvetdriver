@@ -123,7 +123,13 @@ export async function POST(request: Request) {
     const setupIntentId = String(body.setupIntentId ?? '').trim();
     const paymentFlow = String(body.paymentFlow ?? '').trim();
     const normalizedPaymentFlow =
-      paymentFlow === 'fixed_pay_now' || paymentFlow === 'flexible_after_journey' ? paymentFlow : '';
+      paymentFlow === 'fixed_pay_now' ||
+      paymentFlow === 'flexible_after_journey' ||
+      paymentFlow === 'cash_to_driver' ||
+      paymentFlow === 'card_to_driver'
+        ? paymentFlow
+        : '';
+    const isDriverCollectFlow = normalizedPaymentFlow === 'cash_to_driver' || normalizedPaymentFlow === 'card_to_driver';
     const totalFare = Math.max(0, Number(body.totalFare ?? 0));
     const requestedAppliedCredit = Math.max(0, Number(body.appliedCreditAmount ?? 0));
     if (!pickup || !dropOffs.length || !date || !time || !passengerName || !passengerEmail || !passengerPhone) {
@@ -173,6 +179,8 @@ export async function POST(request: Request) {
           ? 'captured'
           : normalizedPaymentFlow === 'flexible_after_journey'
             ? 'card_saved'
+        : isDriverCollectFlow
+          ? 'driver_to_collect'
         : paymentMethod.toLowerCase() === 'card authorization'
           ? 'authorized'
           : paymentMethod.toLowerCase() === 'credit'
@@ -200,11 +208,15 @@ export async function POST(request: Request) {
           ? 'payment_captured'
           : normalizedPaymentFlow === 'flexible_after_journey'
             ? 'payment_pending'
+          : isDriverCollectFlow
+            ? 'driver_to_collect'
             : paymentMethod.toLowerCase() === 'card authorization' ? 'payment_authorized' : 'booked',
         normalizedPaymentFlow === 'fixed_pay_now'
           ? 'captured'
           : normalizedPaymentFlow === 'flexible_after_journey'
             ? 'card_saved'
+        : isDriverCollectFlow
+          ? 'driver_to_collect'
         : paymentMethod.toLowerCase() === 'card authorization'
           ? 'authorized'
           : paymentMethod.toLowerCase() === 'credit'
