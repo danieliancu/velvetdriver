@@ -37,6 +37,18 @@ type CorporateProfile = {
   corporateStatus?: string | null;
 };
 
+type CorporateInvoice = {
+  id: number;
+  reference: string;
+  status: string;
+  amount: number;
+  issuedAt: string;
+  dueAt: string;
+  paidAt?: string;
+  bookingRefs: string;
+  pdfUrl?: string | null;
+};
+
 const DashboardContentWrapper: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div className="bg-gradient-to-br from-[#1E1212] via-[#100808] to-black border border-amber-900/50 rounded-2xl p-8 max-w-2xl mx-auto">
     <h2 className="text-2xl font-bold font-display text-amber-400 mb-6">{title}</h2>
@@ -51,6 +63,7 @@ const CorporateDashboardPage: React.FC = () => {
   const router = useRouter();
 
   const [journeys, setJourneys] = useState<Journey[]>([]);
+  const [invoices, setInvoices] = useState<CorporateInvoice[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [profile, setProfile] = useState<CorporateProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
@@ -111,10 +124,12 @@ const CorporateDashboardPage: React.FC = () => {
     try {
       const res = await fetch(`/api/corporate/history?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('history');
-      const data = (await res.json()) as { journeys: Journey[] };
+      const data = (await res.json()) as { journeys: Journey[]; invoices?: CorporateInvoice[] };
       setJourneys(Array.isArray(data.journeys) ? data.journeys : []);
+      setInvoices(Array.isArray(data.invoices) ? data.invoices : []);
     } catch {
       setJourneys([]);
+      setInvoices([]);
     } finally {
       setHistoryLoading(false);
     }
@@ -199,12 +214,43 @@ const CorporateDashboardPage: React.FC = () => {
   };
 
   const completedJourneys = useMemo(() => journeys.filter((j) => j.status === 'Completed'), [journeys]);
-  const tabs = ['History', 'Complain', 'Review', 'Lost property', 'Update Details'];
+  const tabs = ['History', 'Invoices', 'Complain', 'Review', 'Lost property', 'Update Details'];
 
   const renderContent = () => {
     switch (activeTab) {
       case 'History':
         return <ClientHistory journeys={journeys} loading={historyLoading} />;
+      case 'Invoices':
+        return (
+          <DashboardContentWrapper title="Invoices">
+            {historyLoading ? (
+              <p className="text-sm text-gray-400">Loading invoices...</p>
+            ) : invoices.length ? (
+              <div className="space-y-3">
+                {invoices.map((invoice) => (
+                  <div key={invoice.id} className="rounded-xl border border-white/10 bg-black/30 p-4 text-sm text-gray-300">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-semibold text-white">{invoice.reference}</p>
+                      <span className="rounded-full border border-amber-400/50 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-amber-200">
+                        {invoice.status}
+                      </span>
+                    </div>
+                    <p className="mt-2">Bookings: {invoice.bookingRefs || '-'}</p>
+                    <p>Amount: GBP {invoice.amount.toFixed(2)}</p>
+                    <p>Issued: {invoice.issuedAt} | Due: {invoice.dueAt}</p>
+                    {invoice.pdfUrl ? (
+                      <a href={invoice.pdfUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-amber-300 underline">
+                        Download invoice PDF
+                      </a>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">No corporate invoices yet.</p>
+            )}
+          </DashboardContentWrapper>
+        );
       case 'Complain':
         return (
           <DashboardContentWrapper title="Submit a Complaint">
@@ -272,7 +318,7 @@ const CorporateDashboardPage: React.FC = () => {
               <div>
                 <h1 className="text-3xl font-bold font-display text-amber-400">Corporate Dashboard</h1>
                 <p className="text-gray-400">Welcome back, {profile?.contactName || user?.name}</p>
-                {profile?.corporateStatus && profile.corporateStatus !== 'active' ? (
+                {profile?.corporateStatus && !['active', 'approved'].includes(profile.corporateStatus) ? (
                   <p className="text-xs text-amber-300 mt-1 uppercase tracking-[0.2em]">
                     Account status: {profile.corporateStatus}
                   </p>

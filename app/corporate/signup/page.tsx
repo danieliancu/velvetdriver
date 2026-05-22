@@ -12,13 +12,12 @@ const steps = [
   'Main Contact Person',
   'Billing / Accounts Details',
   'Service Requirements',
-  'Payment Preferences',
-  'GDPR & Consent',
+  'Payment Terms & Consent',
 ] as const;
 
 const journeyTypeOptions = ['Airport transfers', 'Business meetings', 'Events', 'Roadshows', 'VIP', 'Other'];
 const invoiceFrequencyOptions = ['Per journey', 'Weekly', 'Monthly'];
-const paymentMethods = ['Bank transfer', 'Online payment link', 'Card to chauffeur', 'Cash to chauffeur'];
+const paymentMethods = ['Bank transfer', 'Online payment link'];
 
 export default function CorporateSignUpPage() {
   const router = useRouter();
@@ -28,6 +27,7 @@ export default function CorporateSignUpPage() {
   const [journeyTypes, setJourneyTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
 
   const handleFieldChange =
     (field: string) =>
@@ -68,8 +68,8 @@ export default function CorporateSignUpPage() {
       if (!res.ok) {
         throw new Error(data?.error || 'Failed to submit corporate account request.');
       }
-      showAlert(data?.message || 'Corporate account request submitted. The Velvet team will contact you shortly.');
-      router.push('/corporate/login');
+      showAlert(data?.message || 'Your corporate account request is under review.');
+      setSubmitted(true);
     } catch (err: any) {
       setError(err?.message || 'Failed to submit corporate account request.');
     } finally {
@@ -89,11 +89,11 @@ export default function CorporateSignUpPage() {
       />
       <Input
         id="companyRegNumber"
-        label="Company Registration Number"
+        label="Company Registration Number (optional)"
         value={formData.companyRegNumber ?? ''}
         onChange={handleFieldChange('companyRegNumber')}
       />
-      <Input id="vatNumber" label="VAT Number" value={formData.vatNumber ?? ''} onChange={handleFieldChange('vatNumber')} />
+      <Input id="vatNumber" label="VAT Number (optional - VAT is not added to invoices unless enabled by Velvet Drivers)" value={formData.vatNumber ?? ''} onChange={handleFieldChange('vatNumber')} />
       <Input id="businessType" label="Type of Business / Industry" value={formData.businessType ?? ''} onChange={handleFieldChange('businessType')} />
     </div>
   );
@@ -154,7 +154,7 @@ export default function CorporateSignUpPage() {
         value={formData.accountsPhone ?? ''}
         onChange={handleFieldChange('accountsPhone')}
       />
-      <Input id="billingAddress" label="Billing Address (if different)" value={formData.billingAddress ?? ''} onChange={handleFieldChange('billingAddress')} />
+      <Input id="billingAddress" label="Billing Address" required value={formData.billingAddress ?? ''} onChange={handleFieldChange('billingAddress')} />
       <div>
         <label className="block text-sm font-semibold text-gray-200 mb-2">Preferred Invoice Method</label>
         <select
@@ -199,7 +199,7 @@ export default function CorporateSignUpPage() {
       </div>
       <Input
         id="estimatedJourneys"
-        label="Estimated Monthly Journeys"
+        label="Estimated Monthly Journeys (optional)"
         type="number"
         value={formData.estimatedJourneys ?? ''}
         onChange={handleFieldChange('estimatedJourneys')}
@@ -289,6 +289,18 @@ export default function CorporateSignUpPage() {
           type="checkbox"
           className="mt-1"
           required
+          checked={formData.paymentTerms === 'yes'}
+          onChange={(event) => setFormData((prev) => ({ ...prev, paymentTerms: event.target.checked ? 'yes' : '' }))}
+        />
+        <span>
+          I accept the corporate payment terms, including invoice due dates and account suspension for overdue invoices.
+        </span>
+      </label>
+      <label className="flex items-start gap-3">
+        <input
+          type="checkbox"
+          className="mt-1"
+          required
           checked={formData.tandc === 'yes'}
           onChange={(event) => setFormData((prev) => ({ ...prev, tandc: event.target.checked ? 'yes' : '' }))}
         />
@@ -329,12 +341,29 @@ export default function CorporateSignUpPage() {
         return renderBilling();
       case 4:
         return renderServiceRequirements();
-      case 5:
-        return renderPaymentPreferences();
       default:
-        return renderGDPRConsent();
+        return (
+          <>
+            {renderPaymentPreferences()}
+            <div className="mt-5">{renderGDPRConsent()}</div>
+          </>
+        );
     }
   };
+
+  if (submitted) {
+    return (
+      <FormLayout title="Corporate Account Request">
+        <div className="space-y-5 text-center">
+          <p className="text-lg font-semibold text-amber-300">Your corporate account request is under review.</p>
+          <p className="text-sm text-gray-300">Velvet Drivers will review the details before invoice payments are enabled.</p>
+          <Link href="/" className="inline-flex rounded-md bg-amber-500 px-6 py-3 font-semibold text-black hover:bg-amber-400">
+            Back to home
+          </Link>
+        </div>
+      </FormLayout>
+    );
+  }
 
   return (
     <FormLayout title="Corporate Account Request">

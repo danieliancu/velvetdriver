@@ -78,6 +78,7 @@ const isManualPaymentMethod = (value: string) => {
 const OPTIONAL_RIDE_COLUMNS = [
   'ride_status',
   'payment_status',
+  'invoice_status',
   'original_estimated_fare',
   'current_estimated_fare',
   'final_fare',
@@ -135,11 +136,14 @@ export async function GET() {
               cj.service_type,
               cj.vehicle_type_id,
               ${optionalSelect},
+              cj.corporate_id,
+              corp.company_name AS corporate_company_name,
               u.email AS client_email
          , staff.full_name AS staff_name
          , pv.label AS vehicle_label
          FROM client_journeys cj
          LEFT JOIN users u ON cj.client_id = u.id
+         LEFT JOIN corporates corp ON corp.id = cj.corporate_id
          LEFT JOIN admin_staff staff ON cj.booked_by_staff_id = staff.id
          LEFT JOIN pricing_vehicles pv ON pv.id = cj.vehicle_type_id
         WHERE cj.status = 'Upcoming'
@@ -157,6 +161,7 @@ export async function GET() {
       const paymentMethod = String(payload?.paymentMethod || payload?.paymentType || '').trim();
       const paymentFlow = String(payload?.paymentFlow || '').trim();
       const paymentStatus = String(row.payment_status || payload?.paymentStatus || '').trim().toLowerCase();
+      const invoiceStatus = String(row.invoice_status || payload?.invoiceStatus || '').trim();
       const paymentIntentId = String(payload?.paymentIntentId || row.primary_payment_intent_id || '').trim();
       const alreadyRefunded = String(payload?.refund?.status || '').trim().toLowerCase() === 'succeeded';
       const isPaid =
@@ -234,6 +239,9 @@ export async function GET() {
         clientConfirmed: Boolean(row.client_confirmed),
         rideStatus: row.ride_status ? String(row.ride_status) : '',
         paymentStatus: row.payment_status ? String(row.payment_status) : paymentStatus,
+        invoiceStatus,
+        corporateId: row.corporate_id ? Number(row.corporate_id) : null,
+        corporateCompanyName: row.corporate_company_name || payload?.corporateCompanyName || '',
         originalEstimate:
           row.original_estimated_fare !== null && row.original_estimated_fare !== undefined
             ? Number(row.original_estimated_fare)

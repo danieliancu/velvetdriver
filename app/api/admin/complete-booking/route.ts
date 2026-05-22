@@ -47,7 +47,34 @@ export async function POST(request: Request) {
     const paymentStatus = String(ride.payment_status || payload?.paymentStatus || '').toLowerCase();
     let payment: Record<string, any> | null = null;
 
-    if (paymentFlow === 'flexible_after_journey') {
+    if (paymentFlow === 'pay_by_invoice' || paymentFlow === 'corporate_invoice' || paymentStatus === 'invoice pending') {
+      const nextPayload = {
+        ...payload,
+        finalFare,
+        paymentStatus: 'Invoice pending',
+        invoiceStatus: 'Ready for invoicing',
+      };
+      const [result] = await conn.execute<mysql.ResultSetHeader>(
+        `UPDATE client_journeys
+            SET status = 'Completed',
+                ride_status = 'completed',
+                payment_status = 'Invoice pending',
+                invoice_status = 'Ready for invoicing',
+                final_fare = ?,
+                fare_finalized_at = NOW(),
+                booking_payload = ?,
+                updated_at = NOW()
+          WHERE id = ?
+            AND status = 'Upcoming'
+          LIMIT 1`,
+        [finalFare, JSON.stringify(nextPayload), journeyId]
+      );
+      if (!result.affectedRows) {
+        await conn.rollback();
+        return NextResponse.json({ error: 'Booking not found or not upcoming' }, { status: 404 });
+      }
+      payment = { ok: true, strategy: 'corporate_invoice_ready' };
+    } else if (paymentFlow === 'flexible_after_journey') {
       payment = await chargeFlexibleRidePayment(conn, { rideId: journeyId, finalFare });
       if (!payment.ok) {
         await conn.commit();

@@ -13,6 +13,7 @@ import BookingTextArea from '@/components/BookingTextArea';
 import Modal from '@/components/Modal';
 import { useAlert } from '@/components/AlertProvider';
 import { useAuth } from '@/lib/auth-context';
+import { Role } from '@/types';
 import StripePaymentForm from '@/components/payments/StripePaymentForm';
 import {
     AIRPORTS,
@@ -126,7 +127,15 @@ const BookingPageInner = () => {
     const [stripePublishableKey, setStripePublishableKey] = useState<string | null>(null);
     const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
     const [paymentError, setPaymentError] = useState<string | null>(null);
-    const [paymentOption, setPaymentOption] = useState<'fixed_pay_now' | 'flexible_after_journey' | 'cash_to_driver' | 'card_to_driver'>('fixed_pay_now');
+    const [paymentOption, setPaymentOption] = useState<'fixed_pay_now' | 'flexible_after_journey' | 'cash_to_driver' | 'card_to_driver' | 'pay_by_invoice'>('fixed_pay_now');
+    const [corporateInvoiceEligibility, setCorporateInvoiceEligibility] = useState<{
+        eligible: boolean;
+        reason?: string;
+        corporateId?: number;
+        companyName?: string;
+        unpaidTotal?: number;
+        creditLimit?: number;
+    } | null>(null);
     const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
     const [clientCreditBalance, setClientCreditBalance] = useState(0);
     const [discountCodeInput, setDiscountCodeInput] = useState('');
@@ -152,7 +161,15 @@ const BookingPageInner = () => {
         date.trim().length > 0 &&
         time.trim().length > 0;
     const finalDropIndex = Math.max(0, dropOffAddresses.length - 1);
-    const paymentOptions: Array<{ key: 'fixed_pay_now' | 'flexible_after_journey' | 'cash_to_driver' | 'card_to_driver'; label: string; description: string }> = [
+    const isCorporateUser = user?.role === Role.CORPORATE;
+    const paymentOptions: Array<{ key: 'fixed_pay_now' | 'flexible_after_journey' | 'cash_to_driver' | 'card_to_driver' | 'pay_by_invoice'; label: string; description: string }> = [
+        ...(isCorporateUser && corporateInvoiceEligibility?.eligible
+            ? [{
+                key: 'pay_by_invoice' as const,
+                label: 'Pay by Invoice',
+                description: 'No Stripe payment is taken at booking. Velvet Drivers invoices the company after completion.',
+            }]
+            : []),
         {
             key: 'fixed_pay_now',
             label: 'Fixed Price - Pay Now',
@@ -163,16 +180,20 @@ const BookingPageInner = () => {
             label: 'Flexible Fare - Pay After Journey',
             description: 'Final fare reflects waiting time, stops and route changes. Your saved card is charged after completion.',
         },
-        {
-            key: 'card_to_driver',
-            label: 'Card to driver',
-            description: 'Pay the chauffeur by card in the vehicle. No online Stripe payment is taken now.',
-        },
-        {
-            key: 'cash_to_driver',
-            label: 'Cash to driver',
-            description: 'Pay the chauffeur in cash. No online Stripe payment is taken now.',
-        },
+        ...(!isCorporateUser
+            ? [
+                {
+                    key: 'card_to_driver' as const,
+                    label: 'Card to driver',
+                    description: 'Pay the chauffeur by card in the vehicle. No online Stripe payment is taken now.',
+                },
+                {
+                    key: 'cash_to_driver' as const,
+                    label: 'Cash to driver',
+                    description: 'Pay the chauffeur in cash. No online Stripe payment is taken now.',
+                },
+            ]
+            : []),
     ];
     const bookingLeadTimeHours = useMemo(() => {
         if (!date.trim() || !time.trim()) return null;
@@ -182,6 +203,7 @@ const BookingPageInner = () => {
     }, [date, time]);
     const showLeadTimeNotice = bookingLeadTimeHours !== null && bookingLeadTimeHours < 24;
     const isDriverCollectPayment = paymentOption === 'cash_to_driver' || paymentOption === 'card_to_driver';
+    const isInvoicePayment = paymentOption === 'pay_by_invoice';
     const expectedStripeSecretType = paymentOption === 'fixed_pay_now' ? 'payment' : 'setup';
     const actualStripeSecretType = stripeClientSecret?.startsWith('pi_')
         ? 'payment'
@@ -190,6 +212,32 @@ const BookingPageInner = () => {
             : null;
     const stripeClientSecretMatchesPaymentOption =
         Boolean(stripeClientSecret) && actualStripeSecretType === expectedStripeSecretType;
+
+    useEffect(() => {
+        if (!user?.email || user.role !== Role.CORPORATE) {
+            setCorporateInvoiceEligibility(null);
+            if (paymentOption === 'pay_by_invoice') setPaymentOption('fixed_pay_now');
+            return;
+        }
+        if (paymentOption === 'cash_to_driver' || paymentOption === 'card_to_driver') {
+            setPaymentOption('fixed_pay_now');
+            return;
+        }
+        let cancelled = false;
+        fetch(`/api/corporate/invoice-eligibility?email=${encodeURIComponent(user.email)}`, { cache: 'no-store' })
+            .then((res) => res.json())
+            .then((data) => {
+                if (cancelled) return;
+                setCorporateInvoiceEligibility(data);
+                if (!data?.eligible && paymentOption === 'pay_by_invoice') setPaymentOption('fixed_pay_now');
+            })
+            .catch(() => {
+                if (!cancelled) setCorporateInvoiceEligibility({ eligible: false, reason: 'Unable to check corporate invoice eligibility.' });
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [paymentOption, user?.email, user?.role]);
 
     const LONDON_CENTER = { lat: 51.509865, lng: -0.118092 }; // Charing Cross
 
@@ -1470,6 +1518,10 @@ const BookingPageInner = () => {
             await finalizeDriverCollectBooking();
             return;
         }
+        if (paymentOption === 'pay_by_invoice') {
+            await finalizeInvoiceBooking();
+            return;
+        }
         if (amountDueNow <= 0) {
             await finalizeBookingUsingCredit();
             return;
@@ -1482,7 +1534,7 @@ const BookingPageInner = () => {
     };
 
     const createCheckoutIntent = async () => {
-        if (paymentOption === 'cash_to_driver' || paymentOption === 'card_to_driver') return;
+        if (paymentOption === 'cash_to_driver' || paymentOption === 'card_to_driver' || paymentOption === 'pay_by_invoice') return;
         if (!pendingBookingPayload?.totalFare || paymentIntentLoading || stripeClientSecret || amountDueNow <= 0) return;
         setPaymentIntentLoading(true);
         setPaymentError(null);
@@ -1618,6 +1670,51 @@ const BookingPageInner = () => {
             router.push(user ? '/client/dashboard' : '/');
         } catch (err: any) {
             showAlert(err?.message || 'Failed to submit booking.');
+        } finally {
+            setBookingSubmitting(false);
+        }
+    };
+
+    const finalizeInvoiceBooking = async () => {
+        setBookingSubmitting(true);
+        try {
+            const response = await fetch('/api/bookings/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...pendingBookingPayload,
+                    totalFare: totalFareFinal,
+                    originalTotalFare: baseTotalFare,
+                    discount: discountData
+                        ? {
+                            code: discountData.code,
+                            name: discountData.name,
+                            type: discountData.type,
+                            amount: discountData.amount,
+                            appliedAmount: discountAmount,
+                        }
+                        : null,
+                    paymentIntentId: null,
+                    setupIntentId: null,
+                    paymentStatus: 'Invoice pending',
+                    paymentMethod: 'Invoice',
+                    paymentFlow: 'pay_by_invoice',
+                    paymentAmount: 0,
+                    paymentCurrency: 'GBP',
+                    appliedCreditAmount: 0,
+                    corporateId: corporateInvoiceEligibility?.corporateId || null,
+                }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data?.error || 'Failed to submit invoice booking');
+            }
+            setShowVerificationModal(false);
+            setCheckoutActive(false);
+            showAlert('Booking confirmed. Payment status: Invoice pending.');
+            router.push('/corporate/dashboard');
+        } catch (err: any) {
+            showAlert(err?.message || 'Failed to submit invoice booking.');
         } finally {
             setBookingSubmitting(false);
         }
@@ -2181,6 +2278,11 @@ const BookingPageInner = () => {
                                             {appliedCreditAmount > 0 ? ` | Applying GBP${appliedCreditAmount.toFixed(2)} to this booking` : ''}
                                         </p>
                                     ) : null}
+                                    {isCorporateUser && corporateInvoiceEligibility && !corporateInvoiceEligibility.eligible ? (
+                                        <p className="text-xs text-amber-300">
+                                            Pay by Invoice unavailable: {corporateInvoiceEligibility.reason || 'account not eligible'}.
+                                        </p>
+                                    ) : null}
                                     <div className="flex flex-col sm:flex-row gap-3">
                                         {paymentOptions.map((option) => (
                                             <label
@@ -2215,7 +2317,21 @@ const BookingPageInner = () => {
                                         ))}
                                     </div>
                                 </div>
-                                {isDriverCollectPayment ? (
+                                {isInvoicePayment ? (
+                                    <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
+                                        <p className="text-sm text-gray-300">
+                                            No Stripe payment will be taken now. Velvet Drivers will invoice {corporateInvoiceEligibility?.companyName || 'your company'} after the job is completed.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            disabled={bookingSubmitting}
+                                            onClick={finalizeInvoiceBooking}
+                                            className="w-full px-6 py-3 font-semibold bg-amber-500 text-black rounded-lg hover:bg-amber-400 transition-all duration-300 disabled:opacity-60"
+                                        >
+                                            {bookingSubmitting ? 'Submitting...' : 'Confirm booking - pay by invoice'}
+                                        </button>
+                                    </div>
+                                ) : isDriverCollectPayment ? (
                                     <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
                                         <p className="text-sm text-gray-300">
                                             No online Stripe payment will be taken now.

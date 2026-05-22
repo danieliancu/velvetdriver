@@ -1,0 +1,63 @@
+-- Patch: corporate accounts + invoice workflow
+-- Run after the existing client_journeys/corporates schema patches.
+
+ALTER TABLE users
+  MODIFY COLUMN status VARCHAR(40) NOT NULL DEFAULT 'pending';
+
+ALTER TABLE corporates
+  MODIFY COLUMN status VARCHAR(40) NOT NULL DEFAULT 'pending_approval',
+  ADD COLUMN billing_contact_email VARCHAR(255) NULL AFTER accounts_contact_name,
+  ADD COLUMN payment_terms_accepted_at DATETIME NULL AFTER additional_notes,
+  ADD COLUMN terms_accepted_at DATETIME NULL AFTER payment_terms_accepted_at,
+  ADD COLUMN internal_notes LONGTEXT NULL AFTER terms_accepted_at,
+  ADD COLUMN invoice_payments_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER internal_notes,
+  ADD COLUMN credit_limit DECIMAL(10,2) NOT NULL DEFAULT 2000.00 AFTER invoice_payments_enabled;
+
+UPDATE corporates SET status = 'pending_approval' WHERE status = 'pending';
+UPDATE corporates SET status = 'approved' WHERE status = 'active';
+
+ALTER TABLE client_journeys
+  ADD COLUMN corporate_id INT NULL AFTER client_id,
+  ADD COLUMN invoice_status VARCHAR(40) NULL AFTER payment_status,
+  ADD KEY cj_corporate_idx (corporate_id),
+  ADD KEY cj_invoice_status_idx (invoice_status);
+
+ALTER TABLE client_journeys
+  ADD CONSTRAINT cj_corporate_fk FOREIGN KEY (corporate_id) REFERENCES corporates(id) ON DELETE SET NULL;
+
+ALTER TABLE invoices
+  MODIFY COLUMN status VARCHAR(40) NOT NULL DEFAULT 'Pending',
+  ADD COLUMN subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER amount,
+  ADD COLUMN vat_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER subtotal,
+  ADD COLUMN total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER vat_amount,
+  ADD COLUMN payment_instructions LONGTEXT NULL AFTER paid_at,
+  ADD COLUMN sent_at DATETIME NULL AFTER payment_instructions,
+  ADD COLUMN cancelled_at DATETIME NULL AFTER sent_at,
+  ADD COLUMN pdf_url VARCHAR(255) NULL AFTER cancelled_at;
+
+CREATE TABLE IF NOT EXISTS invoice_bookings (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  invoice_id INT NOT NULL,
+  journey_id BIGINT NOT NULL,
+  amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_invoice_booking_journey (journey_id),
+  KEY idx_invoice_bookings_invoice (invoice_id),
+  CONSTRAINT fk_invoice_bookings_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+  CONSTRAINT fk_invoice_bookings_journey FOREIGN KEY (journey_id) REFERENCES client_journeys(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  id INT NOT NULL PRIMARY KEY,
+  payload LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL CHECK (json_valid(payload)),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+INSERT INTO app_settings (id, payload)
+VALUES (1, JSON_OBJECT('vatEnabled', false, 'vatRate', 20, 'invoicePaymentInstructions', 'Please pay by bank transfer within 14 days.'))
+ON DUPLICATE KEY UPDATE payload = JSON_MERGE_PATCH(
+  JSON_OBJECT('vatEnabled', false, 'vatRate', 20, 'invoicePaymentInstructions', 'Please pay by bank transfer within 14 days.'),
+  payload
+);

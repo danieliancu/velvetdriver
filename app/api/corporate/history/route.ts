@@ -23,9 +23,10 @@ export async function GET(request: Request) {
 
   try {
     const [users] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id
+      `SELECT u.id, c.id AS corporate_id
        FROM users u
        INNER JOIN roles r ON r.id = u.role_id
+       LEFT JOIN corporates c ON c.user_id = u.id
        WHERE u.email = ? AND r.code = 'corporate'
        LIMIT 1`,
       [email]
@@ -79,10 +80,30 @@ export async function GET(request: Request) {
          ) ranked
          WHERE ranked.rn = 1
        ) car_info ON car_info.driver_id = d.id
-       WHERE (cj.client_id = ? OR LOWER(cj.passenger_email) = ?)
+       WHERE (cj.client_id = ? OR LOWER(cj.passenger_email) = ? OR cj.corporate_id = ?)
          AND cj.status <> 'Saved'
        ORDER BY cj.journey_date DESC`,
-      [Number(user.id), email]
+      [Number(user.id), email, Number(user.corporate_id || 0)]
+    );
+
+    const [invoiceRows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT i.id,
+              i.reference,
+              i.status,
+              i.total_amount,
+              i.amount,
+              i.issued_at,
+              i.due_at,
+              i.paid_at,
+              i.pdf_url,
+              GROUP_CONCAT(CONCAT('VD-', LPAD(ib.journey_id, 4, '0')) ORDER BY ib.journey_id SEPARATOR ', ') AS booking_refs
+       FROM invoices i
+       LEFT JOIN invoice_bookings ib ON ib.invoice_id = i.id
+       WHERE i.corporate_id = ?
+         AND i.deleted_at IS NULL
+       GROUP BY i.id
+       ORDER BY COALESCE(i.issued_at, i.created_at) DESC`,
+      [Number(user.corporate_id || 0)]
     );
 
     const journeys = rows.map((row) => ({
@@ -99,7 +120,19 @@ export async function GET(request: Request) {
       invoiceUrl: row.invoice_url || null,
     }));
 
-    return NextResponse.json({ journeys });
+    const invoices = invoiceRows.map((row) => ({
+      id: Number(row.id),
+      reference: row.reference || '',
+      status: row.status || 'Pending',
+      amount: Number(row.total_amount ?? row.amount ?? 0),
+      issuedAt: row.issued_at ? formatDateTime(row.issued_at) : '-',
+      dueAt: row.due_at ? formatDateTime(row.due_at) : '-',
+      paidAt: row.paid_at ? formatDateTime(row.paid_at) : '',
+      bookingRefs: row.booking_refs || '',
+      pdfUrl: row.pdf_url || null,
+    }));
+
+    return NextResponse.json({ journeys, invoices });
   } catch (err) {
     console.error('Corporate history load error', err);
     return NextResponse.json({ error: 'Failed to load corporate history' }, { status: 500 });

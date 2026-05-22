@@ -8,6 +8,7 @@ type NavItem = {
   id:
     | 'live'
     | 'clients'
+    | 'corporate'
     | 'older'
     | 'drivers'
     | 'blog'
@@ -55,6 +56,11 @@ const AdminPageHeader: React.FC<AdminPageHeaderProps> = ({ active, liveBadgeCoun
       id: 'clients',
       label: 'Clients',
       to: '/admin/clients'
+    },
+    {
+      id: 'corporate',
+      label: 'Corporate Accounts',
+      to: '/admin/corporate-accounts'
     },
     {
       id: 'staff',

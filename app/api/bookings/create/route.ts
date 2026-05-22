@@ -125,11 +125,13 @@ export async function POST(request: Request) {
     const normalizedPaymentFlow =
       paymentFlow === 'fixed_pay_now' ||
       paymentFlow === 'flexible_after_journey' ||
+      paymentFlow === 'pay_by_invoice' ||
       paymentFlow === 'cash_to_driver' ||
       paymentFlow === 'card_to_driver'
         ? paymentFlow
         : '';
     const isDriverCollectFlow = normalizedPaymentFlow === 'cash_to_driver' || normalizedPaymentFlow === 'card_to_driver';
+    const isInvoiceFlow = normalizedPaymentFlow === 'pay_by_invoice' || paymentMethod.toLowerCase() === 'invoice';
     const totalFare = Math.max(0, Number(body.totalFare ?? 0));
     const requestedAppliedCredit = Math.max(0, Number(body.appliedCreditAmount ?? 0));
     if (!pickup || !dropOffs.length || !date || !time || !passengerName || !passengerEmail || !passengerPhone) {
@@ -146,6 +148,38 @@ export async function POST(request: Request) {
     if (clientLookupEmail) {
       const [users] = await conn.query<mysql.RowDataPacket[]>('SELECT id FROM users WHERE email = ? LIMIT 1', [clientLookupEmail]);
       if (users[0]?.id) clientId = Number(users[0].id);
+    }
+
+    let corporateId: number | null = null;
+    if (isInvoiceFlow) {
+      const requestedCorporateId = Number(body.corporateId || 0);
+      const [corpRows] = await conn.query<mysql.RowDataPacket[]>(
+        `SELECT c.id,
+                c.status,
+                c.invoice_payments_enabled,
+                c.credit_limit,
+                COALESCE(SUM(CASE WHEN i.status IN ('Pending','Sent','Overdue') THEN i.total_amount ELSE 0 END), 0) AS unpaid_total
+         FROM corporates c
+         INNER JOIN users u ON u.id = c.user_id
+         LEFT JOIN invoices i ON i.corporate_id = c.id AND i.deleted_at IS NULL
+         WHERE (c.id = ? OR LOWER(u.email) = ?)
+         GROUP BY c.id
+         LIMIT 1`,
+        [requestedCorporateId || -1, clientLookupEmail]
+      );
+      const corp = corpRows[0];
+      if (!corp) return NextResponse.json({ error: 'Corporate account not found.' }, { status: 403 });
+      const corpStatus = String(corp.status || '').toLowerCase();
+      if (!['approved', 'active'].includes(corpStatus)) {
+        return NextResponse.json({ error: 'Corporate account is not approved for invoice payments.' }, { status: 403 });
+      }
+      if (!corp.invoice_payments_enabled) {
+        return NextResponse.json({ error: 'Pay by Invoice is not enabled for this corporate account.' }, { status: 403 });
+      }
+      if (Number(corp.unpaid_total || 0) >= Number(corp.credit_limit || 2000)) {
+        return NextResponse.json({ error: 'Corporate credit limit reached. Pay by Invoice is unavailable.' }, { status: 403 });
+      }
+      corporateId = Number(corp.id);
     }
 
     let appliedCreditAmount = 0;
@@ -181,25 +215,29 @@ export async function POST(request: Request) {
             ? 'card_saved'
         : isDriverCollectFlow
           ? 'driver_to_collect'
+        : isInvoiceFlow
+          ? 'Invoice pending'
         : paymentMethod.toLowerCase() === 'card authorization'
           ? 'authorized'
           : paymentMethod.toLowerCase() === 'credit'
             ? 'captured'
             : 'authorization_pending',
       paymentFlow: normalizedPaymentFlow || (paymentMethod.toLowerCase() === 'card authorization' ? 'legacy_authorization' : 'manual'),
+      corporateId: corporateId || undefined,
       setupIntentId: setupIntentId || undefined,
     };
 
     await conn.beginTransaction();
     const [result] = await conn.execute<mysql.ResultSetHeader>(
       `INSERT INTO client_journeys
-        (client_id, journey_date, pickup, destination, service_type, driver_name, car, plate, status, ride_status,
-         payment_status, price, original_estimated_fare, current_estimated_fare, final_fare, originally_authorized_amount,
+        (client_id, corporate_id, journey_date, pickup, destination, service_type, driver_name, car, plate, status, ride_status,
+         payment_status, invoice_status, price, original_estimated_fare, current_estimated_fare, final_fare, originally_authorized_amount,
          latest_authorized_amount, captured_amount, invoice_url, passenger_name, passenger_email, passenger_phone,
          vehicle_type_id, booking_payload)
-       VALUES (?, ?, ?, ?, ?, 'Pending assignment', 'TBD', 'TBD', 'Upcoming', ?, ?, ?, ?, ?, NULL, 0, 0, 0, NULL, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, 'Pending assignment', 'TBD', 'TBD', 'Upcoming', ?, ?, ?, ?, ?, ?, NULL, 0, 0, 0, NULL, ?, ?, ?, ?, ?)`,
       [
         clientId,
+        corporateId,
         journeyDate.toISOString().slice(0, 19).replace('T', ' '),
         pickup,
         destination,
@@ -210,6 +248,8 @@ export async function POST(request: Request) {
             ? 'payment_pending'
           : isDriverCollectFlow
             ? 'driver_to_collect'
+            : isInvoiceFlow
+              ? 'invoice_pending'
             : paymentMethod.toLowerCase() === 'card authorization' ? 'payment_authorized' : 'booked',
         normalizedPaymentFlow === 'fixed_pay_now'
           ? 'captured'
@@ -217,11 +257,14 @@ export async function POST(request: Request) {
             ? 'card_saved'
         : isDriverCollectFlow
           ? 'driver_to_collect'
+        : isInvoiceFlow
+          ? 'Invoice pending'
         : paymentMethod.toLowerCase() === 'card authorization'
           ? 'authorized'
           : paymentMethod.toLowerCase() === 'credit'
             ? 'captured'
             : 'authorization_pending',
+        isInvoiceFlow ? 'Unpaid' : null,
         totalFare,
         totalFare,
         totalFare,

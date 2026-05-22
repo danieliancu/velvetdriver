@@ -17,6 +17,9 @@ type PricingState = {
   surcharges: { congestion: number; airports: Record<AirportCode, AirportSurcharge> };
   nightSurcharge: number;
   minimumPriceActive: boolean;
+  vatEnabled: boolean;
+  vatRate: number;
+  invoicePaymentInstructions: string;
 };
 
 const defaultPricing: PricingState = {
@@ -28,6 +31,9 @@ const defaultPricing: PricingState = {
   surcharges: { congestion: 15, airports: buildDefaultAirportSurcharges(15, 7) },
   nightSurcharge: 30,
   minimumPriceActive: true,
+  vatEnabled: false,
+  vatRate: 20,
+  invoicePaymentInstructions: 'Please pay by bank transfer within 14 days.',
 };
 
 const AdminSettingsPage: React.FC = () => {
@@ -65,6 +71,9 @@ const AdminSettingsPage: React.FC = () => {
       airports: normalizeAirportSurcharges(data?.surcharges?.airports),
     },
     minimumPriceActive: Boolean(data?.minimumPriceActive ?? true),
+    vatEnabled: Boolean(data?.vatEnabled ?? false),
+    vatRate: Number(data?.vatRate ?? 20),
+    invoicePaymentInstructions: String(data?.invoicePaymentInstructions ?? defaultPricing.invoicePaymentInstructions),
   });
 
   useEffect(() => {
@@ -466,6 +475,50 @@ const AdminSettingsPage: React.FC = () => {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-black/50 p-4 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">VAT & corporate invoices</h3>
+                    <p className="text-xs text-gray-400">VAT is disabled by default and only added to corporate invoices when active.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSettings((prev) => (prev ? { ...prev, vatEnabled: !prev.vatEnabled } : prev))}
+                    className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+                      settings.vatEnabled
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                    }`}
+                  >
+                    {settings.vatEnabled ? 'VAT active' : 'VAT inactive'}
+                  </button>
+                </div>
+                <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+                  <label className="text-sm text-gray-200">
+                    VAT rate (%)
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="mt-2 w-full rounded-md border border-white/10 bg-[#1c1c1c] px-3 py-2 text-white"
+                      value={settings.vatRate}
+                      onChange={(e) => setSettings((prev) => (prev ? { ...prev, vatRate: Number(e.target.value) || 0 } : prev))}
+                    />
+                  </label>
+                  <label className="text-sm text-gray-200">
+                    Invoice payment instructions
+                    <textarea
+                      rows={3}
+                      className="mt-2 w-full rounded-md border border-white/10 bg-[#1c1c1c] px-3 py-2 text-white"
+                      value={settings.invoicePaymentInstructions}
+                      onChange={(e) =>
+                        setSettings((prev) => (prev ? { ...prev, invoicePaymentInstructions: e.target.value } : prev))
+                      }
+                    />
+                  </label>
                 </div>
               </div>
             </section>

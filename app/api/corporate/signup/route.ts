@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { getDbPool } from '@/lib/db';
 
 const pool = getDbPool();
+const CORPORATE_ADMIN_EMAILS = ['roxy.viulet@gmail.com', 'daniiancu1978@gmail.com'];
 
 type CorporateMeta = {
   accountsEmail?: string;
@@ -35,6 +36,41 @@ const parsePoRequired = (value: unknown) => {
   if (normalized === 'yes') return 1;
   if (normalized === 'no') return 0;
   return null;
+};
+
+const sendCorporateRequestEmail = async (input: { companyName: string; contactName: string; contactEmail: string; contactPhone: string }) => {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.EMAIL_FROM;
+  if (!resendApiKey || !emailFrom) return;
+
+  await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: emailFrom,
+      to: CORPORATE_ADMIN_EMAILS,
+      subject: `New corporate account request - ${input.companyName}`,
+      html: `
+        <h2>New corporate account request</h2>
+        <p><strong>Company:</strong> ${input.companyName}</p>
+        <p><strong>Contact:</strong> ${input.contactName}</p>
+        <p><strong>Email:</strong> ${input.contactEmail}</p>
+        <p><strong>Phone:</strong> ${input.contactPhone}</p>
+        <p>Review it in Admin &gt; Corporate Accounts.</p>
+      `,
+      text: [
+        'New corporate account request',
+        `Company: ${input.companyName}`,
+        `Contact: ${input.contactName}`,
+        `Email: ${input.contactEmail}`,
+        `Phone: ${input.contactPhone}`,
+        'Review it in Admin > Corporate Accounts.',
+      ].join('\n'),
+    }),
+  }).catch((err) => console.error('Corporate request email error', err));
 };
 
 const buildAdditionalNotes = (serviceNotes: string | null, meta: CorporateMeta) => {
@@ -85,13 +121,14 @@ export async function POST(request: Request) {
     const vehicleTypes = toOptional(body.vehicleTypes);
     const paymentMethod = toOptional(body.paymentMethod);
     const acceptedTerms = String(body.tandc ?? '').trim().toLowerCase() === 'yes';
+    const acceptedPaymentTerms = String(body.paymentTerms ?? '').trim().toLowerCase() === 'yes';
     const acceptedGdpr = String(body.gdpr ?? '').trim().toLowerCase() === 'yes';
 
-    if (!companyName || !contactName || !contactEmail || !contactPhone || !password) {
+    if (!companyName || !contactName || !contactEmail || !contactPhone || !billingAddress || !password) {
       return NextResponse.json({ error: 'Missing required fields.' }, { status: 400 });
     }
-    if (!acceptedTerms || !acceptedGdpr) {
-      return NextResponse.json({ error: 'Terms and GDPR consent are required.' }, { status: 400 });
+    if (!acceptedTerms || !acceptedPaymentTerms || !acceptedGdpr) {
+      return NextResponse.json({ error: 'Payment terms, terms and privacy consent are required.' }, { status: 400 });
     }
 
     conn = await pool.getConnection();
@@ -112,13 +149,13 @@ export async function POST(request: Request) {
       if (roleCode && roleCode !== 'corporate') {
         return NextResponse.json(
           {
-            error: `This email is already registered as ${roleCode}. A ${roleCode} account cannot be registered as corporate.`,
+            error: `${contactEmail} is already registered as ${roleCode}. A ${roleCode} account cannot be registered as corporate.`,
           },
           { status: 409 }
         );
       }
       return NextResponse.json(
-        { error: 'This email is already registered as corporate. Please sign in.' },
+        { error: `${contactEmail} is already registered as corporate. Please sign in.` },
         { status: 409 }
       );
     }
@@ -145,7 +182,7 @@ export async function POST(request: Request) {
       paymentMethod: paymentMethod || undefined,
     });
 
-    await conn.execute(
+    const [corporateResult] = await conn.execute<mysql.ResultSetHeader>(
       `INSERT INTO corporates (
          user_id,
          company_name,
@@ -157,6 +194,7 @@ export async function POST(request: Request) {
          job_title,
          phone,
          accounts_contact_name,
+         billing_contact_email,
          accounts_phone,
          billing_address,
          preferred_invoice_method_id,
@@ -164,8 +202,10 @@ export async function POST(request: Request) {
          po_numbers_required,
          invoice_email,
          additional_notes,
+         payment_terms_accepted_at,
+         terms_accepted_at,
          status
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), 'pending_approval')`,
       [
         userId,
         companyName,
@@ -177,6 +217,7 @@ export async function POST(request: Request) {
         contactTitle,
         contactPhone,
         accountsName,
+        accountsEmail,
         accountsPhone,
         billingAddress,
         preferredInvoiceMethodId,
@@ -186,13 +227,25 @@ export async function POST(request: Request) {
         additionalNotes,
       ]
     );
+    const corporateId = Number(corporateResult.insertId || 0);
+    await conn.execute(
+      `INSERT INTO admin_notifications (category, title, message, severity, tags, related_table, related_id)
+       VALUES ('corporate', ?, ?, 'info', ?, 'corporates', ?)`,
+      [
+        `New corporate account request: ${companyName}`,
+        `${contactName} submitted a corporate account request for ${companyName}.`,
+        JSON.stringify({ status: 'pending_approval', email: contactEmail }),
+        corporateId || null,
+      ]
+    ).catch((err) => console.error('Corporate notification insert error', err));
 
     await conn.commit();
+    await sendCorporateRequestEmail({ companyName, contactName, contactEmail, contactPhone: contactPhone || '' });
     return NextResponse.json({
       ok: true,
       id: userId,
       email: contactEmail,
-      message: 'Corporate account request submitted. We will contact you after approval.',
+      message: 'Your corporate account request is under review.',
     });
   } catch (err) {
     if (conn) {

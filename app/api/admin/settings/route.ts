@@ -41,6 +41,9 @@ type PricingPayload = {
   surcharges: { congestion: number; airports: Record<AirportCode, AirportSurcharge> };
   nightSurcharge: number;
   minimumPriceActive: boolean;
+  vatEnabled?: boolean;
+  vatRate?: number;
+  invoicePaymentInstructions?: string;
 };
 
 const fallbackPayload: PricingPayload = {
@@ -52,6 +55,18 @@ const fallbackPayload: PricingPayload = {
   surcharges: { congestion: 15, airports: buildDefaultAirportSurcharges(15, 7) },
   nightSurcharge: 30,
   minimumPriceActive: true,
+  vatEnabled: false,
+  vatRate: 20,
+  invoicePaymentInstructions: 'Please pay by bank transfer within 14 days.',
+};
+
+const parseAppSettings = (value: unknown) => {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, any>) : {};
+  } catch {
+    return {};
+  }
 };
 
 export async function GET() {
@@ -72,6 +87,9 @@ export async function GET() {
     const [settingRows] = await pool.query<PricingSettingRow[]>(
       'SELECT night_surcharge, min_price_active FROM pricing_settings WHERE id = 1 LIMIT 1'
     );
+    const [appSettingRows] = await pool.query<mysql.RowDataPacket[]>(
+      'SELECT payload FROM app_settings WHERE id = 1 LIMIT 1'
+    ).catch(() => [[] as mysql.RowDataPacket[]]);
 
     if (!vehicleRows.length) {
       return NextResponse.json(fallbackPayload);
@@ -112,8 +130,17 @@ export async function GET() {
 
     const nightSurcharge = Number(settingRows[0]?.night_surcharge ?? fallbackPayload.nightSurcharge);
     const minimumPriceActive = Boolean(settingRows[0]?.min_price_active ?? (fallbackPayload.minimumPriceActive ? 1 : 0));
+    const appSettings = parseAppSettings(appSettingRows[0]?.payload);
 
-    return NextResponse.json({ vehicles, surcharges, nightSurcharge, minimumPriceActive });
+    return NextResponse.json({
+      vehicles,
+      surcharges,
+      nightSurcharge,
+      minimumPriceActive,
+      vatEnabled: Boolean(appSettings.vatEnabled ?? fallbackPayload.vatEnabled),
+      vatRate: Number(appSettings.vatRate ?? fallbackPayload.vatRate),
+      invoicePaymentInstructions: String(appSettings.invoicePaymentInstructions ?? fallbackPayload.invoicePaymentInstructions),
+    });
   } catch (err) {
     console.error('Error loading pricing settings', err);
     return NextResponse.json(fallbackPayload, { status: 200 });
@@ -128,6 +155,10 @@ export async function PUT(request: Request) {
     const airports = surcharges.airports ?? fallbackPayload.surcharges.airports;
     const nightSurcharge = body.nightSurcharge ?? fallbackPayload.nightSurcharge;
     const minimumPriceActive = body.minimumPriceActive ?? fallbackPayload.minimumPriceActive;
+    const vatEnabled = Boolean(body.vatEnabled ?? false);
+    const vatRate = Math.max(0, Number(body.vatRate ?? fallbackPayload.vatRate) || 0);
+    const invoicePaymentInstructions =
+      String(body.invoicePaymentInstructions || '').trim() || fallbackPayload.invoicePaymentInstructions;
 
     const conn = await pool.getConnection();
     try {
@@ -165,6 +196,21 @@ export async function PUT(request: Request) {
            night_surcharge = VALUES(night_surcharge),
            min_price_active = VALUES(min_price_active)`,
         [nightSurcharge, minimumPriceActive ? 1 : 0]
+      );
+
+      await conn.execute(
+        `CREATE TABLE IF NOT EXISTS app_settings (
+           id INT NOT NULL PRIMARY KEY,
+           payload LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL CHECK (json_valid(payload)),
+           created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+           updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`
+      );
+      await conn.execute(
+        `INSERT INTO app_settings (id, payload)
+         VALUES (1, ?)
+         ON DUPLICATE KEY UPDATE payload = JSON_MERGE_PATCH(payload, VALUES(payload))`,
+        [JSON.stringify({ vatEnabled, vatRate, invoicePaymentInstructions })]
       );
 
       const airportEntries = AIRPORTS.flatMap(

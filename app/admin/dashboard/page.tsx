@@ -62,6 +62,9 @@ type LiveBooking = {
   clientConfirmed?: boolean;
   rideStatus?: string;
   paymentStatus?: string;
+  invoiceStatus?: string;
+  corporateId?: number | null;
+  corporateCompanyName?: string;
   originalEstimate?: number | null;
   currentEstimate?: number | null;
   finalFare?: number | null;
@@ -111,6 +114,9 @@ type LiveBookingResponse = {
   clientConfirmed?: boolean;
   rideStatus?: string;
   paymentStatus?: string;
+  invoiceStatus?: string;
+  corporateId?: number | null;
+  corporateCompanyName?: string;
   originalEstimate?: number | null;
   currentEstimate?: number | null;
   finalFare?: number | null;
@@ -210,6 +216,7 @@ const getPaymentDisplay = (booking: Pick<LiveBooking, 'paymentFlow' | 'paymentSt
   if (status === 'collected_by_driver') return 'Collected by driver';
   if (flow === 'cash_to_driver') return 'Driver to collect cash';
   if (flow === 'card_to_driver') return 'Driver to collect card';
+  if (flow === 'pay_by_invoice' || flow === 'corporate_invoice' || status.includes('invoice')) return 'Invoice pending';
   if (flow === 'fixed_pay_now') return 'Fixed Price - paid online';
   if (flow === 'flexible_after_journey') return 'Flexible Fare - card saved';
   if (HOLD_PAYMENT_STATUSES.has(status)) return 'Card on hold / pre-authorized';
@@ -226,6 +233,9 @@ const getPaymentBadgeClass = (booking: Pick<LiveBooking, 'paymentFlow' | 'paymen
   if (status === 'payment_link_sent') return 'border-sky-400/50 bg-sky-500/15 text-sky-200';
   if (flow === 'cash_to_driver' || flow === 'card_to_driver' || status === 'driver_to_collect') {
     return 'border-orange-400/60 bg-orange-500/15 text-orange-200';
+  }
+  if (flow === 'pay_by_invoice' || flow === 'corporate_invoice' || status.includes('invoice')) {
+    return 'border-sky-400/50 bg-sky-500/15 text-sky-200';
   }
   if (flow === 'flexible_after_journey' || HOLD_PAYMENT_STATUSES.has(status)) {
     return 'border-amber-400/50 bg-amber-500/15 text-amber-200';
@@ -257,19 +267,22 @@ const buildBookingSummary = (booking: LiveBooking, commissionPercent = 0) => {
     .join('\n\n');
   const jobType = resolveWhatsappJobType(booking.vehicle);
   const collectKind = getDriverCollectKind(booking);
+  const flow = String(booking.paymentFlow || '').toLowerCase();
+  const isInvoiceJob = flow === 'pay_by_invoice' || flow === 'corporate_invoice';
   const priceType = collectKind ? '' : resolveWhatsappPriceType(booking.paymentMethod);
   const amount = collectKind
     ? formatClientFareAmount(booking.priceDetails)
     : formatDriverNetAmount(booking.priceDetails, commissionPercent);
-  const priceLine =
-    collectKind && amount !== null
+  const priceLine = isInvoiceJob
+    ? 'Corporate / Invoice Job - no payment to collect'
+    : collectKind && amount !== null
       ? `Collect ${collectKind} £${amount.toFixed(2)}`
       : amount !== null
         ? `${priceType}  GBP ${amount.toFixed(2)}`
         : `${priceType}  ${booking.priceDetails}`;
   const notes = booking.notes?.trim() ? booking.notes.trim() : '-';
 
-  return `JOB TYPE: ${jobType}\nTime: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${routeBlock}\nPrice: ${priceLine}\n\nNotes: ${notes}`;
+  return `JOB TYPE: ${jobType}${isInvoiceJob ? '\nCorporate / Invoice Job' : ''}\nTime: ${booking.time}\nDate: ${booking.date}\nPassenger: ${booking.passenger}\nPhone: ${booking.phone}\n\n${routeBlock}\nPrice: ${priceLine}\n\nNotes: ${notes}`;
 };
 
 const formatCarLabel = (car: {
@@ -492,6 +505,9 @@ const AdminDashboardPage: React.FC = () => {
       clientConfirmed: Boolean(item.clientConfirmed),
       rideStatus: item.rideStatus || '',
       paymentStatus: item.paymentStatus || '',
+      invoiceStatus: item.invoiceStatus || '',
+      corporateId: item.corporateId ?? null,
+      corporateCompanyName: item.corporateCompanyName || '',
       originalEstimate:
         item.originalEstimate !== null && item.originalEstimate !== undefined ? Number(item.originalEstimate) : null,
       currentEstimate:
@@ -1465,6 +1481,17 @@ const AdminDashboardPage: React.FC = () => {
                               <span className={`inline-flex h-6 items-center rounded-full border px-3.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${getPaymentBadgeClass(booking)}`}>
                                 {getPaymentDisplay(booking)}
                               </span>
+                              {booking.corporateId ? (
+                                <span className="inline-flex h-6 items-center rounded-full border border-sky-400/50 bg-sky-500/15 px-3.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-200">
+                                  Corporate
+                                </span>
+                              ) : null}
+                              {String(booking.paymentFlow || '').toLowerCase() === 'pay_by_invoice' ||
+                              String(booking.paymentFlow || '').toLowerCase() === 'corporate_invoice' ? (
+                                <span className="inline-flex h-6 items-center rounded-full border border-indigo-400/50 bg-indigo-500/15 px-3.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-200">
+                                  Invoice
+                                </span>
+                              ) : null}
                             </p>
                             {buildJourneyLocationLines(booking.pickup, booking.dropOffs).map((line) => (
                               <p key={`${booking.id}-${line.label}-${line.value}`} className="text-sm text-gray-300">

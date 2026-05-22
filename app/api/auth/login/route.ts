@@ -65,18 +65,24 @@ export async function POST(request: Request) {
       if (user.status !== 'active') {
         if (user.status === 'pending') {
           return NextResponse.json(
-            { error: 'Corporate account pending approval. Please wait for confirmation.' },
+            { error: 'Your corporate account request is under review.' },
             { status: 403 }
           );
         }
+        if (user.status === 'rejected') {
+          return NextResponse.json({ error: 'Corporate account request rejected.' }, { status: 403 });
+        }
         return NextResponse.json({ error: 'Corporate account not active.' }, { status: 403 });
       }
-      if (user.corp_status && user.corp_status !== 'active') {
-        if (user.corp_status === 'pending') {
+      if (user.corp_status && !['approved', 'active'].includes(user.corp_status)) {
+        if (user.corp_status === 'pending' || user.corp_status === 'pending_approval') {
           return NextResponse.json(
-            { error: 'Corporate account pending approval. Please wait for confirmation.' },
+            { error: 'Your corporate account request is under review.' },
             { status: 403 }
           );
+        }
+        if (user.corp_status === 'rejected') {
+          return NextResponse.json({ error: 'Corporate account request rejected.' }, { status: 403 });
         }
         return NextResponse.json({ error: 'Corporate account suspended.' }, { status: 403 });
       }

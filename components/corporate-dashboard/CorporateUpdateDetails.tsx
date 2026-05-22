@@ -123,7 +123,7 @@ const CorporateUpdateDetails: React.FC<CorporateUpdateDetailsProps> = ({ profile
             value={formData.companyRegNumber}
             onChange={handleFieldChange('companyRegNumber')}
           />
-          <Input id="vatNumber" label="VAT Number" value={formData.vatNumber} onChange={handleFieldChange('vatNumber')} />
+          <Input id="vatNumber" label="VAT Number (optional - VAT is not added unless enabled by Velvet Drivers)" value={formData.vatNumber} onChange={handleFieldChange('vatNumber')} />
         </div>
         <Input
           id="businessType"
