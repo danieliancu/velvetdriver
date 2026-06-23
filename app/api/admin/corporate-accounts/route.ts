@@ -241,7 +241,7 @@ export async function POST(request: Request) {
       const [result] = await conn.execute<mysql.ResultSetHeader>(
         `INSERT INTO invoices (journey_id, corporate_id, reference, amount, subtotal, vat_amount, total_amount, status, issued_at, due_at, payment_instructions)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', NOW(), DATE_ADD(NOW(), INTERVAL 14 DAY), ?)`,
-        [Number(bookingRows[0].id), corporateId, reference, total, subtotal, vatAmount, total, settings.paymentInstructions]
+        [null, corporateId, reference, total, subtotal, vatAmount, total, settings.paymentInstructions]
       );
       const invoiceId = Number(result.insertId);
       for (const row of bookingRows) {

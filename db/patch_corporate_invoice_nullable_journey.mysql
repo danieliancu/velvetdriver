@@ -1,0 +1,21 @@
+-- Patch: allow consolidated corporate invoices without a legacy journeys row.
+-- Corporate invoice bookings are linked through invoice_bookings.journey_id -> client_journeys.id.
+
+SET @invoice_journey_type := (
+  SELECT COLUMN_TYPE
+    FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'invoices'
+     AND COLUMN_NAME = 'journey_id'
+   LIMIT 1
+);
+
+SET @invoice_journey_nullable_sql := IF(
+  @invoice_journey_type IS NULL,
+  'SELECT 1',
+  CONCAT('ALTER TABLE invoices MODIFY COLUMN journey_id ', @invoice_journey_type, ' NULL')
+);
+
+PREPARE invoice_journey_nullable_stmt FROM @invoice_journey_nullable_sql;
+EXECUTE invoice_journey_nullable_stmt;
+DEALLOCATE PREPARE invoice_journey_nullable_stmt;

@@ -24,13 +24,6 @@ import {
     type AirportSurcharge
 } from '@/lib/airports';
 
-type PlaceResult = {
-    name?: string;
-    formatted_address?: string;
-    geometry?: { location?: { lat: () => number; lng: () => number } };
-    location?: { lat: number; lng: number } | { lat: () => number; lng: () => number };
-};
-
 type FlightDetails = {
     number: string;
     status?: string;
@@ -58,6 +51,8 @@ type PlaceLike = {
     geometry?: { location?: { lat: () => number; lng: () => number } };
     location?: { lat: number; lng: number } | { lat: () => number; lng: () => number };
 };
+
+type LatLngPoint = { lat: number; lng: number };
 
 const BookingPageInner = () => {
     const router = useRouter();
@@ -89,7 +84,6 @@ const BookingPageInner = () => {
     const [dropAirportCodes, setDropAirportCodes] = useState<Array<AirportCode | null>>([null]);
     const [congestionDetected, setCongestionDetected] = useState(false);
     const [routesApiWarning, setRoutesApiWarning] = useState<string | null>(null);
-    const [googleRouteServicesReady, setGoogleRouteServicesReady] = useState(false);
     const [legBreakdown, setLegBreakdown] = useState<Array<{
         miles: number;
         originLabel: string;
@@ -103,8 +97,6 @@ const BookingPageInner = () => {
     const pickupInputRef = useRef<HTMLInputElement | null>(null);
     const dropoffInputRefs = useRef<Array<HTMLInputElement | null>>([]);
     const dropoffAutocompleteRefs = useRef<any[]>([]);
-    const distanceServiceRef = useRef<any>(null);
-    const directionsServiceRef = useRef<any>(null);
     const placeAutocompleteCleanupRef = useRef<Array<() => void>>([]);
     const [passengerName, setPassengerName] = useState('');
     const [passengerEmail, setPassengerEmail] = useState('');
@@ -398,37 +390,110 @@ const BookingPageInner = () => {
         return Math.max(...zones);
     };
 
+    const getPointCoords = (point: any): LatLngPoint | null => {
+        if (!point) return null;
+        const latValue = typeof point.lat === 'function' ? point.lat() : point.lat;
+        const lngValue = typeof point.lng === 'function' ? point.lng() : point.lng;
+        const lat = Number(latValue);
+        const lng = Number(lngValue);
+        return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+    };
+
+    const zoneSegmentsFromPath = (path: any[], targetMiles?: number) => {
+        if (!Array.isArray(path) || path.length < 2) return null;
+        let straightMiles = 0;
+        const rawSegments: Array<{ zoneId: number | null; miles: number }> = [];
+        const sampleMiles = 0.25;
+
+        for (let i = 0; i < path.length - 1; i += 1) {
+            const startCoords = getPointCoords(path[i]);
+            const endCoords = getPointCoords(path[i + 1]);
+            if (!startCoords || !endCoords) continue;
+            const segmentMiles = haversineMiles(startCoords, endCoords);
+            if (segmentMiles <= 0) continue;
+            straightMiles += segmentMiles;
+            const sampleCount = Math.max(1, Math.ceil(segmentMiles / sampleMiles));
+            for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+                const startRatio = sampleIndex / sampleCount;
+                const endRatio = (sampleIndex + 1) / sampleCount;
+                const midRatio = (startRatio + endRatio) / 2;
+                const mid = {
+                    lat: startCoords.lat + (endCoords.lat - startCoords.lat) * midRatio,
+                    lng: startCoords.lng + (endCoords.lng - startCoords.lng) * midRatio,
+                };
+                const zoneId = getZoneForCoords(mid)?.id ?? null;
+                rawSegments.push({ zoneId, miles: segmentMiles / sampleCount });
+            }
+        }
+
+        if (straightMiles <= 0 || !rawSegments.length) return null;
+        const scale = targetMiles && targetMiles > 0 ? targetMiles / straightMiles : 1;
+        const totals = new Map<string, number>();
+        rawSegments.forEach((segment) => {
+            const scaledMiles = segment.miles * scale;
+            if (scaledMiles <= 0) return;
+            const key = segment.zoneId == null ? 'none' : String(segment.zoneId);
+            totals.set(key, (totals.get(key) || 0) + scaledMiles);
+        });
+
+        return Array.from(totals.entries()).map(([key, miles]) => ({
+            zoneId: key === 'none' ? null : Number(key),
+            miles,
+        }));
+    };
+
+    const hasInnerZoneSegments = (segments: Array<{ zoneId: number | null; miles: number }> | null | undefined) =>
+        Boolean(segments?.some((segment) => segment.zoneId != null && segment.zoneId <= 3 && segment.miles > 0));
+
+    const decodeEncodedPolyline = (encoded: string): LatLngPoint[] => {
+        const points: LatLngPoint[] = [];
+        let index = 0;
+        let lat = 0;
+        let lng = 0;
+
+        while (index < encoded.length) {
+            let result = 0;
+            let shift = 0;
+            let byte = 0;
+            do {
+                byte = encoded.charCodeAt(index++) - 63;
+                result |= (byte & 0x1f) << shift;
+                shift += 5;
+            } while (byte >= 0x20 && index < encoded.length);
+            lat += result & 1 ? ~(result >> 1) : result >> 1;
+
+            result = 0;
+            shift = 0;
+            do {
+                byte = encoded.charCodeAt(index++) - 63;
+                result |= (byte & 0x1f) << shift;
+                shift += 5;
+            } while (byte >= 0x20 && index < encoded.length);
+            lng += result & 1 ? ~(result >> 1) : result >> 1;
+
+            points.push({ lat: lat / 1e5, lng: lng / 1e5 });
+        }
+
+        return points;
+    };
+
     const buildZoneSegmentsFromSteps = (steps: any[]) => {
         if (!steps?.length) return null;
         const totals = new Map<string, number>();
         steps.forEach((step) => {
             const stepMeters = Number(step?.distance?.value ?? 0);
             if (!stepMeters) return;
-            const path = Array.isArray(step?.path) ? step.path : [];
-            if (path.length < 2) return;
-            let straightMiles = 0;
-            const rawSegments: Array<{ zoneId: number | null; miles: number }> = [];
-            for (let i = 0; i < path.length - 1; i += 1) {
-                const start = path[i];
-                const end = path[i + 1];
-                const startCoords = { lat: start.lat(), lng: start.lng() };
-                const endCoords = { lat: end.lat(), lng: end.lng() };
-                const segmentMiles = haversineMiles(startCoords, endCoords);
-                straightMiles += segmentMiles;
-                const mid = { lat: (startCoords.lat + endCoords.lat) / 2, lng: (startCoords.lng + endCoords.lng) / 2 };
-                const zoneId = getZoneForCoords(mid)?.id ?? null;
-                rawSegments.push({ zoneId, miles: segmentMiles });
-            }
-            if (straightMiles <= 0) return;
             const stepMiles = stepMeters / 1609.34;
-            const scale = stepMiles / straightMiles;
-            rawSegments.forEach((segment) => {
-                const scaledMiles = segment.miles * scale;
-                if (scaledMiles <= 0) return;
+            const path = Array.isArray(step?.path) && step.path.length >= 2
+                ? step.path
+                : [step?.start_location, step?.end_location].filter(Boolean);
+            const stepSegments = zoneSegmentsFromPath(path, stepMiles);
+            stepSegments?.forEach((segment) => {
                 const key = segment.zoneId == null ? 'none' : String(segment.zoneId);
-                totals.set(key, (totals.get(key) || 0) + scaledMiles);
+                totals.set(key, (totals.get(key) || 0) + segment.miles);
             });
         });
+        if (!totals.size) return null;
         return Array.from(totals.entries()).map(([key, miles]) => ({
             zoneId: key === 'none' ? null : Number(key),
             miles,
@@ -727,9 +792,11 @@ const BookingPageInner = () => {
     const attachLegacyAutocomplete = () => {
         const maps = (window as any).google?.maps;
         if (!maps?.places || !pickupInputRef.current) return;
-        distanceServiceRef.current = distanceServiceRef.current || new maps.DistanceMatrixService();
-        directionsServiceRef.current = directionsServiceRef.current || new maps.DirectionsService();
-        setGoogleRouteServicesReady(true);
+        placeAutocompleteCleanupRef.current.forEach((fn) => fn());
+        placeAutocompleteCleanupRef.current = [];
+        dropoffAutocompleteRefs.current.forEach((auto) => maps.event.clearInstanceListeners(auto));
+        dropoffAutocompleteRefs.current = [];
+
         const opts = {
             fields: ['place_id', 'types', 'name', 'formatted_address', 'geometry'],
             types: ['geocode', 'establishment'],
@@ -754,7 +821,7 @@ const BookingPageInner = () => {
             });
 
         const pickupAuto = new maps.places.Autocomplete(pickupInputRef.current, opts);
-        pickupAuto.addListener('place_changed', () => {
+        const pickupListener = pickupAuto.addListener('place_changed', () => {
             const place = pickupAuto.getPlace();
             ensurePlaceDetails(place).then((full) => {
                 const match = resolveAirportMatch(full, place?.formatted_address);
@@ -772,14 +839,15 @@ const BookingPageInner = () => {
                 setPickupAirportCode(match.code);
             });
         });
-
-        dropoffAutocompleteRefs.current.forEach((auto) => maps.event.clearInstanceListeners(auto));
-        dropoffAutocompleteRefs.current = [];
+        placeAutocompleteCleanupRef.current.push(() => {
+            if (pickupListener) maps.event.removeListener(pickupListener);
+            maps.event.clearInstanceListeners(pickupAuto);
+        });
 
         dropoffInputRefs.current.forEach((input, index) => {
             if (!input) return;
             const dropAuto = new maps.places.Autocomplete(input, opts);
-            dropAuto.addListener('place_changed', () => {
+            const dropListener = dropAuto.addListener('place_changed', () => {
                 const place = dropAuto.getPlace();
                 ensurePlaceDetails(place).then((full) => {
                     const match = resolveAirportMatch(full, place?.formatted_address);
@@ -806,121 +874,15 @@ const BookingPageInner = () => {
                 });
             });
             dropoffAutocompleteRefs.current.push(dropAuto);
+            placeAutocompleteCleanupRef.current.push(() => {
+                if (dropListener) maps.event.removeListener(dropListener);
+                maps.event.clearInstanceListeners(dropAuto);
+            });
         });
     };
 
     const attachPlaceAutocomplete = async () => {
-        const maps = (window as any).google?.maps;
-        const places = maps?.places;
-        if (maps) {
-            distanceServiceRef.current = distanceServiceRef.current || new maps.DistanceMatrixService();
-            directionsServiceRef.current = directionsServiceRef.current || new maps.DirectionsService();
-            setGoogleRouteServicesReady(true);
-        }
-        // Use PlaceAutocompleteElement only if available and supports inputElement; otherwise fallback to legacy.
-        const PlaceAutocompleteElement = places?.PlaceAutocompleteElement;
-        if (!PlaceAutocompleteElement) {
-            attachLegacyAutocomplete();
-            return;
-        }
-
-        const placesService = new maps.places.PlacesService(document.createElement('div'));
-        const ensurePlaceDetails = (place: any) =>
-            new Promise<PlaceLike>((resolve) => {
-                if (place?.types?.length || !place?.place_id) return resolve(place);
-                placesService.getDetails(
-                    { placeId: place.place_id, fields: ['place_id', 'types', 'name', 'formatted_address', 'geometry'] },
-                    (detail: any, status: any) => {
-                        if (status === maps.places.PlacesServiceStatus.OK && detail) {
-                            resolve({ ...place, ...detail });
-                        } else {
-                            resolve(place);
-                        }
-                    }
-                );
-            });
-
-        const tryAttach = (input: HTMLInputElement | null, onSelect: (place: PlaceResult | null) => void) => {
-            if (!input) return false;
-            let element: any;
-            try {
-                element = new PlaceAutocompleteElement();
-                (element as any).inputElement = input;
-                (element as any).types = ['geocode', 'establishment'];
-                (element as any).countries = ['gb'];
-                (element as any).fields = ['place_id', 'types', 'name', 'formatted_address', 'geometry'];
-            } catch {
-                return false;
-            }
-
-            const handler = () => {
-                const place = (element as any).getPlace ? (element as any).getPlace() : null;
-                ensurePlaceDetails(place).then(onSelect);
-            };
-            ['placechange', 'gmp-placeselect', 'gmpx-placechange', 'place_changed'].forEach((evt) =>
-                element.addEventListener(evt, handler)
-            );
-            placeAutocompleteCleanupRef.current.push(() => {
-                ['placechange', 'gmp-placeselect', 'gmpx-placechange', 'place_changed'].forEach((evt) =>
-                    element.removeEventListener(evt, handler)
-                );
-            });
-            return true;
-        };
-
-        const pickupOk = tryAttach(pickupInputRef.current, (place) => {
-            const match = resolveAirportMatch(place, place?.formatted_address);
-            const pickupLabel = match.isAirport
-                ? place?.name || place?.formatted_address
-                : place?.formatted_address || place?.name;
-            if (pickupLabel) {
-                setPickupDisplay(pickupLabel);
-                setPickupAddress(place?.formatted_address || place?.name || pickupLabel);
-            }
-            const loc = place?.location ?? place?.geometry?.location;
-            if (loc) {
-                const lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat;
-                const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
-                setPickupLatLng({ lat, lng });
-            }
-            setPickupIsAirport(match.isAirport);
-            setPickupAirportCode(match.code);
-        });
-
-        let allDropsOk = true;
-        dropoffInputRefs.current.forEach((input, index) => {
-            const ok = tryAttach(input, (place) => {
-                const match = resolveAirportMatch(place, place?.formatted_address);
-                const dropoffLabel = match.isAirport
-                    ? place?.name || place?.formatted_address
-                    : place?.formatted_address || place?.name;
-                if (dropoffLabel) {
-                    handleDropOffChange(index, dropoffLabel, place?.formatted_address || place?.name || dropoffLabel);
-                }
-                const loc = place?.location ?? place?.geometry?.location;
-                if (loc) {
-                    const lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat;
-                    const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
-                    const coords = [...stopCoords];
-                    coords[index] = { lat, lng };
-                    setStopCoords(coords);
-                    if (index === finalDropIndex) setDropOffLatLng({ lat, lng });
-                }
-                const flags = [...dropIsAirportFlags];
-                flags[index] = match.isAirport;
-                setDropIsAirportFlags(flags);
-                const codes = [...dropAirportCodes];
-                codes[index] = match.code;
-                setDropAirportCodes(codes);
-            });
-            if (!ok) allDropsOk = false;
-        });
-
-        if (!pickupOk || !allDropsOk) {
-            placeAutocompleteCleanupRef.current.forEach((fn) => fn());
-            placeAutocompleteCleanupRef.current = [];
-            attachLegacyAutocomplete();
-        }
+        attachLegacyAutocomplete();
     };
 
     useEffect(() => {
@@ -945,8 +907,6 @@ const BookingPageInner = () => {
     }, [dropOffDisplays.length]);
 
     useEffect(() => {
-        const maps = (window as any).google?.maps;
-        if (!maps || !directionsServiceRef.current) return;
         const waypoints = [pickupAddress.trim(), ...dropOffAddresses.map((d) => d.trim())].filter(Boolean);
         const coordChain = [pickupLatLng, ...stopCoords];
         if (waypoints.length < 2) {
@@ -957,63 +917,61 @@ const BookingPageInner = () => {
 
         let isCancelled = false;
         (async () => {
-            directionsServiceRef.current.route(
-                {
-                    origin: waypoints[0],
-                    destination: waypoints[waypoints.length - 1],
-                    waypoints: waypoints.slice(1, -1).map((location) => ({ location })),
-                    travelMode: maps.TravelMode.DRIVING,
-                },
-                (result: any, status: string) => {
-                    if (isCancelled) return;
-                    if (status !== 'OK' || !result?.routes?.length) {
-                        setMiles('');
-                        setLegBreakdown([]);
-                        return;
-                    }
-                    const route = result.routes[0];
-                    const legsRaw = Array.isArray(route?.legs) ? route.legs : [];
-                    if (!legsRaw.length) {
-                        setMiles('');
-                        setLegBreakdown([]);
-                        return;
-                    }
-                    let totalMeters = 0;
-                    const legs = legsRaw.map((leg: any, index: number) => {
-                        const meters = Number(leg?.distance?.value ?? 0);
-                        totalMeters += meters;
-                        const milesValueLeg = meters / 1609.34;
-                        const startCoords = leg?.start_location
-                            ? { lat: leg.start_location.lat(), lng: leg.start_location.lng() }
-                            : coordChain[index] ?? null;
-                        const endCoords = leg?.end_location
-                            ? { lat: leg.end_location.lat(), lng: leg.end_location.lng() }
-                            : coordChain[index + 1] ?? null;
-                        const originZone = startCoords ? getZoneForCoords(startCoords) : null;
-                        const destinationZone = endCoords ? getZoneForCoords(endCoords) : null;
-                        const appliedZone = pickAppliedZone(originZone?.id ?? null, destinationZone?.id ?? null);
-                        const zoneSegments =
-                            buildZoneSegmentsFromSteps(leg?.steps) ?? [{ zoneId: appliedZone, miles: milesValueLeg }];
-                        return {
-                            miles: milesValueLeg,
-                            originLabel: waypoints[index],
-                            destinationLabel: waypoints[index + 1],
-                            originZone: originZone?.id ?? null,
-                            destinationZone: destinationZone?.id ?? null,
-                            appliedZone,
-                            zoneSegments,
-                        };
-                    });
-                    setLegBreakdown(legs);
-                    setMiles(totalMeters ? (totalMeters / 1609.34).toFixed(1) : '');
+            try {
+                const res = await fetch('/api/routes/compute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        origin: waypoints[0],
+                        destination: waypoints[waypoints.length - 1],
+                        intermediates: waypoints.slice(1, -1),
+                    }),
+                    cache: 'no-store',
+                });
+                const data = await res.json().catch(() => ({}));
+                if (isCancelled) return;
+                if (!res.ok || !data?.ok || !data?.distanceMeters) {
+                    setMiles('');
+                    setLegBreakdown([]);
+                    return;
                 }
-            );
+
+                const totalMeters = Number(data.distanceMeters);
+                const totalMiles = totalMeters / 1609.34;
+                const routePath = data.encodedPolyline ? decodeEncodedPolyline(String(data.encodedPolyline)) : [];
+                const startCoords = routePath[0] || coordChain[0] || null;
+                const endCoords = routePath[routePath.length - 1] || coordChain[coordChain.length - 1] || null;
+                const originZone = startCoords ? getZoneForCoords(startCoords) : null;
+                const destinationZone = endCoords ? getZoneForCoords(endCoords) : null;
+                const appliedZone = pickAppliedZone(originZone?.id ?? null, destinationZone?.id ?? null);
+                const routeSegments =
+                    zoneSegmentsFromPath(routePath, totalMiles) ?? [{ zoneId: appliedZone, miles: totalMiles }];
+                const zoneSegments = appliedZone != null && appliedZone <= 3 && !hasInnerZoneSegments(routeSegments)
+                    ? [{ zoneId: appliedZone, miles: totalMiles }]
+                    : routeSegments;
+                const legs = [{
+                    miles: totalMiles,
+                    originLabel: waypoints[0],
+                    destinationLabel: waypoints[waypoints.length - 1],
+                    originZone: originZone?.id ?? null,
+                    destinationZone: destinationZone?.id ?? null,
+                    appliedZone,
+                    zoneSegments,
+                }];
+
+                setLegBreakdown(legs);
+                setMiles(totalMiles ? totalMiles.toFixed(1) : '');
+            } catch (err: any) {
+                if (isCancelled) return;
+                setMiles('');
+                setLegBreakdown([]);
+            }
         })();
 
         return () => {
             isCancelled = true;
         };
-    }, [pickupAddress, dropOffAddresses, pickupLatLng, dropOffLatLng, stopCoords, googleRouteServicesReady]);
+    }, [pickupAddress, dropOffAddresses, pickupLatLng, dropOffLatLng, stopCoords]);
 
     useEffect(() => {
         const stops = [pickupAddress.trim(), ...dropOffAddresses.map((d) => d.trim())].filter(Boolean);
@@ -1123,6 +1081,11 @@ const BookingPageInner = () => {
         flightDetails,
         airportDetected,
         congestionDetected,
+        zoneInnerMiles,
+        zoneOuterMiles,
+        zoneMileageFare,
+        zoneOverrideRate,
+        zoneSegments: zoneSegmentsAudit,
     });
 
     const handleSaveQuote = async () => {
@@ -1190,6 +1153,13 @@ const BookingPageInner = () => {
     const zoneMileageFare = hasZoneOverride
         ? (zoneInnerMiles * zoneOverrideRate) + (zoneOuterMiles * standardMileageRate)
         : null;
+    const zoneSegmentsAudit = legBreakdown.flatMap((leg, legIndex) =>
+        leg.zoneSegments.map((segment) => ({
+            legIndex,
+            zoneId: segment.zoneId,
+            miles: Math.round(segment.miles * 100) / 100,
+        }))
+    );
     const zoneInnerCost = zoneInnerMiles * zoneOverrideRate;
     const zoneOuterCost = zoneOuterMiles * standardMileageRate;
 
@@ -1197,8 +1167,15 @@ const BookingPageInner = () => {
         serviceType === 'As Directed'
             ? hourlyRate
             : (zoneMileageFare ?? milesValue * getMileageRate(vehicle, milesValue));
+    const minimumFareForVehicle = Number(selectedVehicle?.minPrice ?? 0);
+    const minimumFareApplies =
+        serviceType !== 'As Directed' &&
+        pricingData.minimumPriceActive &&
+        minimumFareForVehicle > 0 &&
+        mileageFare < minimumFareForVehicle;
+    const baseFare = minimumFareApplies ? minimumFareForVehicle : mileageFare;
 
-    totalFare = mileageFare;
+    totalFare = baseFare;
 
     if (serviceType !== 'As Directed') {
         if (waitingCost > 0) extras.push({ label: 'Waiting time', amount: waitingCost });
@@ -1257,6 +1234,8 @@ const BookingPageInner = () => {
     const mileageBreakdownText =
         serviceType === 'As Directed'
             ? `Mileage: hourly rate GBP${hourlyRate.toFixed(2)}/h`
+            : minimumFareApplies
+                ? `Minimum fare: GBP${minimumFareForVehicle.toFixed(2)} (calculated mileage GBP${mileageFare.toFixed(2)})`
             : hasZoneOverride
                 ? `Mileage: Zone 1-3 ${zoneInnerMiles.toFixed(1)} mi x GBP${zoneOverrideRate.toFixed(2)} = GBP${zoneInnerCost.toFixed(2)}; ${outsideZonesBreakdownText}`
                 : `Mileage: ${chargeableMiles.toFixed(1)} mi x GBP${standardMileageRate.toFixed(2)} = GBP${standardMileageFare.toFixed(2)}`;
@@ -1268,10 +1247,12 @@ const BookingPageInner = () => {
     const extrasText = `Extras applied: ${mileageBreakdownText}; ${surchargeBreakdownText}`;
     const baseFareLabel = serviceType === 'As Directed'
         ? 'Hourly rate'
+        : minimumFareApplies
+            ? 'Minimum fare'
         : hasZoneOverride
             ? 'Zone mileage fare'
             : 'Mileage fare';
-    const baseFareValue = mileageFare;
+    const baseFareValue = baseFare;
     const discountAmount = useMemo(() => {
         if (!discountData) return 0;
         const raw = discountData.type === 'percent'
@@ -1283,7 +1264,6 @@ const BookingPageInner = () => {
     const totalFareFinal = Math.max(0, Math.round((baseTotalFare - discountAmount) * 100) / 100);
     const appliedCreditAmount = user?.email ? Math.min(totalFareFinal, clientCreditBalance) : 0;
     const amountDueNow = Math.max(0, Math.round((totalFareFinal - appliedCreditAmount) * 100) / 100);
-    const minimumFareForVehicle = Number(selectedVehicle?.minPrice ?? 0);
 
     const zoneIds = legBreakdown
         .flatMap((leg) => leg.zoneSegments.map((segment) => segment.zoneId))
@@ -1467,10 +1447,6 @@ const BookingPageInner = () => {
                     .
                 </span>
             );
-            return;
-        }
-        if (pricingData.minimumPriceActive && totalFareFinal < minimumFareForVehicle) {
-            showAlert(`The minimum fare fot your chosen category is GBP${minimumFareForVehicle.toFixed(2)}`);
             return;
         }
         if (typeof window !== 'undefined') {

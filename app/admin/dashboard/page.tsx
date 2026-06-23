@@ -1396,17 +1396,15 @@ const AdminDashboardPage: React.FC = () => {
         <div className="max-w-6xl mx-auto w-full space-y-8">
           <AdminPageHeader active="live" liveBadgeCount={liveBadgeCount} />
 
-        {/*
           <div className="flex justify-end">
             <button
               type="button"
-              onClick={() => window.location.assign('#/booking')}
+              onClick={() => window.location.assign('/booking')}
               className="px-4 py-2 text-sm font-semibold rounded-md bg-amber-500 text-black hover:bg-amber-400 transition shadow-[0_0_12px_rgba(251,191,36,0.4)]"
             >
               Add manual booking
             </button>
           </div>
-          */}
           
           <main className="w-full space-y-6">
             <section className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 space-y-6">
