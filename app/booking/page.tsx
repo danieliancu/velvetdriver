@@ -59,7 +59,7 @@ const BookingPageInner = () => {
     const searchParams = useSearchParams();
     const savedQuoteParam = searchParams?.get('saved');
     const { user } = useAuth();
-    const passengerDetailsLocked = Boolean(user);
+    const passengerDetailsLocked = Boolean(user) && user?.role !== Role.ADMIN;
     const { showAlert } = useAlert();
     const [pickupAddress, setPickupAddress] = useState('');
     const [pickupDisplay, setPickupDisplay] = useState('');
@@ -580,7 +580,7 @@ const BookingPageInner = () => {
     }, [draftKey]);
 
     useEffect(() => {
-        if (user && !prefilledClientData) {
+        if (user && user.role !== Role.ADMIN && !prefilledClientData) {
             setPassengerName(user.name || '');
             setPassengerEmail(user.email || '');
             setPassengerPhone(user.phone || '');
@@ -1430,6 +1430,10 @@ const BookingPageInner = () => {
         e.preventDefault();
         if (!requiredJourneyFieldsFilled) {
             showAlert('Please complete pickup, drop-off, date, and time.');
+            return;
+        }
+        if (!passengerName.trim() || !passengerEmail.trim() || !passengerPhone.trim()) {
+            showAlert('Please enter the passenger name, email, and phone number.');
             return;
         }
         const journeyDateTime = new Date(`${date}T${time}`);

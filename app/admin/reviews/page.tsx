@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, Search, Star } from 'lucide-react';
+import { ChevronDown, ChevronUp, Search, Star, Trash2 } from 'lucide-react';
 import AdminPageHeader from '@/components/AdminPageHeader';
+import { useAlert } from '@/components/AlertProvider';
 
 type Review = {
   id: number;
@@ -13,6 +14,7 @@ type Review = {
   rating: number;
   review: string;
   source: string;
+  visible: boolean;
   createdAt: string;
 };
 
@@ -20,11 +22,13 @@ const formatDateTime = (iso: string) =>
   new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
 
 const AdminReviewsPage: React.FC = () => {
+  const { showAlert } = useAlert();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState('');
   const [records, setRecords] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mutatingId, setMutatingId] = useState<number | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -55,6 +59,40 @@ const AdminReviewsPage: React.FC = () => {
   }, [query, records]);
 
   const toggle = (ref: string) => setExpanded((prev) => ({ ...prev, [ref]: !prev[ref] }));
+
+  const handleToggleVisible = async (review: Review) => {
+    const nextVisible = !review.visible;
+    setMutatingId(review.id);
+    try {
+      const res = await fetch('/api/admin/reviews', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: review.id, visible: nextVisible }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setRecords((prev) => prev.map((r) => (r.id === review.id ? { ...r, visible: nextVisible } : r)));
+    } catch (err: any) {
+      showAlert(err?.message || 'Failed to update review visibility.');
+    } finally {
+      setMutatingId(null);
+    }
+  };
+
+  const handleDelete = async (review: Review) => {
+    if (!window.confirm(`Delete the review from "${review.reviewerName || 'this reviewer'}"? This cannot be undone.`)) {
+      return;
+    }
+    setMutatingId(review.id);
+    try {
+      const res = await fetch(`/api/admin/reviews?id=${review.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setRecords((prev) => prev.filter((r) => r.id !== review.id));
+    } catch (err: any) {
+      showAlert(err?.message || 'Failed to delete review.');
+    } finally {
+      setMutatingId(null);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
@@ -99,28 +137,62 @@ const AdminReviewsPage: React.FC = () => {
                       key={r.id}
                       className="rounded-xl border border-amber-900/40 bg-gradient-to-br from-[#1A0B0B] via-[#0F0909] to-black shadow-lg shadow-black/30"
                     >
-                      <button
-                        type="button"
-                        onClick={() => toggle(r.refNo)}
-                        className="w-full flex items-center justify-between gap-4 px-4 py-3 text-left"
-                      >
-                        <div className="flex flex-wrap gap-4 text-sm text-amber-100">
-                          <span className="font-semibold">
-                            Ref. no.: <span className="text-amber-300">{r.refNo}</span>
-                          </span>
-                          <span>
-                            Rating:{' '}
-                            <span className="inline-flex items-center gap-1 text-amber-200">
-                              <Star size={14} className="fill-amber-400 text-amber-400" />
-                              {r.rating}
+                      <div className="w-full flex items-center justify-between gap-4 px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => toggle(r.refNo)}
+                          className="flex-1 flex flex-wrap items-center gap-4 text-left"
+                        >
+                          <div className="flex flex-wrap gap-4 text-sm text-amber-100">
+                            <span className="font-semibold">
+                              Ref. no.: <span className="text-amber-300">{r.refNo}</span>
                             </span>
-                          </span>
-                          <span>
-                            Date: <span className="text-amber-200">{formatDateTime(r.createdAt)}</span>
-                          </span>
+                            <span>
+                              Rating:{' '}
+                              <span className="inline-flex items-center gap-1 text-amber-200">
+                                <Star size={14} className="fill-amber-400 text-amber-400" />
+                                {r.rating}
+                              </span>
+                            </span>
+                            <span>
+                              Date: <span className="text-amber-200">{formatDateTime(r.createdAt)}</span>
+                            </span>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
+                                r.visible
+                                  ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50'
+                                  : 'bg-gray-800 text-gray-400 border border-gray-700'
+                              }`}
+                            >
+                              {r.visible ? 'Visible' : 'Hidden'}
+                            </span>
+                          </div>
+                          {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                        </button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            disabled={mutatingId === r.id}
+                            onClick={() => handleToggleVisible(r)}
+                            className={`rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition disabled:opacity-50 ${
+                              r.visible
+                                ? 'border border-amber-700/50 text-amber-200 hover:bg-amber-900/30'
+                                : 'border border-emerald-700/50 text-emerald-300 hover:bg-emerald-900/30'
+                            }`}
+                          >
+                            {r.visible ? 'Hide' : 'Show'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={mutatingId === r.id}
+                            onClick={() => handleDelete(r)}
+                            className="rounded-full border border-red-700/50 p-1.5 text-red-300 hover:bg-red-950/40 transition disabled:opacity-50"
+                            aria-label="Delete review"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
-                        {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                      </button>
+                      </div>
                       {isOpen && (
                         <div className="px-4 pb-4 pt-2 space-y-4 border-t border-amber-900/30">
                           <div className="grid gap-3 sm:grid-cols-3">
