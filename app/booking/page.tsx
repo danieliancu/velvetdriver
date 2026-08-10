@@ -193,7 +193,8 @@ const BookingPageInner = () => {
         if (Number.isNaN(journeyDateTime.getTime())) return null;
         return (journeyDateTime.getTime() - Date.now()) / (1000 * 60 * 60);
     }, [date, time]);
-    const showLeadTimeNotice = bookingLeadTimeHours !== null && bookingLeadTimeHours < 24;
+    const showLeadTimeNotice =
+        user?.role !== Role.ADMIN && bookingLeadTimeHours !== null && bookingLeadTimeHours < 24;
     const isDriverCollectPayment = paymentOption === 'cash_to_driver' || paymentOption === 'card_to_driver';
     const isInvoicePayment = paymentOption === 'pay_by_invoice';
     const expectedStripeSecretType = paymentOption === 'fixed_pay_now' ? 'payment' : 'setup';
