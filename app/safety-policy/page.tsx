@@ -43,7 +43,7 @@ const SafetyPolicyPage: React.FC = () => {
           items={[
             'Incidents must be reported.',
             'Lost property is handled per policy.',
-            'Safety concerns: info@velvetdrivers.co.uk',
+            'Safety concerns: contact@velvetdrivers.co.uk',
           ]}
         />
       </PolicySection>

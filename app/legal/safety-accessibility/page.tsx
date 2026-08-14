@@ -14,7 +14,7 @@ const SafetyAccessibilityPage: React.FC = () => {
             'Zero tolerance for drugs, alcohol, abuse, or unsafe driving.',
           ]}
         />
-        <p>Extra care is provided for vulnerable passengers. Incidents must be reported and safety concerns can be sent to info@velvetdrivers.co.uk.</p>
+        <p>Extra care is provided for vulnerable passengers. Incidents must be reported and safety concerns can be sent to contact@velvetdrivers.co.uk.</p>
       </PolicySection>
 
       <PolicySection title="Equality & Accessibility Policy">

@@ -4,7 +4,7 @@ import PolicyPageLayout, { PolicySection, PolicyList } from '@/components/Policy
 const ComplaintsPolicyPage: React.FC = () => {
   return (
     <PolicyPageLayout title="Complaints Handling Procedure">
-      <p>Complaints must be emailed to <a href="mailto:info@velvetdrivers.co.uk" className="text-amber-400 hover:underline">info@velvetdrivers.co.uk</a> including booking reference, time, driver details, and the issue.</p>
+      <p>Complaints must be emailed to <a href="mailto:contact@velvetdrivers.co.uk" className="text-amber-400 hover:underline">contact@velvetdrivers.co.uk</a> including booking reference, time, driver details, and the issue.</p>
 
       <PolicySection title="Acknowledgement">
         <p>Complaints are acknowledged within 48 hours.</p>

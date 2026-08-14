@@ -31,13 +31,13 @@ const PassengerPoliciesPage: React.FC = () => {
             'If a driver is en-route or has arrived: full fare applies.',
             'No-show equals full fare (15 minutes for standard pickup / 60 minutes for airport).',
             'Refunds issued within 3-5 business days.',
-            'Disputes: info@velvetdrivers.co.uk.',
+            'Disputes: contact@velvetdrivers.co.uk.',
           ]}
         />
       </PolicySection>
 
       <PolicySection title="Complaints Handling Procedure">
-        <p>Complaints must be emailed to info@velvetdrivers.co.uk including booking reference, time, driver details, and the issue.</p>
+        <p>Complaints must be emailed to contact@velvetdrivers.co.uk including booking reference, time, driver details, and the issue.</p>
         <PolicyList
           items={[
             'Acknowledged within 48 hours.',

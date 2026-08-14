@@ -4,7 +4,7 @@ import { Mail, Phone } from 'lucide-react';
 const contactChannels = [
   {
     title: 'General Enquiries',
-    detail: 'info@velvetdrivers.co.uk',
+    detail: 'contact@velvetdrivers.co.uk',
     description: 'Send us an email and we will reply within 24 hours.',
     icon: Mail,
   },

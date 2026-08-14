@@ -22,7 +22,7 @@ const RefundPolicyPage: React.FC = () => {
       </PolicySection>
 
       <PolicySection title="Disputes">
-        <p>Disputes should be submitted to <a href="mailto:info@velvetdrivers.co.uk" className="text-amber-400 hover:underline">info@velvetdrivers.co.uk</a>.</p>
+        <p>Disputes should be submitted to <a href="mailto:contact@velvetdrivers.co.uk" className="text-amber-400 hover:underline">contact@velvetdrivers.co.uk</a>.</p>
       </PolicySection>
     </PolicyPageLayout>
   );

@@ -37,7 +37,7 @@ const DataProtectionContent: React.FC = () => (
         ]}
       />
       <p>
-        Contact: <a href="mailto:info@velvetdrivers.co.uk" className="text-amber-400 hover:underline">info@velvetdrivers.co.uk</a>
+        Contact: <a href="mailto:contact@velvetdrivers.co.uk" className="text-amber-400 hover:underline">contact@velvetdrivers.co.uk</a>
       </p>
     </PolicySection>
   </>
