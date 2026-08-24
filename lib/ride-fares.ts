@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import { AIRPORTS, buildDefaultAirportSurcharges, detectAirportCodeFromText, type AirportCode } from '@/lib/airports';
 import { computeGoogleRoute } from '@/lib/google-routes';
+import { DEFAULT_PRICING_VEHICLES } from '@/lib/pricing-defaults';
 
 type PricingVehicle = {
   id: number;
@@ -38,15 +39,17 @@ export type FareResult = {
   extras: Array<{ code: string; amount: number; label: string }>;
 };
 
+const defaultVehicleSource =
+  DEFAULT_PRICING_VEHICLES.find((v) => v.code === 'executive') ?? DEFAULT_PRICING_VEHICLES[0];
 const defaultVehicle = {
-  id: 1,
-  code: 'executive',
-  label: 'Executive',
-  as_directed_rate: 40,
-  tier1_rate: 6.25,
-  tier2_rate: 2.5,
-  tier3_rate: 2,
-  min_price: 30,
+  id: defaultVehicleSource.id,
+  code: defaultVehicleSource.code,
+  label: defaultVehicleSource.label,
+  as_directed_rate: defaultVehicleSource.asDirectedRate,
+  tier1_rate: defaultVehicleSource.mileage.tier1,
+  tier2_rate: defaultVehicleSource.mileage.tier2,
+  tier3_rate: defaultVehicleSource.mileage.tier3,
+  min_price: defaultVehicleSource.minPrice,
 };
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100;

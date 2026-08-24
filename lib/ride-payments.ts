@@ -422,6 +422,12 @@ export async function persistBookingAuthorization(
   if (intent.status !== 'requires_capture') {
     throw new Error('Authorization has not been confirmed');
   }
+  const capturableAmount = fromStripeAmount(intent.amount_capturable || intent.amount);
+  if (capturableAmount + 0.01 < roundMoney(input.estimatedAmount)) {
+    throw new Error(
+      `Authorization amount mismatch: expected GBP ${roundMoney(input.estimatedAmount).toFixed(2)}, authorized GBP ${capturableAmount.toFixed(2)}`
+    );
+  }
 
   await writePaymentFromIntent(conn, input.rideId, 'authorization', intent, 'authorized');
   const authorizationExpiresAt = null;
@@ -497,6 +503,12 @@ export async function persistFixedPayNowPayment(
   const intent = await stripe.paymentIntents.retrieve(input.paymentIntentId);
   if (intent.status !== 'succeeded') {
     throw new Error('Payment has not been completed');
+  }
+  const receivedAmount = fromStripeAmount(intent.amount_received || intent.amount);
+  if (receivedAmount + 0.01 < roundMoney(input.amount)) {
+    throw new Error(
+      `Payment amount mismatch: expected GBP ${roundMoney(input.amount).toFixed(2)}, received GBP ${receivedAmount.toFixed(2)}`
+    );
   }
 
   await writePaymentFromIntent(conn, input.rideId, 'fixed_pay_now', intent, 'captured');

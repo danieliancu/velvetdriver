@@ -2,6 +2,14 @@ import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { AIRPORTS, buildDefaultAirportSurcharges, type AirportCode, type AirportSurcharge } from '@/lib/airports';
 import { getDbPool } from '@/lib/db';
+import {
+  DEFAULT_AIRPORT_DROPOFF_SURCHARGE,
+  DEFAULT_AIRPORT_PICKUP_SURCHARGE,
+  DEFAULT_CONGESTION_SURCHARGE,
+  DEFAULT_MINIMUM_PRICE_ACTIVE,
+  DEFAULT_NIGHT_SURCHARGE,
+  DEFAULT_PRICING_VEHICLES,
+} from '@/lib/pricing-defaults';
 
 const pool = getDbPool();
 
@@ -47,14 +55,13 @@ type PricingPayload = {
 };
 
 const fallbackPayload: PricingPayload = {
-  vehicles: [
-    { code: 'mpv', label: 'Luxury MPV', asDirectedRate: 60, mileage: { tier1: 20, tier2: 4, tier3: 3.5 }, innerZoneOverride: 20, minPrice: 50 },
-    { code: 'luxury', label: 'Luxury', asDirectedRate: 60, mileage: { tier1: 8.75, tier2: 3.5, tier3: 3 }, innerZoneOverride: 8.75, minPrice: 40 },
-    { code: 'executive', label: 'Executive', asDirectedRate: 40, mileage: { tier1: 6.25, tier2: 2.5, tier3: 2 }, innerZoneOverride: 6.25, minPrice: 30 },
-  ],
-  surcharges: { congestion: 15, airports: buildDefaultAirportSurcharges(15, 7) },
-  nightSurcharge: 30,
-  minimumPriceActive: true,
+  vehicles: DEFAULT_PRICING_VEHICLES,
+  surcharges: {
+    congestion: DEFAULT_CONGESTION_SURCHARGE,
+    airports: buildDefaultAirportSurcharges(DEFAULT_AIRPORT_PICKUP_SURCHARGE, DEFAULT_AIRPORT_DROPOFF_SURCHARGE),
+  },
+  nightSurcharge: DEFAULT_NIGHT_SURCHARGE,
+  minimumPriceActive: DEFAULT_MINIMUM_PRICE_ACTIVE,
   vatEnabled: false,
   vatRate: 20,
   invoicePaymentInstructions: 'Please pay by bank transfer within 14 days.',

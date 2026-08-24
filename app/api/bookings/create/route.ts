@@ -5,6 +5,7 @@ import { consumeClientCredit, getClientCreditBalance } from '@/lib/client-credit
 import { persistBookingAuthorization, persistFixedPayNowPayment, persistFlexibleSetup } from '@/lib/ride-payments';
 import { getRequestIp, logSiteActivity } from '@/lib/site-activity';
 import { buildJourneyLocationLines } from '@/lib/journey-locations';
+import { calculateBookingFare, fareTolerance } from '@/lib/booking-fare';
 
 const pool = getDbPool();
 const ADMIN_BOOKING_NOTIFICATION_EMAILS = ['roxy.viulet@gmail.com', 'daniiancu1978@gmail.com'];
@@ -141,6 +142,42 @@ export async function POST(request: Request) {
     const journeyDate = new Date(`${date}T${time}`);
     if (Number.isNaN(journeyDate.getTime())) {
       return NextResponse.json({ error: 'Invalid date or time' }, { status: 400 });
+    }
+
+    // Recompute the fare server-side so the client-supplied total cannot be tampered with.
+    // Fails open on infrastructure errors (e.g. Google Routes down) so bookings are not blocked.
+    try {
+      const serverFare = await calculateBookingFare(conn, {
+        pickup,
+        dropOffs,
+        time,
+        serviceType: String(body.serviceType ?? 'Transfer'),
+        vehicleTypeId: body.vehicleTypeId ? Number(body.vehicleTypeId) : null,
+        vehicleLabel: String(body.vehicle ?? '') || null,
+        waitingMinutes: Number(body.waiting ?? 0),
+        discountCode: String(body.discount?.code ?? '') || null,
+      });
+      const tolerance = fareTolerance(serverFare.totalFare);
+      if (Math.abs(totalFare - serverFare.totalFare) > tolerance) {
+        await logSiteActivity(pool, {
+          tableName: 'client_journeys',
+          operation: 'INSERT',
+          pk: null,
+          category: 'booking',
+          title: 'Booking rejected: fare mismatch',
+          message: `Client submitted GBP ${totalFare.toFixed(2)} but server calculated GBP ${serverFare.totalFare.toFixed(2)} for ${pickup} -> ${dropOffs.join(', ')}.`,
+          severity: 'warning',
+          tags: { actor: 'client', clientFare: totalFare, serverFare: serverFare.totalFare },
+          changedByEmail: passengerEmail || null,
+          ip: getRequestIp(request),
+        }).catch(() => undefined);
+        return NextResponse.json(
+          { error: 'The fare could not be verified. Please refresh the page and try again.' },
+          { status: 400 }
+        );
+      }
+    } catch (fareErr) {
+      console.error('Server fare validation unavailable, accepting client fare', fareErr);
     }
 
     let clientId: number | null = null;

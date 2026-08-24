@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getDbPool, DbRow } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 const pool = getDbPool();
 
 type ClientBookingRow = DbRow<{

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import mysql from 'mysql2/promise';
 import { getDbPool } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 const pool = getDbPool();
 
 async function getClientJourneyColumns() {
