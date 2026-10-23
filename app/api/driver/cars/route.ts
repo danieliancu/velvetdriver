@@ -51,6 +51,13 @@ export async function POST(request: Request) {
     );
     if (existingCar.length) {
       carId = existingCar[0].id;
+      // Same plate can move to a different vehicle (retained/cherished plates), so refresh the car details.
+      await pool.execute(
+        `UPDATE cars
+         SET make = ?, model = ?, colour = ?, keeper_info = ?
+         WHERE id = ?`,
+        [make, model, colour || null, keeperInfo || null, carId]
+      );
     } else {
     const [carResult] = await pool.execute<mysql.ResultSetHeader>(
         `INSERT INTO cars
@@ -236,9 +243,10 @@ export async function PATCH(request: Request) {
         [vehicleReg, make, model, colour || null, keeperInfo || null, carId]
       );
 
+      // driver_car_documents.car_id references driver_cars.id, not cars.id.
       if (hasMotExpiry) {
         await upsertDriverCarDocument(conn, {
-          carId,
+          carId: driverCarId,
           docType: 'mot',
           expiryDate: motExpiry || null,
         });
@@ -246,7 +254,7 @@ export async function PATCH(request: Request) {
 
       if (hasInsuranceExpiry) {
         await upsertDriverCarDocument(conn, {
-          carId,
+          carId: driverCarId,
           docType: 'insurance',
           expiryDate: insuranceExpiry || null,
         });
@@ -254,7 +262,7 @@ export async function PATCH(request: Request) {
 
       if (hasPhvExpiry) {
         await upsertDriverCarDocument(conn, {
-          carId,
+          carId: driverCarId,
           docType: 'phv_car_licence',
           expiryDate: phvExpiry || null,
         });

@@ -1431,7 +1431,8 @@ const CarsPage: React.FC = () => {
                 otherDocuments: [],
                 documents: uploadedDocs,
             };
-            setCars((prev) => [applyDocsToCar(newCar, uploadedDocs), ...prev]);
+            // Re-adding an existing plate returns the existing driver car id, so replace it instead of duplicating.
+            setCars((prev) => [applyDocsToCar(newCar, uploadedDocs), ...prev.filter((item) => item.id !== newCar.id)]);
             setCarEditing((prev) => ({ ...prev, [newCar.id]: false }));
             setVrm('');
             setMake('');

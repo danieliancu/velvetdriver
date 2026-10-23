@@ -265,6 +265,14 @@ export async function POST(request: Request) {
         );
         if (existingCar.length) {
           carId = existingCar[0].id;
+          // Same plate can move to a different vehicle (retained/cherished plates), so refresh the car details.
+          await conn.execute(
+            `UPDATE cars
+             SET make = COALESCE(?, make), model = COALESCE(?, model),
+                 colour = COALESCE(?, colour), keeper_info = COALESCE(?, keeper_info)
+             WHERE id = ?`,
+            [make || null, model || null, colour || null, keeperInfo || null, carId]
+          );
         }
       }
       if (!carId) {
